@@ -3058,11 +3058,11 @@ impl UserQuery {
                         .context(ex_error::ObjectStoreSnafu)?;
 
                     let credentials = if let Some(token) = session_token {
-                        Some(AwsCredentials::Token(token.to_string()))
+                        Some(AwsCredentials::Token(token))
                     } else {
                         Some(AwsCredentials::AccessKey(AwsAccessKeyCredentials {
-                            aws_access_key_id: access_key.to_string(),
-                            aws_secret_access_key: secret_key.to_string(),
+                            aws_access_key_id: access_key.clone(),
+                            aws_secret_access_key: secret_key.clone(),
                             aws_session_token: None,
                         }))
                     };

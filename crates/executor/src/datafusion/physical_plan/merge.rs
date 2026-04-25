@@ -141,6 +141,7 @@ impl ExecutionPlan for MergeIntoCOWSinkExec {
         )))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn execute(
         &self,
         partition: usize,
@@ -169,8 +170,8 @@ impl ExecutionPlan for MergeIntoCOWSinkExec {
             input_batches,
             updated_rows.clone(),
             inserted_rows.clone(),
-            updated_rows_metric.clone(),
-            inserted_rows_metric.clone(),
+            updated_rows_metric,
+            inserted_rows_metric,
             matching_files.clone(),
         );
 

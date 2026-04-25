@@ -551,6 +551,7 @@ pub enum Error {
     QueryExecution {
         query_id: QueryId,
         #[snafu(source(from(Error, Box::new)))]
+        #[allow(clippy::use_self)]
         source: Box<Error>,
         #[snafu(implicit)]
         location: Location,

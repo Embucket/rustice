@@ -110,7 +110,7 @@ impl SessionProperty {
             KeyValueOptionKind::Multi(values) => {
                 let s = values
                     .iter()
-                    .map(|v| v.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(",");
                 (s, "text".to_string())
