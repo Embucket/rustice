@@ -29,6 +29,7 @@ impl ArrayMaxUDF {
                     NativeType::String,
                 )]),
                 volatility: Volatility::Immutable,
+                parameter_names: None,
             },
         }
     }

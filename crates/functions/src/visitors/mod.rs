@@ -65,7 +65,9 @@ pub fn select_with_body(
         qualify: None,
         window_before_qualify: false,
         value_table_mode: None,
-        connect_by: None,
+        connect_by: vec![],
+        optimizer_hint: None,
+        select_modifiers: None,
         flavor: sqlparser::ast::SelectFlavor::Standard,
     }
 }

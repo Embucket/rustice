@@ -120,6 +120,7 @@ impl VisitorMut for CteInliner<'_> {
                     lateral: false,
                     subquery: Box::new(subq),
                     alias: alias.clone(),
+                    sample: None,
                 };
             }
         }
@@ -217,7 +218,9 @@ impl TableFuncInlineCte {
                         alias: Some(TableAlias {
                             name: Ident::new(alias),
                             columns: vec![],
+                            explicit: true,
                         }),
+                        sample: None,
                     };
                     let projection = vec![SelectItem::UnnamedExpr(Expr::Identifier(Ident::new(
                         column.clone(),

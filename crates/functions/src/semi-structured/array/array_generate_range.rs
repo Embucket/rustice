@@ -24,6 +24,7 @@ impl ArrayGenerateRangeUDF {
                     TypeSignature::Exact(vec![DataType::Int64, DataType::Int64, DataType::Int64]),
                 ]),
                 volatility: Volatility::Immutable,
+                parameter_names: None,
             },
             aliases: vec!["generate_range".to_string()],
         }

@@ -27,6 +27,7 @@ impl ArrayConstructUDF {
                     TypeSignature::Nullary,
                 ]),
                 volatility: Volatility::Immutable,
+                parameter_names: None,
             },
             aliases: vec!["make_array".to_string(), "make_list".to_string()],
         }

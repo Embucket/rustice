@@ -29,6 +29,7 @@ impl ArraySliceUDF {
             signature: Signature {
                 type_signature: TypeSignature::Any(3), // array, from, to
                 volatility: Volatility::Immutable,
+                parameter_names: None,
             },
         }
     }

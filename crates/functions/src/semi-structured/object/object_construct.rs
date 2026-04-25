@@ -27,6 +27,7 @@ impl ObjectConstructUDF {
                     TypeSignature::Nullary,
                 ]),
                 volatility: Volatility::Volatile,
+                parameter_names: None,
             },
             aliases: vec!["make_object".to_string()],
             keep_null,

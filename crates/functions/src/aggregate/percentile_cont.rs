@@ -160,10 +160,6 @@ impl AggregateUDFImpl for PercentileCont {
         false
     }
 
-    fn is_ordered_set_aggregate(&self) -> bool {
-        true
-    }
-
     fn documentation(&self) -> Option<&Documentation> {
         self.doc()
     }

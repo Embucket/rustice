@@ -44,6 +44,7 @@ impl LengthFunc {
             signature: Signature {
                 type_signature: TypeSignature::Any(1),
                 volatility: Volatility::Immutable,
+                parameter_names: None,
             },
             aliases: vec![String::from("len")],
         }

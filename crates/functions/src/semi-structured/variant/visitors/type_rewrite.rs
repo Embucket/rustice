@@ -45,6 +45,7 @@ mod tests {
     use datafusion::prelude::SessionContext;
     use datafusion::sql::parser::Statement as DFStatement;
     use datafusion_common::Result as DFResult;
+    use datafusion_common::config::Dialect;
 
     #[tokio::test]
     async fn test_array_to_binary_rewrite() -> DFResult<()> {
@@ -52,7 +53,7 @@ mod tests {
 
         // Test table creation with Array type
         let sql = "CREATE TABLE test_table (id INT, arr ARRAY)";
-        let mut statement = ctx.state().sql_to_statement(sql, "snowflake")?;
+        let mut statement = ctx.state().sql_to_statement(sql, &Dialect::Snowflake)?;
 
         if let DFStatement::Statement(ref mut stmt) = statement {
             visit(stmt);
@@ -72,7 +73,7 @@ mod tests {
 
         // Test table creation with Array type
         let sql = "CREATE TABLE test_table (id INT, obj OBJECT)";
-        let mut statement = ctx.state().sql_to_statement(sql, "snowflake")?;
+        let mut statement = ctx.state().sql_to_statement(sql, &Dialect::Snowflake)?;
 
         if let DFStatement::Statement(ref mut stmt) = statement {
             visit(stmt);
@@ -92,7 +93,7 @@ mod tests {
 
         // Test table creation with Array type
         let sql = "CREATE TABLE test_table (id INT, variant VARIANT)";
-        let mut statement = ctx.state().sql_to_statement(sql, "snowflake")?;
+        let mut statement = ctx.state().sql_to_statement(sql, &Dialect::Snowflake)?;
 
         if let DFStatement::Statement(ref mut stmt) = statement {
             visit(stmt);

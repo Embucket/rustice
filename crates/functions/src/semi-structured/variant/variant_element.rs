@@ -68,6 +68,7 @@ impl VariantArrayElementUDF {
                     ]),
                 ]),
                 volatility: Volatility::Immutable,
+                parameter_names: None,
             },
             aliases: vec!["array_element".to_string()],
         }
@@ -182,6 +183,7 @@ mod tests {
     use datafusion::assert_batches_eq;
     use datafusion::prelude::SessionContext;
     use datafusion::sql::parser::Statement;
+    use datafusion_common::config::Dialect;
     use datafusion_expr::ScalarUDF;
     #[tokio::test]
     async fn test_array_indexing() -> DFResult<()> {
@@ -203,7 +205,7 @@ mod tests {
         let sql =
             "SELECT arrvar[0] as first, arrvar[1] as second, arrvar[2] as third FROM test_table";
 
-        let mut statement = ctx.state().sql_to_statement(sql, "snowflake")?;
+        let mut statement = ctx.state().sql_to_statement(sql, &Dialect::Snowflake)?;
         if let Statement::Statement(ref mut stmt) = statement {
             variant_element::visit(stmt);
         }
@@ -224,7 +226,7 @@ mod tests {
 
         // Test out of bounds indexing
         let sql = "SELECT arrvar[5] as out_of_bounds FROM test_table WHERE id = 1";
-        let mut statement = ctx.state().sql_to_statement(sql, "snowflake")?;
+        let mut statement = ctx.state().sql_to_statement(sql, &Dialect::Snowflake)?;
         if let Statement::Statement(ref mut stmt) = statement {
             variant_element::visit(stmt);
         }
@@ -244,7 +246,7 @@ mod tests {
 
         // Test empty array
         let sql = "SELECT array_construct()[0] as empty_array";
-        let mut statement = ctx.state().sql_to_statement(sql, "snowflake")?;
+        let mut statement = ctx.state().sql_to_statement(sql, &Dialect::Snowflake)?;
         if let Statement::Statement(ref mut stmt) = statement {
             variant_element::visit(stmt);
         }
@@ -284,7 +286,7 @@ mod tests {
 
         // Test JSON path access
         let sql = "SELECT json_col:a.b[0] as first_elem FROM json_table";
-        let mut statement = ctx.state().sql_to_statement(sql, "snowflake")?;
+        let mut statement = ctx.state().sql_to_statement(sql, &Dialect::Snowflake)?;
         if let Statement::Statement(ref mut stmt) = statement {
             variant_element::visit(stmt);
         }
@@ -305,7 +307,7 @@ mod tests {
 
         // Test nested JSON path access with array flattening
         let sql = "SELECT json_col:a.b as array_elem FROM json_table";
-        let mut statement = ctx.state().sql_to_statement(sql, "snowflake")?;
+        let mut statement = ctx.state().sql_to_statement(sql, &Dialect::Snowflake)?;
         if let Statement::Statement(ref mut stmt) = statement {
             variant_element::visit(stmt);
         }

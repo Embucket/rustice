@@ -91,7 +91,7 @@ use iceberg_rust::table::manifest_list::snapshot_partition_bounds;
 use object_store::aws::{AmazonS3Builder, resolve_bucket_region};
 use object_store::{ClientOptions, ObjectStore};
 use snafu::{OptionExt, ResultExt, location};
-use sqlparser::ast::helpers::key_value_options::KeyValueOptions;
+use sqlparser::ast::helpers::key_value_options::{KeyValueOptionKind, KeyValueOptions};
 use sqlparser::ast::helpers::stmt_data_loading::StageParamsObject;
 use sqlparser::ast::{
     AlterTableOperation, AssignmentTarget, CloudProviderParams, MergeAction, MergeClause,
@@ -421,12 +421,12 @@ impl UserQuery {
                 Statement::CopyIntoSnowflake { .. } => {
                     return Box::pin(self.copy_into_snowflake_query(*s)).await;
                 }
-                Statement::AlterTable {
+                Statement::AlterTable(sqlparser::ast::AlterTable {
                     name,
                     operations,
                     if_exists,
                     ..
-                } => {
+                }) => {
                     return Box::pin(self.alter_table(name, operations, if_exists)).await;
                 }
                 Statement::StartTransaction { .. }
@@ -445,7 +445,7 @@ impl UserQuery {
                 | Statement::ShowObjects { .. }
                 | Statement::ShowVariables { .. }
                 | Statement::ShowVariable { .. } => return Box::pin(self.show_query(*s)).await,
-                Statement::Truncate { table_names, .. } => {
+                Statement::Truncate(sqlparser::ast::Truncate { table_names, .. }) => {
                     return Box::pin(self.truncate_table(table_names)).await;
                 }
                 Statement::Query(subquery) => {
@@ -1151,7 +1151,7 @@ impl UserQuery {
 
         let skip_header = file_format.options.iter().any(|option| {
             option.option_name.eq_ignore_ascii_case("skip_header")
-                && option.value.eq_ignore_ascii_case("1")
+                && kv_option_value_to_string(&option.option_value).eq_ignore_ascii_case("1")
         });
 
         let field_optionally_enclosed_by = file_format
@@ -1162,7 +1162,8 @@ impl UserQuery {
                     .option_name
                     .eq_ignore_ascii_case("field_optionally_enclosed_by")
                 {
-                    Some(option.value.as_bytes()[0])
+                    let val = kv_option_value_to_string(&option.option_value);
+                    val.as_bytes().first().copied()
                 } else {
                     None
                 }
@@ -1344,13 +1345,13 @@ impl UserQuery {
         err
     )]
     pub async fn merge_to_logical_plan(&self, statement: Statement) -> Result<LogicalPlan> {
-        let Statement::Merge {
+        let Statement::Merge(sqlparser::ast::Merge {
             table: target,
             source,
             on,
             clauses,
             ..
-        } = statement
+        }) = statement
         else {
             return ex_error::OnlyMergeStatementsSnafu.fail();
         };
@@ -1412,6 +1413,7 @@ impl UserQuery {
                 lateral: _,
                 subquery,
                 alias,
+                ..
             } => {
                 let query = Statement::Query(subquery.clone());
 
@@ -1555,10 +1557,10 @@ impl UserQuery {
             .any(|c| matches!(c.action, MergeAction::Insert(_)));
         let has_update = clauses
             .iter()
-            .any(|c| matches!(c.action, MergeAction::Update { .. }));
+            .any(|c| matches!(c.action, MergeAction::Update(_)));
         let has_delete = clauses
             .iter()
-            .any(|c| matches!(c.action, MergeAction::Delete));
+            .any(|c| matches!(c.action, MergeAction::Delete { .. }));
 
         let merge_clause_projection = merge_clause_projection(
             &sql_planner,
@@ -2184,7 +2186,7 @@ impl UserQuery {
         query: &str,
     ) -> std::result::Result<DFStatement, DataFusionError> {
         let state = self.session.ctx.state();
-        let dialect = state.config().options().sql_parser.dialect.as_str();
+        let dialect = &state.config().options().sql_parser.dialect;
         state.sql_to_statement(query, dialect)
     }
 
@@ -2478,7 +2480,7 @@ impl UserQuery {
                 prop.to_scalar_value().map(|scalar| (key, scalar))
             })
             .collect();
-        let session_params = ParamValues::Map(session_params_map);
+        let session_params: ParamValues = session_params_map.into();
 
         plan = self
             .session_context_expr_rewriter()
@@ -2643,7 +2645,7 @@ impl UserQuery {
     async fn replace_pivot_subquery_with_list(
         &self,
         table: &TableFactor,
-        value_column: &[Ident],
+        value_column: &[sqlparser::ast::Expr],
         value_source: &mut PivotValueSource,
     ) {
         match value_source {
@@ -3183,7 +3185,8 @@ pub fn merge_clause_projection<S: ContextProvider>(
             op
         };
         match merge_clause.action {
-            MergeAction::Update { assignments } => {
+            MergeAction::Update(update_expr) => {
+                let assignments = update_expr.assignments;
                 updated_ops.push(op.clone());
                 for assignment in assignments {
                     match assignment.target {
@@ -3227,7 +3230,7 @@ pub fn merge_clause_projection<S: ContextProvider>(
                         .next()
                         .ok_or_else(|| ex_error::MergeInsertOnlyOneRowSnafu.build())?,
                 ) {
-                    let column_name = column.value.clone();
+                    let column_name = column.to_string();
                     let expr = sql_planner
                         .sql_to_expr(value, source_schema, &mut planner_context)
                         .context(ex_error::DataFusionSnafu)?;
@@ -3241,7 +3244,7 @@ pub fn merge_clause_projection<S: ContextProvider>(
                     inserts.insert(column, vec![(op.clone(), lit(ScalarValue::Null))]);
                 }
             }
-            MergeAction::Delete => (),
+            MergeAction::Delete { .. } => (),
         }
     }
     let exprs = collect_merge_clause_expressions(target_schema, updates, inserts)?;
@@ -3659,6 +3662,18 @@ fn get_external_location(from_obj: &ObjectName) -> Option<&Ident> {
     }
 }
 
+fn kv_option_value_to_string(kind: &KeyValueOptionKind) -> String {
+    match kind {
+        KeyValueOptionKind::Single(v) => v.clone().into_string().unwrap_or_default(),
+        KeyValueOptionKind::Multi(values) => values
+            .iter()
+            .filter_map(|v| v.clone().into_string())
+            .collect::<Vec<_>>()
+            .join(","),
+        KeyValueOptionKind::KeyValueOptions(_) => String::new(),
+    }
+}
+
 pub fn get_volume_kv_option(
     options: &KeyValueOptions,
     key: &str,
@@ -3668,7 +3683,7 @@ pub fn get_volume_kv_option(
         .options
         .iter()
         .find(|opt| opt.option_name.eq_ignore_ascii_case(key))
-        .map(|opt| opt.value.clone())
+        .map(|opt| kv_option_value_to_string(&opt.option_value))
         .unwrap_or_default();
 
     if value.is_empty() {
@@ -3683,12 +3698,12 @@ pub fn get_volume_kv_option(
 }
 
 #[must_use]
-pub fn get_kv_option<'a>(options: &'a KeyValueOptions, key: &str) -> Option<&'a str> {
+pub fn get_kv_option(options: &KeyValueOptions, key: &str) -> Option<String> {
     options
         .options
         .iter()
         .find(|opt| opt.option_name.eq_ignore_ascii_case(key))
-        .map(|opt| opt.value.as_str())
+        .map(|opt| kv_option_value_to_string(&opt.option_value))
 }
 
 fn create_file_format(
@@ -3707,7 +3722,7 @@ fn create_file_format(
 
             if let Some(compression) = get_kv_option(file_format, "compression") {
                 csv_format = csv_format.with_file_compression_type(
-                    FileCompressionType::from_str(compression)
+                    FileCompressionType::from_str(&compression)
                         .context(ex_error::DataFusionSnafu)?,
                 );
             }

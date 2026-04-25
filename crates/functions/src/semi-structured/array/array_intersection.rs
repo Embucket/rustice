@@ -22,6 +22,7 @@ impl ArrayIntersectionUDF {
             signature: Signature {
                 type_signature: TypeSignature::Any(2),
                 volatility: Volatility::Immutable,
+                parameter_names: None,
             },
         }
     }

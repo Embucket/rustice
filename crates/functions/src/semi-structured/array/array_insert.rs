@@ -30,6 +30,7 @@ impl ArrayInsertUDF {
             signature: Signature {
                 type_signature: TypeSignature::Any(3),
                 volatility: Volatility::Immutable,
+                parameter_names: None,
             },
         }
     }

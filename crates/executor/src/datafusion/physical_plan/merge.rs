@@ -44,7 +44,7 @@ pub struct MergeIntoCOWSinkExec {
     schema: DFSchemaRef,
     input: Arc<dyn ExecutionPlan>,
     target: DataFusionTable,
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
     /// Per-node metrics surfaced via `EXPLAIN ANALYZE`. Populated with
     /// `updated_rows` / `inserted_rows` / `deleted_rows` counters after the
     /// write transaction commits, so `EXPLAIN ANALYZE MERGE INTO …` reports
@@ -65,7 +65,7 @@ impl MergeIntoCOWSinkExec {
         let boundedness = Boundedness::Bounded; // Bounded operation that completes
 
         let properties =
-            PlanProperties::new(eq_properties, partitioning, emission_type, boundedness);
+            Arc::new(PlanProperties::new(eq_properties, partitioning, emission_type, boundedness));
         Self {
             schema,
             input,
@@ -100,7 +100,7 @@ impl ExecutionPlan for MergeIntoCOWSinkExec {
         self
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 

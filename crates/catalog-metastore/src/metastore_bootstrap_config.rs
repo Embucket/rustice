@@ -3,6 +3,7 @@ use crate::{
     SchemaIdent, TableFormat, TableIdent, Volume, VolumeIdent, VolumeType,
 };
 use aws_config::meta::credentials::CredentialsProviderChain;
+use object_store::ObjectStoreExt;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};

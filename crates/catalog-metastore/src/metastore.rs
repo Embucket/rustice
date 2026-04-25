@@ -1,5 +1,7 @@
 use crate::error::{self as metastore_error, Result};
 use crate::metastore_settings_config::MetastoreSettingsConfig;
+use object_store::ObjectStoreExt;
+
 use crate::models::{
     RwObject,
     database::{Database, DatabaseIdent},

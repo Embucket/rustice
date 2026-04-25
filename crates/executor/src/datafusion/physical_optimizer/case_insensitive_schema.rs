@@ -1,17 +1,17 @@
-use arrow_schema::SchemaRef;
-use catalog::utils::normalize_schema_case;
-use datafusion::arrow::datatypes::Schema as ArrowSchema;
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::physical_plan::{
-    FileScanConfig, FileScanConfigBuilder, FileSource, ParquetSource,
-};
-use datafusion::datasource::schema_adapter::{
-    DefaultSchemaAdapterFactory, SchemaAdapter, SchemaAdapterFactory, SchemaMapper,
+    FileScanConfig, FileScanConfigBuilder, ParquetSource,
 };
 use datafusion::datasource::source::DataSourceExec;
 use datafusion::error::Result as DFResult;
 use datafusion::physical_optimizer::PhysicalOptimizerRule;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::tree_node::{Transformed, TransformedResult, TreeNode};
+use datafusion::physical_expr::expressions::Column;
+use datafusion::physical_expr_adapter::{
+    DefaultPhysicalExprAdapterFactory, PhysicalExprAdapter, PhysicalExprAdapterFactory,
+};
+use datafusion::physical_expr_common::physical_expr::PhysicalExpr;
 use datafusion_physical_plan::ExecutionPlan;
 use std::sync::Arc;
 
@@ -24,8 +24,8 @@ impl CaseInsensitiveSchemaDataSourceExec {
     }
 }
 
-/// The rule which use schema adapter factory that normalizes file field names to lowercase
-/// before delegating to the default adapter, ensuring case-insensitive mapping
+/// The rule which uses a physical expression adapter factory that normalizes file field names
+/// to lowercase before delegating to the default adapter, ensuring case-insensitive mapping
 /// between table schema and physical Parquet files.
 impl PhysicalOptimizerRule for CaseInsensitiveSchemaDataSourceExec {
     fn optimize(
@@ -39,23 +39,23 @@ impl PhysicalOptimizerRule for CaseInsensitiveSchemaDataSourceExec {
                     .data_source()
                     .as_any()
                     .downcast_ref::<FileScanConfig>()
-                && let Some(parquet_source) =
-                    config.file_source.as_any().downcast_ref::<ParquetSource>()
+                && config
+                    .file_source
+                    .as_any()
+                    .downcast_ref::<ParquetSource>()
+                    .is_some()
                 && !config
-                    .file_schema
+                    .file_schema()
                     .fields()
                     .iter()
                     .any(|field| field.name().eq(&field.name().to_ascii_uppercase()))
             {
-                let schema_adapter_factory: Arc<dyn SchemaAdapterFactory> =
-                    Arc::new(CaseInsensitiveSchemaAdapterFactory);
-
-                let file_source =
-                    parquet_source.with_schema_adapter_factory(schema_adapter_factory)?;
+                let expr_adapter: Arc<dyn PhysicalExprAdapterFactory> =
+                    Arc::new(CaseInsensitiveExprAdapterFactory);
 
                 let data_source = Arc::new(
                     FileScanConfigBuilder::from(config.clone())
-                        .with_source(file_source)
+                        .with_expr_adapter(Some(expr_adapter))
                         .build(),
                 );
 
@@ -77,47 +77,73 @@ impl PhysicalOptimizerRule for CaseInsensitiveSchemaDataSourceExec {
     }
 }
 
-/// A schema adapter factory that normalizes file field names to lowercase
+/// A physical expression adapter factory that normalizes file field names to lowercase
 /// before delegating to the default adapter, ensuring case-insensitive mapping
 /// between table schema and physical Parquet files.
 #[derive(Debug, Default)]
-struct CaseInsensitiveSchemaAdapterFactory;
+struct CaseInsensitiveExprAdapterFactory;
 
-impl SchemaAdapterFactory for CaseInsensitiveSchemaAdapterFactory {
+impl PhysicalExprAdapterFactory for CaseInsensitiveExprAdapterFactory {
     fn create(
         &self,
-        projected_table_schema: SchemaRef,
-        _file_schema: SchemaRef,
-    ) -> Box<dyn SchemaAdapter> {
-        Box::new(CaseInsensitiveSchemaAdapter {
-            inner: DefaultSchemaAdapterFactory::from_schema(projected_table_schema),
+        logical_file_schema: SchemaRef,
+        physical_file_schema: SchemaRef,
+    ) -> DFResult<Arc<dyn PhysicalExprAdapter>> {
+        // Create a normalized (lowercased) version of the physical schema
+        // so that the default adapter can match columns case-insensitively
+        let normalized_physical = normalize_schema_ref(&physical_file_schema);
+        let inner = DefaultPhysicalExprAdapterFactory
+            .create(logical_file_schema, normalized_physical)?;
+        Ok(Arc::new(CaseInsensitiveExprAdapter {
+            inner,
+            physical_file_schema,
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct CaseInsensitiveExprAdapter {
+    inner: Arc<dyn PhysicalExprAdapter>,
+    physical_file_schema: SchemaRef,
+}
+
+impl PhysicalExprAdapter for CaseInsensitiveExprAdapter {
+    fn rewrite(&self, expr: Arc<dyn PhysicalExpr>) -> DFResult<Arc<dyn PhysicalExpr>> {
+        // First let the default adapter rewrite using normalized schema
+        let rewritten = self.inner.rewrite(expr)?;
+        // Then fix up column indices to reference the actual physical schema
+        rewritten
+            .transform(|expr| {
+                if let Some(col) = expr.as_any().downcast_ref::<Column>() {
+                    // Try to find the column in the actual physical schema by case-insensitive match
+                    let col_name_lower = col.name().to_ascii_lowercase();
+                    for (i, field) in self.physical_file_schema.fields().iter().enumerate() {
+                        if field.name().to_ascii_lowercase() == col_name_lower {
+                            return Ok(Transformed::yes(Arc::new(Column::new(
+                                field.name(),
+                                i,
+                            ))
+                                as Arc<dyn PhysicalExpr>));
+                        }
+                    }
+                }
+                Ok(Transformed::no(expr))
+            })
+            .data()
+    }
+}
+
+fn normalize_schema_ref(schema: &SchemaRef) -> SchemaRef {
+    let fields = schema
+        .fields()
+        .iter()
+        .map(|field| {
+            let mut cloned = field.as_ref().clone();
+            cloned.set_name(field.name().to_ascii_lowercase());
+            cloned
         })
-    }
-}
-
-struct CaseInsensitiveSchemaAdapter {
-    inner: Box<dyn SchemaAdapter>,
-}
-
-impl std::fmt::Debug for CaseInsensitiveSchemaAdapter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CaseInsensitiveSchemaAdapter").finish()
-    }
-}
-
-impl SchemaAdapter for CaseInsensitiveSchemaAdapter {
-    fn map_column_index(&self, index: usize, file_schema: &ArrowSchema) -> Option<usize> {
-        let normalized = normalize_schema_case(file_schema);
-        self.inner.map_column_index(index, &normalized)
-    }
-
-    fn map_schema(
-        &self,
-        file_schema: &ArrowSchema,
-    ) -> DFResult<(Arc<dyn SchemaMapper>, Vec<usize>)> {
-        let normalized = normalize_schema_case(file_schema);
-        self.inner.map_schema(&normalized)
-    }
+        .collect::<Vec<_>>();
+    Arc::new(datafusion::arrow::datatypes::Schema::new(fields))
 }
 
 #[cfg(test)]
@@ -127,18 +153,17 @@ mod tests {
     use datafusion::datasource::listing::PartitionedFile;
     use datafusion::datasource::object_store::ObjectStoreUrl;
     use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder};
-    use datafusion_common::config::TableParquetOptions;
 
     fn schema() -> SchemaRef {
         Arc::new(Schema::new(vec![Field::new("Id", DataType::Int32, false)]))
     }
 
     #[tokio::test]
-    async fn test_sets_schema_adapter_on_parquet_source() -> DFResult<()> {
+    async fn test_sets_expr_adapter_on_file_scan_config() -> DFResult<()> {
         let object_store_url = ObjectStoreUrl::parse("s3://bucket")?;
-        let file_source = Arc::new(ParquetSource::new(TableParquetOptions::default()));
+        let file_source = Arc::new(ParquetSource::new(schema()));
         let file_scan_config = Arc::new(
-            FileScanConfigBuilder::new(object_store_url, schema(), file_source)
+            FileScanConfigBuilder::new(object_store_url, file_source)
                 .with_file_groups(vec![FileGroup::new(vec![PartitionedFile::new("path", 1)])])
                 .build(),
         );
@@ -158,13 +183,7 @@ mod tests {
             .downcast_ref::<FileScanConfig>()
             .expect("expected FileScanConfig");
 
-        let parquet_source = file_scan_config
-            .file_source
-            .as_any()
-            .downcast_ref::<ParquetSource>()
-            .expect("expected ParquetSource");
-
-        assert!(parquet_source.schema_adapter_factory().is_some());
+        assert!(file_scan_config.expr_adapter_factory.is_some());
 
         Ok(())
     }

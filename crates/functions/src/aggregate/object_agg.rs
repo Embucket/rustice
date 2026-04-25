@@ -297,6 +297,7 @@ mod tests {
                     Arc::new(Column::new("key", 0)),
                     Arc::new(Column::new("value", 1)),
                 ],
+                expr_fields: &[],
             })
         }
 

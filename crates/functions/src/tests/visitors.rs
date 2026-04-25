@@ -5,6 +5,7 @@ use crate::visitors::{
 use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion_common::Result as DFResult;
+use datafusion_common::config::Dialect;
 
 #[test]
 fn test_like_ilike_any_expr_rewriter() -> DFResult<()> {
@@ -97,7 +98,7 @@ fn test_like_ilike_any_expr_rewriter() -> DFResult<()> {
     ];
 
     for (input, expected) in cases {
-        let mut statement = state.sql_to_statement(input, "snowflake")?;
+        let mut statement = state.sql_to_statement(input, &Dialect::Snowflake)?;
         if let DFStatement::Statement(ref mut stmt) = statement {
             like_ilike_any::visit(stmt);
         }
@@ -138,7 +139,7 @@ fn test_rlike_regexp_expr_rewriter() -> DFResult<()> {
     ];
 
     for (input, expected) in cases {
-        let mut statement = state.sql_to_statement(input, "snowflake")?;
+        let mut statement = state.sql_to_statement(input, &Dialect::Snowflake)?;
         if let DFStatement::Statement(ref mut stmt) = statement {
             rlike_regexp_expr_rewriter::visit(stmt);
         }
@@ -170,7 +171,7 @@ fn test_json_element() -> DFResult<()> {
     ];
 
     for (input, expected) in cases {
-        let mut statement = state.sql_to_statement(input, "snowflake")?;
+        let mut statement = state.sql_to_statement(input, &Dialect::Snowflake)?;
         if let DFStatement::Statement(ref mut stmt) = statement {
             json_element::visit(stmt);
         }
@@ -258,7 +259,7 @@ fn test_functions_rewriter() -> DFResult<()> {
     ];
 
     for (input, expected) in cases {
-        let mut statement = state.sql_to_statement(input, "snowflake")?;
+        let mut statement = state.sql_to_statement(input, &Dialect::Snowflake)?;
         if let DFStatement::Statement(ref mut stmt) = statement {
             functions_rewriter::visit(stmt);
         }
@@ -294,7 +295,7 @@ fn test_select_expr_aliases() -> DFResult<()> {
     ];
 
     for (input, expected) in cases {
-        let mut statement = state.sql_to_statement(input, "snowflake")?;
+        let mut statement = state.sql_to_statement(input, &Dialect::Snowflake)?;
         if let DFStatement::Statement(ref mut stmt) = statement {
             select_expr_aliases::visit(stmt);
         }
@@ -431,7 +432,7 @@ fn test_inline_aliases_in_query() -> DFResult<()> {
     ];
 
     for (input, expected) in cases {
-        let mut statement = state.sql_to_statement(input, "snowflake")?;
+        let mut statement = state.sql_to_statement(input, &Dialect::Snowflake)?;
         if let DFStatement::Statement(ref mut stmt) = statement {
             inline_aliases_in_query::visit(stmt);
         }
@@ -468,7 +469,7 @@ fn test_table_function_result_scan() -> DFResult<()> {
     ];
 
     for (input, expected) in cases {
-        let mut statement = state.sql_to_statement(input, "snowflake")?;
+        let mut statement = state.sql_to_statement(input, &Dialect::Snowflake)?;
         if let DFStatement::Statement(ref mut stmt) = statement {
             table_functions::visit(stmt);
         }
@@ -481,7 +482,7 @@ fn test_table_function_result_scan() -> DFResult<()> {
 fn test_fetch_to_limit_error_on_missing_quantity() -> DFResult<()> {
     let state = SessionContext::new().state();
     let sql = "SELECT * FROM test FETCH FIRST ROWS ONLY";
-    let mut statement = state.sql_to_statement(sql, "snowflake")?;
+    let mut statement = state.sql_to_statement(sql, &Dialect::Snowflake)?;
 
     if let DFStatement::Statement(ref mut stmt) = statement {
         let result = fetch_to_limit::visit(stmt);
@@ -549,7 +550,7 @@ fn test_table_function_cte() -> DFResult<()> {
     ];
 
     for (input, expected) in cases {
-        let mut statement = state.sql_to_statement(input, "snowflake")?;
+        let mut statement = state.sql_to_statement(input, &Dialect::Snowflake)?;
         if let DFStatement::Statement(ref mut stmt) = statement {
             table_functions_cte_relation::visit(stmt);
         }

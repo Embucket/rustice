@@ -24,6 +24,7 @@ impl ObjectInsertUDF {
             signature: Signature {
                 type_signature: TypeSignature::VariadicAny,
                 volatility: Volatility::Immutable,
+                parameter_names: None,
             },
         }
     }

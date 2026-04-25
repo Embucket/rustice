@@ -754,7 +754,7 @@ mod tests {
     use datafusion::prelude::SessionContext;
     use datafusion::sql::parser::Statement;
     use datafusion_common::assert_batches_eq;
-    use datafusion_common::config::ExtensionOptions;
+    use datafusion_common::config::{Dialect, ExtensionOptions};
     use datafusion_expr::ScalarUDF;
 
     fn session_params(
@@ -1341,7 +1341,7 @@ mod tests {
         1000000000::TIMESTAMP_TZ as c,
         1000000000::TIMESTAMP_LTZ as d,
          '2025-07-04 19:16:30+02:00'::TIMESTAMP_TZ as e";
-        let mut statement = ctx.state().sql_to_statement(sql, "snowflake")?;
+        let mut statement = ctx.state().sql_to_statement(sql, &Dialect::Snowflake)?;
         if let Statement::Statement(ref mut stmt) = statement {
             timestamp::visit(stmt);
         }

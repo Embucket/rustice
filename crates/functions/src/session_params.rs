@@ -3,10 +3,11 @@ use dashmap::DashMap;
 use datafusion::common::error::Result as DFResult;
 use datafusion::logical_expr::sqlparser::ast::Value;
 use datafusion::logical_expr::sqlparser::ast::helpers::key_value_options::{
-    KeyValueOption, KeyValueOptionType,
+    KeyValueOption, KeyValueOptionKind,
 };
 use datafusion_common::config::{ConfigEntry, ConfigExtension, ExtensionOptions};
 use datafusion_common::{ParamValues, ScalarValue};
+use datafusion_common::metadata::ScalarAndMetadata;
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
@@ -62,12 +63,14 @@ impl Hash for SessionParams {
 
 impl From<SessionParams> for ParamValues {
     fn from(value: SessionParams) -> Self {
-        let map: HashMap<String, ScalarValue> = value
+        let map: HashMap<String, ScalarAndMetadata> = value
             .properties
             .iter()
             .filter_map(|entry| {
                 let (key, prop) = (entry.key().clone(), entry.value().clone());
-                prop.to_scalar_value().map(|scalar| (key, scalar))
+                prop.to_scalar_value().map(|scalar| {
+                    (key, ScalarAndMetadata { value: scalar, metadata: None })
+                })
             })
             .collect();
         Self::Map(map)
@@ -89,16 +92,29 @@ impl SessionProperty {
     #[must_use]
     pub fn from_key_value(option: &KeyValueOption, session_id: String) -> Self {
         let now = Utc::now();
+        let (value, property_type) = match &option.option_value {
+            KeyValueOptionKind::Single(v) => {
+                let property_type = match v {
+                    Value::Boolean(_) => "boolean",
+                    Value::Number(_, _) => "fixed",
+                    _ => "text",
+                };
+                (v.to_string(), property_type.to_string())
+            }
+            KeyValueOptionKind::Multi(values) => {
+                let s = values.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",");
+                (s, "text".to_string())
+            }
+            KeyValueOptionKind::KeyValueOptions(opts) => {
+                (opts.to_string(), "text".to_string())
+            }
+        };
         Self {
             session_id: Some(session_id),
             created_on: now,
             updated_on: now,
-            value: option.value.clone(),
-            property_type: match option.option_type {
-                KeyValueOptionType::STRING | KeyValueOptionType::ENUM => "text".to_string(),
-                KeyValueOptionType::BOOLEAN => "boolean".to_string(),
-                KeyValueOptionType::NUMBER => "fixed".to_string(),
-            },
+            value,
+            property_type,
             comment: None,
             name: option.option_name.clone(),
         }

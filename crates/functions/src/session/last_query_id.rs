@@ -27,6 +27,7 @@ impl LastQueryId {
                     TypeSignature::Nullary,
                 ]),
                 volatility: Volatility::Volatile,
+                parameter_names: None,
             },
         }
     }

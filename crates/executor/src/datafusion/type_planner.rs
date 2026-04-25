@@ -44,7 +44,7 @@ impl TypePlanner for CustomTypePlanner {
                 let time_unit = parse_timestamp_precision(*precision)?;
                 Ok(Some(DataType::Timestamp(time_unit, None)))
             }
-            SQLDataType::TimestampNtz => Ok(Some(DataType::Timestamp(TimeUnit::Microsecond, None))),
+            SQLDataType::TimestampNtz(_) => Ok(Some(DataType::Timestamp(TimeUnit::Microsecond, None))),
             SQLDataType::Custom(a, b) => match a.to_string().to_ascii_uppercase().as_str() {
                 "VARIANT" => Ok(Some(DataType::Utf8)),
                 "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" => {
@@ -76,7 +76,7 @@ impl TypePlanner for CustomTypePlanner {
                         let data_type = match self.plan_type(&sql_type)? {
                             Some(dt) => dt,
                             // Fallback to SqlToRel for unsupported types
-                            None => SqlToRel::new(self).convert_data_type(&sql_type)?,
+                            None => SqlToRel::new(self).convert_data_type_to_field(&sql_type)?.data_type().clone(),
                         };
                         fields.push(Field::new(field_name, data_type, nullable));
                     }

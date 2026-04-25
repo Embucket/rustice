@@ -29,6 +29,7 @@ impl ArrayMinUDF {
                     NativeType::String,
                 )]),
                 volatility: Volatility::Immutable,
+                parameter_names: None,
             },
         }
     }

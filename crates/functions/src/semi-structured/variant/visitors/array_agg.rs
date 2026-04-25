@@ -72,6 +72,7 @@ mod tests {
     use datafusion::prelude::SessionContext;
     use datafusion::sql::parser::Statement as DFStatement;
     use datafusion_common::Result as DFResult;
+    use datafusion_common::config::Dialect;
     use datafusion_expr::ScalarUDF;
 
     #[tokio::test]
@@ -84,7 +85,7 @@ mod tests {
 
         // Create table and insert data
         let create_sql = "CREATE TABLE test_table (id INT, val INT)";
-        let mut create_stmt = ctx.state().sql_to_statement(create_sql, "snowflake")?;
+        let mut create_stmt = ctx.state().sql_to_statement(create_sql, &Dialect::Snowflake)?;
         if let DFStatement::Statement(ref mut stmt) = create_stmt {
             visit(stmt);
         }
@@ -95,7 +96,7 @@ mod tests {
 
         // Test array_agg rewrite by validating JSON output
         let sql = "SELECT array_agg(val) as json_arr FROM test_table GROUP BY id";
-        let mut stmt = ctx.state().sql_to_statement(sql, "snowflake")?;
+        let mut stmt = ctx.state().sql_to_statement(sql, &Dialect::Snowflake)?;
         if let DFStatement::Statement(ref mut s) = stmt {
             visit(s);
             variant_element::visit(s);
