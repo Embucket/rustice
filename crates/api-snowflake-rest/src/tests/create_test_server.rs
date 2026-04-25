@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::runtime::Builder;
 use tokio::sync::Notify;
 #[cfg(feature = "traces-test-log")]
 use tracing_subscriber::{fmt, fmt::format::FmtSpan};
@@ -55,17 +56,27 @@ pub async fn run_test_rest_api_server(
     let listener = TcpListener::bind("0.0.0.0:0").expect("Failed to bind to address");
     let addr = listener.local_addr().expect("Failed to get local address");
 
-    // Spawn the server as a task on the current runtime
-    tokio::spawn(async move {
-        run_test_rest_api_server_with_config(
-            rest_cfg,
-            executor_cfg,
-            metastore_settings_cfg,
-            metastore_cfg,
-            listener,
-            notify_clone,
-        )
-        .await;
+    // Start a new thread with its own runtime for the server.
+    // A dedicated runtime is required because catalog code uses
+    // block_in_place + handle.block_on, which deadlocks if run
+    // on another runtime's worker thread via tokio::spawn.
+    let _handle = std::thread::spawn(move || {
+        let rt = Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create Tokio runtime");
+
+        rt.block_on(async {
+            run_test_rest_api_server_with_config(
+                rest_cfg,
+                executor_cfg,
+                metastore_settings_cfg,
+                metastore_cfg,
+                listener,
+                notify_clone,
+            )
+            .await;
+        });
     });
 
     let timeout_duration = std::time::Duration::from_secs(1);
