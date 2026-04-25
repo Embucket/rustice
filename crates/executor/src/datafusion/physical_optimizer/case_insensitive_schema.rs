@@ -119,7 +119,9 @@ impl PhysicalExprAdapter for CaseInsensitiveExprAdapter {
                         if field.name().to_ascii_lowercase() == col_name_lower {
                             return Ok(Transformed::yes(
                                 #[allow(clippy::as_conversions)]
-                                {Arc::new(Column::new(field.name(), i)) as Arc<dyn PhysicalExpr>}
+                                {
+                                    Arc::new(Column::new(field.name(), i)) as Arc<dyn PhysicalExpr>
+                                },
                             ));
                         }
                     }
