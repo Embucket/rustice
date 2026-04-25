@@ -17,8 +17,6 @@ use crate::running_queries::RunningQueries;
 use crate::utils::Config;
 use catalog::catalog_list::{DEFAULT_CATALOG, EmbucketCatalogList};
 use catalog_metastore::Metastore;
-#[cfg(feature = "state-store")]
-use chrono::{TimeZone, Utc};
 use dashmap::DashMap;
 use datafusion::config::ConfigOptions;
 use datafusion::execution::runtime_env::RuntimeEnv;
@@ -31,8 +29,6 @@ use functions::register_udafs;
 use functions::session_params::{SessionParams, SessionProperty};
 use functions::table::register_udtfs;
 use snafu::ResultExt;
-#[cfg(feature = "state-store")]
-use state_store::{SessionRecord, StateStore, Variable};
 use std::collections::{HashMap, VecDeque};
 use std::num::NonZero;
 use std::sync::atomic::AtomicI64;
@@ -52,8 +48,6 @@ pub const fn to_unix(t: OffsetDateTime) -> i64 {
 
 pub struct UserSession {
     pub metastore: Arc<dyn Metastore>,
-    #[cfg(feature = "state-store")]
-    state_store: Arc<dyn StateStore>,
     // running_queries contains all the queries running across sessions
     pub running_queries: Arc<dyn RunningQueries>,
     pub ctx: SessionContext,
@@ -77,7 +71,6 @@ impl UserSession {
         catalog_list: Arc<EmbucketCatalogList>,
         runtime_env: Arc<RuntimeEnv>,
         session_id: &str,
-        #[cfg(feature = "state-store")] state_store: Arc<dyn StateStore>,
     ) -> Result<Self> {
         let sql_parser_dialect = config
             .sql_parser_dialect
@@ -91,10 +84,6 @@ impl UserSession {
         let parallelism_opt = available_parallelism().ok().map(NonZero::get);
 
         let session_params = SessionParams::default();
-        #[cfg(feature = "state-store")]
-        let session_params_arc =
-            Arc::new(Self::session_params(session_id, state_store.clone()).await);
-        #[cfg(not(feature = "state-store"))]
         let session_params_arc = Arc::new(session_params.clone());
         let mut config_options = ConfigOptions::from_env().context(ex_error::DataFusionSnafu)?;
 
@@ -147,8 +136,6 @@ impl UserSession {
         let enable_ident_normalization = ctx.enable_ident_normalization();
         let session = Self {
             metastore,
-            #[cfg(feature = "state-store")]
-            state_store,
             running_queries,
             ctx,
             ident_normalizer: IdentNormalizer::new(enable_ident_normalization),
@@ -165,64 +152,6 @@ impl UserSession {
             attrs: DashMap::new(),
         };
         Ok(session)
-    }
-
-    #[cfg(feature = "state-store")]
-    pub async fn session_params(
-        session_id: &str,
-        state_store: Arc<dyn StateStore>,
-    ) -> SessionParams {
-        let session_params = SessionParams::default();
-        #[cfg(feature = "state-store")]
-        if let Some(params) = Self::get_session_state_params(session_id, state_store).await {
-            session_params.set_properties(params);
-        }
-        session_params
-    }
-
-    #[cfg(feature = "state-store")]
-    pub async fn get_session_state_params(
-        session_id: &str,
-        state_store: Arc<dyn StateStore>,
-    ) -> Option<HashMap<String, SessionProperty>> {
-        state_store.get_session(session_id).await.ok().map(|sr| {
-            sr.variables
-                .into_iter()
-                .map(|(n, v)| (n, state_store_variable_to_property(v, session_id)))
-                .collect()
-        })
-    }
-
-    #[cfg(feature = "state-store")]
-    pub async fn set_session_state_params(
-        &self,
-        set: bool,
-        params: HashMap<String, SessionProperty>,
-    ) -> Result<()> {
-        let mut session_record =
-            if let Ok(session) = self.state_store.get_session(&self.session_id).await {
-                session
-            } else {
-                SessionRecord::new(&self.session_id)
-            };
-        let current_params: HashMap<String, SessionProperty> = session_record
-            .variables
-            .into_iter()
-            .map(|(n, v)| (n, state_store_variable_to_property(v, &self.session_id)))
-            .collect();
-        let session_params = SessionParams::default();
-        session_params.set_properties(current_params);
-
-        if set {
-            session_params.set_properties(params);
-        } else {
-            session_params.remove_properties(params);
-        }
-        session_record.variables = session_params_to_state_variables(&session_params);
-        self.state_store
-            .put_session(session_record)
-            .await
-            .context(ex_error::StateStoreSnafu)
     }
 
     #[tracing::instrument(
@@ -260,9 +189,6 @@ impl UserSession {
         set: bool,
         params: HashMap<String, SessionProperty>,
     ) -> Result<()> {
-        #[cfg(feature = "state-store")]
-        self.set_session_state_params(set, params.clone()).await?;
-
         let state = self.ctx.state_ref();
         let mut write = state.write();
 
@@ -336,59 +262,4 @@ pub fn parse_bool(value: &str) -> Option<bool> {
         "false" | "0" => Some(false),
         _ => None,
     }
-}
-
-#[cfg(feature = "state-store")]
-#[allow(clippy::as_conversions, clippy::cast_possible_wrap)]
-pub fn state_store_variable_to_property(var: Variable, session_id: &str) -> SessionProperty {
-    SessionProperty {
-        session_id: Some(session_id.to_string()),
-        created_on: Utc
-            .timestamp_opt(var.created_at as i64, 0)
-            .single()
-            .unwrap_or_else(Utc::now),
-        updated_on: var.updated_at.map_or_else(Utc::now, |ts| {
-            Utc.timestamp_opt(ts as i64, 0)
-                .single()
-                .unwrap_or_else(Utc::now)
-        }),
-        value: var.value,
-        property_type: var.value_type,
-        comment: var.comment,
-        name: var.name,
-    }
-}
-
-#[cfg(feature = "state-store")]
-#[allow(
-    clippy::as_conversions,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss
-)]
-#[must_use]
-pub fn session_params_to_state_variables(
-    session_params: &SessionParams,
-) -> HashMap<String, Variable> {
-    session_params
-        .properties
-        .iter()
-        .map(|entry| {
-            let key = entry.key().clone();
-            let prop = entry.value().clone();
-
-            let created_at = prop.created_on.timestamp() as u64;
-            let updated_at = Some(prop.updated_on.timestamp() as u64);
-
-            let var = Variable {
-                name: prop.name,
-                value: prop.value,
-                value_type: prop.property_type,
-                comment: prop.comment,
-                created_at,
-                updated_at,
-            };
-
-            (key, var)
-        })
-        .collect()
 }

@@ -3,13 +3,9 @@ use crate::running_queries::RunningQueriesRegistry;
 use crate::service::CoreExecutionService;
 use crate::session::UserSession;
 use crate::utils::Config;
-#[cfg(feature = "state-store")]
-use aws_sdk_dynamodb::{Client, Config as AwsConfig};
 use catalog_metastore::InMemoryMetastore;
 use catalog_metastore::metastore_bootstrap_config::MetastoreBootstrapConfig;
 use datafusion::prelude::SessionContext;
-#[cfg(feature = "state-store")]
-use state_store::DynamoDbStateStore;
 use std::sync::Arc;
 
 #[allow(clippy::expect_used, clippy::unwrap_used)]
@@ -33,11 +29,6 @@ pub async fn create_s3_tables_df_session() -> Arc<UserSession> {
     let runtime_env = CoreExecutionService::runtime_env(&config, catalog_list.clone())
         .expect("Failed to create runtime env");
 
-    #[cfg(feature = "state-store")]
-    let client = Client::from_conf(AwsConfig::builder().build());
-    #[cfg(feature = "state-store")]
-    let state_store = Arc::new(DynamoDbStateStore::new(client, ""));
-
     Arc::new(
         UserSession::new(
             metastore,
@@ -46,8 +37,6 @@ pub async fn create_s3_tables_df_session() -> Arc<UserSession> {
             catalog_list,
             runtime_env,
             "",
-            #[cfg(feature = "state-store")]
-            state_store,
         )
         .await
         .expect("Failed to create user session"),

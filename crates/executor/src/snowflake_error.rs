@@ -19,8 +19,6 @@ use iceberg_s3tables_catalog::error::Error as S3TablesError;
 use snafu::GenerateImplicitData;
 use snafu::{Location, Snafu, location};
 use sqlparser::parser::ParserError;
-#[cfg(feature = "state-store")]
-use state_store::error::Error as StateStoreError;
 use strum_macros::{Display, EnumString};
 
 // SnowflakeError have no query_id, it is inconvinient adding it here.
@@ -181,8 +179,6 @@ pub fn executor_error(error: &Error) -> SnowflakeError {
         Error::SqlParser { error, .. } => datafusion_parser_error(error),
         Error::Metastore { source, .. } => metastore_error(source, &[]),
         Error::Iceberg { error, .. } => iceberg_error(error, &[]),
-        #[cfg(feature = "state-store")]
-        Error::StateStore { error, .. } => state_store_error(error, &[]),
         Error::RefreshCatalogList { source, .. }
         | Error::RegisterCatalog { source, .. }
         | Error::DropDatabase { source, .. }
@@ -278,28 +274,6 @@ fn catalog_error(error: &CatalogError, subtext: &[&str]) -> SnowflakeError {
         }
         .build(),
     }
-}
-
-#[cfg(feature = "state-store")]
-fn state_store_error(error: &StateStoreError, subtext: &[&str]) -> SnowflakeError {
-    let subtext = [subtext, &["StateStore"]].concat();
-    let message = match error {
-        StateStoreError::DynamoDbPutItem { error, .. } => {
-            aws_sdk_error_message("DynamoDB put", error)
-        }
-        StateStoreError::DynamoDbGetItem { error, .. } => {
-            aws_sdk_error_message("DynamoDB get", error)
-        }
-        StateStoreError::DynamoDbDeleteItem { error, .. } => {
-            aws_sdk_error_message("DynamoDB delete", error)
-        }
-        _ => error.to_string(),
-    };
-    CustomSnafu {
-        message: format_message(&subtext, message),
-        error_code: ErrorCode::StateStore,
-    }
-    .build()
 }
 
 fn metastore_error(error: &MetastoreError, subtext: &[&str]) -> SnowflakeError {

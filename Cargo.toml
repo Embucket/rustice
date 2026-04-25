@@ -12,7 +12,6 @@ members = [
   "crates/error-stack",
   "crates/error-stack-trace",
   "crates/embucket-lambda",
-  "crates/state-store",
   "crates/build-info",
 ]
 resolver = "2"

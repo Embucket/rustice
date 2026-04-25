@@ -5,8 +5,6 @@ use crate::models::QueryContext;
 use crate::running_queries::RunningQueriesRegistry;
 use crate::service::CoreExecutionService;
 use crate::utils::Config;
-#[cfg(feature = "state-store")]
-use aws_sdk_dynamodb::{Client, Config as AwsConfig};
 use catalog_metastore::InMemoryMetastore;
 use catalog_metastore::{
     Database as MetastoreDatabase, Schema as MetastoreSchema, SchemaIdent as MetastoreSchemaIdent,
@@ -15,8 +13,6 @@ use catalog_metastore::{
 use catalog_metastore::{Metastore, VolumeType};
 use datafusion::sql::parser::DFParser;
 use functions::session_params::SessionProperty;
-#[cfg(feature = "state-store")]
-use state_store::DynamoDbStateStore;
 use std::sync::Arc;
 
 #[allow(clippy::unwrap_used, clippy::large_futures)]
@@ -126,10 +122,6 @@ pub async fn create_df_session() -> Arc<UserSession> {
         .expect("Failed to create catalog list");
     let runtime_env = CoreExecutionService::runtime_env(&config, catalog_list.clone())
         .expect("Failed to create runtime env");
-    #[cfg(feature = "state-store")]
-    let client = Client::from_conf(AwsConfig::builder().build());
-    #[cfg(feature = "state-store")]
-    let state_store = Arc::new(DynamoDbStateStore::new(client, ""));
 
     let user_session = Arc::new(
         UserSession::new(
@@ -139,8 +131,6 @@ pub async fn create_df_session() -> Arc<UserSession> {
             catalog_list,
             runtime_env,
             "",
-            #[cfg(feature = "state-store")]
-            state_store,
         )
         .await
         .expect("Failed to create user session"),

@@ -12,8 +12,6 @@ pub enum ErrorCode {
     None,
     Db,
     Metastore,
-    #[cfg(feature = "state-store")]
-    StateStore,
     ObjectStore,
     Datafusion,
     DatafusionEmbucketFn,

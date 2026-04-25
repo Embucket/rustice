@@ -1,20 +1,15 @@
 pub type QueryId = uuid::Uuid;
 use std::fmt::Display;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "state-store-query")] {
-        pub use state_store::ExecutionStatus;
-    } else {
-        use serde::{Deserialize, Serialize};
-        use std::fmt::Debug;
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-        pub enum ExecutionStatus {
-            Running,
-            Success,
-            Fail,
-            Incident,
-        }
-    }
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExecutionStatus {
+    Running,
+    Success,
+    Fail,
+    Incident,
 }
 
 #[derive(Debug, Clone, strum::Display)]

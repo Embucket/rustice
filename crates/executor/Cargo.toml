@@ -9,23 +9,8 @@ default = []
 rest-catalog = ["catalog/rest-catalog"]
 dedicated-executor = []
 
-# "state-store" feature enables DynamoDB based state-store implementation.
-state-store = []
-
-# "state-store-persist-session-oncreate" feature allows to persist empty session record.
-# Otherwise it will be persisted only if session has something to persist.
-state-store-persist-session-oncreate = ["state-store"]
-
-state-store-query-test = ["state-store-query"]
-
-# "state-store-query" feature depends on state-store feature.
-# When enabled - query status will be persisted using "state-store" implementation.
-# When not enabled - state-store will not be used by queries and query state will not be persisted.
-state-store-query = ["state-store"]
-
 [dependencies]
 catalog-metastore = { path = "../catalog-metastore" }
-state-store = { path = "../state-store" }
 catalog = { path = "../catalog" }
 functions = { path = "../functions" } # features = ["geospatial"] 
 arrow-schema = { version = "56.1.0", features = ["serde"] }

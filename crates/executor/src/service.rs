@@ -14,8 +14,6 @@ use datafusion::execution::memory_pool::{
 use datafusion::execution::runtime_env::{RuntimeEnv, RuntimeEnvBuilder};
 use datafusion_common::TableReference;
 use snafu::ResultExt;
-#[cfg(feature = "state-store-query")]
-use state_store::ExecutionStatus;
 use std::num::NonZeroUsize;
 use std::sync::atomic::Ordering;
 use std::vec;
@@ -25,8 +23,6 @@ use tokio::task;
 use tokio_util::sync::CancellationToken;
 
 use super::error::{self as ex_error, Result};
-#[cfg(feature = "state-store")]
-use super::models::SessionMetadataAttr;
 use super::models::{QueryContext, QueryResult};
 use super::running_queries::{RunningQueries, RunningQueriesRegistry, RunningQuery};
 use super::session::UserSession;
@@ -38,8 +34,6 @@ use crate::tracing::SpanTracer;
 use crate::utils::{Config, MemPoolType};
 use catalog::catalog_list::EmbucketCatalogList;
 use catalog_metastore::{InMemoryMetastore, Metastore, TableIdent as MetastoreTableIdent};
-#[cfg(feature = "state-store")]
-use state_store::{DynamoDbStateStore, StateStore, models::Query};
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing::Instrument;
@@ -153,32 +147,9 @@ pub struct CoreExecutionService {
     catalog_list: Arc<EmbucketCatalogList>,
     runtime_env: Arc<RuntimeEnv>,
     queries: Arc<RunningQueriesRegistry>,
-    #[cfg(feature = "state-store")]
-    state_store: Arc<dyn StateStore>,
 }
 
 impl CoreExecutionService {
-    #[cfg(feature = "state-store")]
-    pub async fn new_test_executor(
-        metastore: Arc<dyn Metastore>,
-        state_store: Arc<dyn StateStore>,
-        config: Arc<Config>,
-    ) -> Result<Self> {
-        Self::initialize_datafusion_tracer();
-
-        let catalog_list = Self::catalog_list(metastore.clone(), &config).await?;
-        let runtime_env = Self::runtime_env(&config, catalog_list.clone())?;
-        Ok(Self {
-            metastore,
-            df_sessions: Arc::new(RwLock::new(HashMap::new())),
-            config,
-            catalog_list,
-            runtime_env,
-            queries: Arc::new(RunningQueriesRegistry::new()),
-            state_store,
-        })
-    }
-
     #[tracing::instrument(
         name = "CoreExecutionService::new",
         level = "debug",
@@ -190,10 +161,6 @@ impl CoreExecutionService {
 
         let catalog_list = Self::catalog_list(metastore.clone(), &config).await?;
         let runtime_env = Self::runtime_env(&config, catalog_list.clone())?;
-        #[cfg(feature = "state-store")]
-        let state_store = DynamoDbStateStore::new_from_env()
-            .await
-            .context(ex_error::StateStoreSnafu)?;
         Ok(Self {
             metastore,
             df_sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -201,8 +168,6 @@ impl CoreExecutionService {
             catalog_list,
             runtime_env,
             queries: Arc::new(RunningQueriesRegistry::new()),
-            #[cfg(feature = "state-store")]
-            state_store: Arc::new(state_store),
         })
     }
 
@@ -310,8 +275,6 @@ impl ExecutionService for CoreExecutionService {
                 self.catalog_list.clone(),
                 self.runtime_env.clone(),
                 session_id,
-                #[cfg(feature = "state-store")]
-                self.state_store.clone(),
             )
             .await?,
         );
@@ -320,12 +283,6 @@ impl ExecutionService for CoreExecutionService {
             let mut sessions = self.df_sessions.write().await;
             tracing::trace!("Acquired write lock for df_sessions");
             sessions.insert(session_id.to_string(), user_session.clone());
-
-            #[cfg(feature = "state-store-persist-session-oncreate")]
-            self.state_store
-                .put_new_session(session_id)
-                .await
-                .context(ex_error::StateStoreSnafu)?;
 
             // Record the result as part of the current span.
             tracing::Span::current().record("new_sessions_count", sessions.len());
@@ -520,61 +477,11 @@ impl ExecutionService for CoreExecutionService {
 
         let query_id = query_context.query_id;
 
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "state-store-query")] {
-                let mut query = Query::new(
-                    query_text,
-                    query_id,
-                    session_id,
-                    query_context.request_id,
-                );
-                query.set_execution_status(ExecutionStatus::Running);
-                query.set_warehouse_type(self.config.warehouse_type.clone());
-                query.set_release_version(self.config.build_version.clone());
-                // session context set by user during login
-                if let Some(database) = &query_context.database {
-                    query.set_user_database(database.clone());
-                }
-                if let Some(schema) = &query_context.schema {
-                    query.set_user_schema(schema.clone());
-                }
-                if let Some(query_submission_time) = &query_context.query_submission_time {
-                    query.set_query_submission_time(*query_submission_time);
-                }
-                if let Some(session_metadata) = &query_context.session_metadata {
-                    if let Some(user_name) = session_metadata.attr(SessionMetadataAttr::UserName) {
-                        query.set_user_name(user_name);
-                    }
-                    if let Some(client_app_id) = session_metadata.attr(SessionMetadataAttr::ClientAppId) {
-                        query.set_client_app_id(client_app_id);
-                    }
-                    if let Some(client_app_version) = session_metadata.attr(SessionMetadataAttr::ClientAppVersion) {
-                        query.set_client_app_version(client_app_version);
-                    }
-                }
-            }
-        }
-
         if self.queries.count() >= self.config.max_concurrency_level {
             let limit_exceeded = ExecutionTaskResult::from_query_limit_exceeded(query_id);
-            #[cfg(feature = "state-store-query")]
-            {
-                // query created with failed status already
-                limit_exceeded.assign_query_attributes(&mut query);
-                self.state_store
-                    .put_query(&query)
-                    .await
-                    .context(ex_error::StateStoreSnafu)?;
-            }
             // here we always return error, but Ok should fit Result type too
             return limit_exceeded.result.map(|_| query_id);
         }
-
-        #[cfg(feature = "state-store-query")]
-        self.state_store
-            .put_query(&query)
-            .await
-            .context(ex_error::StateStoreSnafu)?;
 
         // Record the result as part of the current span.
         tracing::Span::current()
@@ -593,8 +500,6 @@ impl ExecutionService for CoreExecutionService {
             session_id = %session_id
         );
         let handle = tokio::spawn({
-            #[cfg(feature = "state-store-query")]
-            let state_store = self.state_store.clone();
             let query_text = query_text.to_string();
             let query_timeout = Duration::from_secs(self.config.query_timeout_secs);
             let queries_registry = self.queries.clone();
@@ -602,12 +507,6 @@ impl ExecutionService for CoreExecutionService {
             async move {
                 let sub_task_span = tracing::info_span!("spawn_query_sub_task");
                 let mut query_obj = user_session.query(query_text, query_context);
-                #[cfg(feature = "state-store-query")]
-                {
-                    // effective database/schema at planning/execution time
-                    query.set_database_name(query_obj.current_database());
-                    query.set_schema_name(query_obj.current_schema());
-                }
 
                 // Create nested task so in case of abort/timeout it can be aborted
                 // and result is handled properly (status / query result saved)
@@ -649,22 +548,6 @@ impl ExecutionService for CoreExecutionService {
                     error_code = format!("{:?}", execution_result.error_code),
                 )
                 .entered();
-
-                cfg_if::cfg_if! {
-                    if #[cfg(feature = "state-store-query")] {
-                        execution_result.assign_query_attributes(&mut query);
-                        if let Some(stats) = queries_registry.cloned_stats(query_id) && let Some(query_type) = stats.query_type {
-                            query.set_query_type(query_type.to_string());
-                            execution_result.assign_rows_counts_attributes(&mut query, query_type);
-                        }
-                        // just log error and do not raise it from task
-                        if let Err(err) = state_store.update_query(&query).await {
-                            tracing::error!("Failed to update query {query_id}: {err:?}");
-                        }
-                    } else {
-                        user_session.record_query_id(query_id);
-                    }
-                }
 
                 // Notify subscribers query finishes and result is ready.
                 // Do not immediately remove query from running queries registry

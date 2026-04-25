@@ -3564,7 +3564,6 @@ dependencies = [
  "serde_json",
  "snafu",
  "sqlparser 0.61.0",
- "state-store",
  "strum 0.27.2",
  "strum_macros 0.27.2",
  "time",
@@ -7141,18 +7140,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_dynamo"
-version = "4.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "873a97c3f7a67dd042bceb47d056d288424b82d4c66b0a25e1a3b34675620951"
-dependencies = [
- "aws-sdk-dynamodb",
- "base64 0.21.7",
- "serde",
- "serde_core",
-]
-
-[[package]]
 name = "serde_json"
 version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7493,26 +7480,6 @@ dependencies = [
  "libc",
  "psm",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "state-store"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "aws-config",
- "aws-credential-types",
- "aws-sdk-dynamodb",
- "chrono",
- "error-stack",
- "error-stack-trace",
- "mockall",
- "serde",
- "serde_dynamo",
- "serde_json",
- "snafu",
- "uuid",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -9162,12 +9129,6 @@ name = "xmlparser"
 version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4"
-
-[[package]]
-name = "xxhash-rust"
-version = "0.8.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yoke"
