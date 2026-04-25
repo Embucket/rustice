@@ -1,5 +1,6 @@
 ---
 source: crates/executor/src/tests/sql/functions/timestamp/date_part_extract.rs
+assertion_line: 20
 description: "\"SELECT WEEK('2016-01-02T23:39:20.123-07:00'::TIMESTAMP)\""
 info: "Setup queries: ALTER SESSION SET WEEK_OF_YEAR_POLICY = '1'"
 ---
@@ -8,7 +9,7 @@ Ok(
         "+-----------------------------------------------------------+",
         "| week(to_timestamp(Utf8(\"2016-01-02T23:39:20.123-07:00\"))) |",
         "+-----------------------------------------------------------+",
-        "| 1                                                         |",
+        "| 53                                                        |",
         "+-----------------------------------------------------------+",
     ],
 )

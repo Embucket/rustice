@@ -1434,7 +1434,7 @@ impl UserQuery {
                     LogicalPlan::SubqueryAlias(
                         SubqueryAlias::try_new(
                             Arc::new(source_plan),
-                            TableReference::parse_str(&alias.to_string()),
+                            TableReference::parse_str(&alias.name.to_string()),
                         )
                         .context(ex_error::DataFusionLogicalPlanMergeSourceSnafu)?,
                     )
