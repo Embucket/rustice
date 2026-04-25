@@ -189,7 +189,8 @@ where
         sql_test.executor_cfg.clone(),
         sql_test.metastore_settings_config.clone(),
         sql_test.metastore_cfg.clone(),
-    );
+    )
+    .await;
     let skip_login_token = sql_test
         .skip_login
         .then(|| sql_test.create_access_token(server_addr));

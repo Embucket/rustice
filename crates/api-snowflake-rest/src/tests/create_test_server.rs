@@ -8,10 +8,9 @@ use catalog_metastore::metastore_settings_config::MetastoreSettingsConfig;
 use executor::utils::Config as UtilsConfig;
 use std::net::SocketAddr;
 use std::net::TcpListener;
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::runtime::Builder;
+use tokio::sync::Notify;
 #[cfg(feature = "traces-test-log")]
 use tracing_subscriber::{fmt, fmt::format::FmtSpan};
 
@@ -39,7 +38,7 @@ pub fn metastore_default_settings_cfg() -> MetastoreSettingsConfig {
 }
 
 #[allow(clippy::expect_used)]
-pub fn run_test_rest_api_server(
+pub async fn run_test_rest_api_server(
     rest_cfg: Option<RestApiConfig>,
     executor_cfg: Option<UtilsConfig>,
     metastore_settings_cfg: Option<MetastoreSettingsConfig>,
@@ -50,51 +49,36 @@ pub fn run_test_rest_api_server(
     let metastore_settings_cfg =
         metastore_settings_cfg.unwrap_or_else(metastore_default_settings_cfg);
 
-    let server_cond = Arc::new((Mutex::new(false), Condvar::new())); // Shared state with a condition 
-    let server_cond_clone = Arc::clone(&server_cond);
+    let notify = Arc::new(Notify::new());
+    let notify_clone = Arc::clone(&notify);
 
     let listener = TcpListener::bind("0.0.0.0:0").expect("Failed to bind to address");
     let addr = listener.local_addr().expect("Failed to get local address");
 
-    // Start a new thread for the server
-    let _handle = std::thread::spawn(move || {
-        // Create the Tokio runtime
-        let rt = Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create Tokio runtime");
-
-        // Start the Axum server
-        rt.block_on(async {
-            let () = run_test_rest_api_server_with_config(
-                rest_cfg,
-                executor_cfg,
-                metastore_settings_cfg,
-                metastore_cfg,
-                listener,
-                server_cond_clone,
-            )
-            .await;
-        });
+    // Spawn the server as a task on the current runtime
+    tokio::spawn(async move {
+        run_test_rest_api_server_with_config(
+            rest_cfg,
+            executor_cfg,
+            metastore_settings_cfg,
+            metastore_cfg,
+            listener,
+            notify_clone,
+        )
+        .await;
     });
-    // Note: Not joining thread as
-    // We are not interested in graceful thread termination, as soon out tests passed.
 
-    let (lock, cvar) = &*server_cond;
     let timeout_duration = std::time::Duration::from_secs(1);
 
-    // Lock the mutex and wait for notification with timeout
-    let notified = lock.lock().expect("Failed to lock mutex");
-    let result = cvar
-        .wait_timeout(notified, timeout_duration)
-        .expect("Failed to wait for server start");
-
-    // Check if notified or timed out
-    if *result.0 {
-        tracing::info!("Test server is up and running.");
-        thread::sleep(Duration::from_millis(10));
-    } else {
-        tracing::error!("Timeout occurred while waiting for server start.");
+    // Await notification without blocking tokio worker threads
+    match tokio::time::timeout(timeout_duration, notify.notified()).await {
+        Ok(()) => {
+            tracing::info!("Test server is up and running.");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        Err(_) => {
+            tracing::error!("Timeout occurred while waiting for server start.");
+        }
     }
 
     addr
@@ -182,7 +166,7 @@ pub async fn run_test_rest_api_server_with_config(
     metastore_settings_cfg: MetastoreSettingsConfig,
     metastore_cfg: MetastoreConfig,
     listener: std::net::TcpListener,
-    server_cond: Arc<(Mutex<bool>, Condvar)>,
+    notify: Arc<Notify>,
 ) {
     let addr = listener.local_addr().unwrap();
 
@@ -201,13 +185,8 @@ pub async fn run_test_rest_api_server_with_config(
     let app = make_snowflake_router(AppState::from(&core_state))
         .into_make_service_with_connect_info::<SocketAddr>();
 
-    // Lock the mutex and set the notification flag
-    {
-        let (lock, cvar) = &*server_cond;
-        let mut notify_server_started = lock.lock().unwrap();
-        *notify_server_started = true; // Set notification
-        cvar.notify_one(); // Notify the waiting thread
-    }
+    // Notify the waiting task that the server is ready
+    notify.notify_one();
 
     tracing::info!("Server ready at {addr}");
 
