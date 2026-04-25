@@ -76,8 +76,7 @@ fn is_git_dirty() -> String {
     let has_changes = Command::new("git")
         .args(["diff-index", "--quiet", "HEAD", "--"])
         .status()
-        .map(|status| !status.success())
-        .unwrap_or(false);
+        .is_ok_and(|status| !status.success());
 
     if has_changes {
         return "true".to_string();
