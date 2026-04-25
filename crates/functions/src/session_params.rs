@@ -6,8 +6,8 @@ use datafusion::logical_expr::sqlparser::ast::helpers::key_value_options::{
     KeyValueOption, KeyValueOptionKind,
 };
 use datafusion_common::config::{ConfigEntry, ConfigExtension, ExtensionOptions};
-use datafusion_common::{ParamValues, ScalarValue};
 use datafusion_common::metadata::ScalarAndMetadata;
+use datafusion_common::{ParamValues, ScalarValue};
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
@@ -69,7 +69,13 @@ impl From<SessionParams> for ParamValues {
             .filter_map(|entry| {
                 let (key, prop) = (entry.key().clone(), entry.value().clone());
                 prop.to_scalar_value().map(|scalar| {
-                    (key, ScalarAndMetadata { value: scalar, metadata: None })
+                    (
+                        key,
+                        ScalarAndMetadata {
+                            value: scalar,
+                            metadata: None,
+                        },
+                    )
                 })
             })
             .collect();
@@ -102,12 +108,14 @@ impl SessionProperty {
                 (v.to_string(), property_type.to_string())
             }
             KeyValueOptionKind::Multi(values) => {
-                let s = values.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",");
+                let s = values
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
                 (s, "text".to_string())
             }
-            KeyValueOptionKind::KeyValueOptions(opts) => {
-                (opts.to_string(), "text".to_string())
-            }
+            KeyValueOptionKind::KeyValueOptions(opts) => (opts.to_string(), "text".to_string()),
         };
         Self {
             session_id: Some(session_id),

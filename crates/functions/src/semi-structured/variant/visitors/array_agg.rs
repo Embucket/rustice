@@ -85,7 +85,9 @@ mod tests {
 
         // Create table and insert data
         let create_sql = "CREATE TABLE test_table (id INT, val INT)";
-        let mut create_stmt = ctx.state().sql_to_statement(create_sql, &Dialect::Snowflake)?;
+        let mut create_stmt = ctx
+            .state()
+            .sql_to_statement(create_sql, &Dialect::Snowflake)?;
         if let DFStatement::Statement(ref mut stmt) = create_stmt {
             visit(stmt);
         }

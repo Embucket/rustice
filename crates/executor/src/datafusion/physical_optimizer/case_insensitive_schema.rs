@@ -1,17 +1,15 @@
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::physical_plan::{
-    FileScanConfig, FileScanConfigBuilder, ParquetSource,
-};
+use datafusion::datasource::physical_plan::{FileScanConfig, FileScanConfigBuilder, ParquetSource};
 use datafusion::datasource::source::DataSourceExec;
 use datafusion::error::Result as DFResult;
-use datafusion::physical_optimizer::PhysicalOptimizerRule;
-use datafusion_common::config::ConfigOptions;
-use datafusion_common::tree_node::{Transformed, TransformedResult, TreeNode};
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr_adapter::{
     DefaultPhysicalExprAdapterFactory, PhysicalExprAdapter, PhysicalExprAdapterFactory,
 };
 use datafusion::physical_expr_common::physical_expr::PhysicalExpr;
+use datafusion::physical_optimizer::PhysicalOptimizerRule;
+use datafusion_common::config::ConfigOptions;
+use datafusion_common::tree_node::{Transformed, TransformedResult, TreeNode};
 use datafusion_physical_plan::ExecutionPlan;
 use std::sync::Arc;
 
@@ -92,8 +90,8 @@ impl PhysicalExprAdapterFactory for CaseInsensitiveExprAdapterFactory {
         // Create a normalized (lowercased) version of the physical schema
         // so that the default adapter can match columns case-insensitively
         let normalized_physical = normalize_schema_ref(&physical_file_schema);
-        let inner = DefaultPhysicalExprAdapterFactory
-            .create(logical_file_schema, normalized_physical)?;
+        let inner =
+            DefaultPhysicalExprAdapterFactory.create(logical_file_schema, normalized_physical)?;
         Ok(Arc::new(CaseInsensitiveExprAdapter {
             inner,
             physical_file_schema,
@@ -119,11 +117,9 @@ impl PhysicalExprAdapter for CaseInsensitiveExprAdapter {
                     let col_name_lower = col.name().to_ascii_lowercase();
                     for (i, field) in self.physical_file_schema.fields().iter().enumerate() {
                         if field.name().to_ascii_lowercase() == col_name_lower {
-                            return Ok(Transformed::yes(Arc::new(Column::new(
-                                field.name(),
-                                i,
-                            ))
-                                as Arc<dyn PhysicalExpr>));
+                            return Ok(Transformed::yes(
+                                Arc::new(Column::new(field.name(), i)) as Arc<dyn PhysicalExpr>
+                            ));
                         }
                     }
                 }

@@ -3,13 +3,13 @@ use crate::{
     SchemaIdent, TableFormat, TableIdent, Volume, VolumeIdent, VolumeType,
 };
 use aws_config::meta::credentials::CredentialsProviderChain;
-use object_store::ObjectStoreExt;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
 use aws_sdk_s3tables::Client as S3TablesClient;
 use iceberg_rust::spec::table_metadata::TableMetadata;
 use iceberg_rust::spec::util::strip_prefix;
+use object_store::ObjectStoreExt;
 use serde::Deserialize;
 use serde_json::Value;
 use snafu::prelude::*;

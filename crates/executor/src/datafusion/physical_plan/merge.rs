@@ -64,8 +64,12 @@ impl MergeIntoCOWSinkExec {
         let emission_type = EmissionType::Final; // Final emission after all processing is complete
         let boundedness = Boundedness::Bounded; // Bounded operation that completes
 
-        let properties =
-            Arc::new(PlanProperties::new(eq_properties, partitioning, emission_type, boundedness));
+        let properties = Arc::new(PlanProperties::new(
+            eq_properties,
+            partitioning,
+            emission_type,
+            boundedness,
+        ));
         Self {
             schema,
             input,

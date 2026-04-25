@@ -6,8 +6,8 @@ use datafusion::logical_expr::{ColumnarValue, ScalarUDFImpl, Signature, Volatili
 use datafusion_common::cast::as_string_array;
 use datafusion_common::utils::take_function_args;
 use datafusion_expr::ScalarFunctionArgs;
-use md5::Md5;
 use md5::Digest;
+use md5::Md5;
 use std::any::Any;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -80,11 +80,13 @@ impl ScalarUDFImpl for Md5Func {
         let string_array = as_string_array(&arr)?;
         let result: StringArray = string_array
             .iter()
-            .map(|opt| opt.map(|s| {
-                let mut hasher = Md5::new();
-                hasher.update(s.as_bytes());
-                hex_encode(hasher.finalize())
-            }))
+            .map(|opt| {
+                opt.map(|s| {
+                    let mut hasher = Md5::new();
+                    hasher.update(s.as_bytes());
+                    hex_encode(hasher.finalize())
+                })
+            })
             .collect();
         Ok(ColumnarValue::Array(Arc::new(result)))
     }
