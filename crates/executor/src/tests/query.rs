@@ -19,7 +19,7 @@ use functions::session_params::SessionProperty;
 use state_store::DynamoDbStateStore;
 use std::sync::Arc;
 
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::large_futures)]
 #[tokio::test]
 async fn test_update_all_table_names_visitor() {
     let args = vec![
