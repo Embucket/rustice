@@ -6,13 +6,13 @@ use iceberg_rust::catalog::Catalog as IcebergCatalog;
 use iceberg_rust::error::Error as IcebergError;
 use iceberg_rust_spec::namespace::Namespace;
 use snafu::ResultExt;
+use std::{any::Any, sync::Arc};
+use tracing::error;
 
 fn make_namespace(schema: &str) -> Result<Namespace, IcebergError> {
     Namespace::try_new(std::slice::from_ref(&schema.to_string()))
         .map_err(|e| IcebergError::External(Box::new(e)))
 }
-use std::{any::Any, sync::Arc};
-use tracing::error;
 
 pub struct EmbucketCatalog {
     pub database: String,
