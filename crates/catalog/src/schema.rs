@@ -1,7 +1,7 @@
 use crate::catalog::CatalogConfig;
-use crate::df_error::CatalogSnafu;
+use crate::error;
+use crate::error::Result as CatalogResult;
 use crate::table::{CachingTable, IcebergTableBuilder};
-use crate::{block_on_with_timeout, error};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use datafusion::catalog::{SchemaProvider, TableProvider};
@@ -9,6 +9,7 @@ use datafusion_common::DataFusionError;
 use datafusion_expr::TableType;
 use datafusion_iceberg::DataFusionTable;
 use iceberg_rust::catalog::Catalog;
+use iceberg_rust::catalog::create::CreateTableBuilder;
 use iceberg_rust::catalog::tabular::Tabular as IcebergTabular;
 use iceberg_rust_spec::identifier::Identifier;
 use snafu::ResultExt;
@@ -41,7 +42,11 @@ impl SchemaProvider for CachingSchema {
     }
 
     fn table_names(&self) -> Vec<String> {
-        self.schema.table_names()
+        // Sorted for the same reason as `CachingCatalog::schema_names`: the
+        // underlying iceberg mirror is a DashMap with non-deterministic order.
+        let mut names = self.schema.table_names();
+        names.sort();
+        names
     }
 
     #[allow(clippy::as_conversions)]
@@ -72,41 +77,30 @@ impl SchemaProvider for CachingSchema {
         }
     }
 
+    /// Register a table. For iceberg-backed schemas, the iceberg table must
+    /// already have been created via `create_iceberg_table_async` (or another
+    /// async path) before invoking this method — the sync trait method only
+    /// updates the in-memory mirror and the local cache so reads see the new
+    /// table. Passing an `IcebergTableBuilder` here is a programming error.
     fn register_table(
         &self,
         name: String,
         table: Arc<dyn TableProvider>,
     ) -> datafusion_common::Result<Option<Arc<dyn TableProvider>>> {
-        let table_provider: Arc<dyn TableProvider> = if let Some(catalog) = &self.iceberg_catalog
-            && let Some(iceberg_builder) = table.as_any().downcast_ref::<IcebergTableBuilder>()
+        if self.iceberg_catalog.is_some()
+            && table.as_any().downcast_ref::<IcebergTableBuilder>().is_some()
         {
-            let catalog = Arc::clone(catalog);
-            let mut builder = iceberg_builder.builder.clone();
-            let namespace = vec![self.name.clone()];
-            let table_name = name.clone();
+            return Err(DataFusionError::Internal(
+                "register_table called with IcebergTableBuilder; \
+                 callers must use CachingSchema::create_iceberg_table_async instead"
+                    .to_string(),
+            ));
+        }
 
-            let provider = block_on_with_timeout(
-                async move {
-                    let ident = Identifier::new(&namespace, &table_name);
-                    let iceberg_table = builder
-                        .build(ident.namespace(), catalog)
-                        .await
-                        .context(error::IcebergSnafu)?;
-                    let tabular = IcebergTabular::Table(iceberg_table);
-                    let table_provider: Arc<dyn TableProvider> =
-                        Arc::new(DataFusionTable::new(tabular, None, None, None));
-                    Ok(table_provider)
-                },
-                self.config.catalog_timeout(),
-            )
-            .context(CatalogSnafu)?
-            .map_err(|err: error::Error| DataFusionError::External(Box::new(err)))?;
-
-            // Update the inner mirror so reads see the new table. The provider
-            // argument is required by the trait but ignored by IcebergSchema.
+        let table_provider: Arc<dyn TableProvider> = if self.iceberg_catalog.is_some() {
             self.schema
-                .register_table(name.clone(), Arc::clone(&provider))?;
-            provider
+                .register_table(name.clone(), Arc::clone(&table))?;
+            table
         } else if table.table_type() == TableType::View {
             table
         } else {
@@ -120,6 +114,9 @@ impl SchemaProvider for CachingSchema {
         Ok(Some(table_provider))
     }
 
+    /// Deregister a table. For iceberg-backed schemas, the iceberg table must
+    /// already have been dropped via `drop_table_async`. The sync trait method
+    /// only updates the mirror and local cache.
     #[allow(clippy::as_conversions)]
     fn deregister_table(
         &self,
@@ -129,25 +126,8 @@ impl SchemaProvider for CachingSchema {
 
         if let Some((_, caching_table)) = table {
             if caching_table.table_type() != TableType::View {
-                if let Some(catalog) = &self.iceberg_catalog {
-                    let catalog = Arc::clone(catalog);
-                    let namespace = vec![self.name.clone()];
-                    let table_name = name.to_string();
-
-                    block_on_with_timeout(
-                        async move {
-                            let ident = Identifier::new(&namespace, &table_name);
-                            catalog
-                                .drop_table(&ident)
-                                .await
-                                .context(error::IcebergSnafu)
-                        },
-                        self.config.catalog_timeout(),
-                    )
-                    .context(CatalogSnafu)?
-                    .map_err(|err| DataFusionError::External(Box::new(err)))?;
-
-                    // Drop from the mirror so reads stop returning it.
+                if self.iceberg_catalog.is_some() {
+                    // Mirror-only update; iceberg drop is the caller's responsibility.
                     let _ = self.schema.deregister_table(name)?;
                 } else {
                     return self.schema.deregister_table(name);
@@ -163,5 +143,92 @@ impl SchemaProvider for CachingSchema {
             return true;
         }
         self.schema.table_exist(name)
+    }
+}
+
+impl CachingSchema {
+    /// Asynchronously create an iceberg table from a `CreateTableBuilder` and
+    /// reflect it in the in-memory mirror and local cache. Use this from async
+    /// SQL handlers instead of the sync `register_table` trait method.
+    #[tracing::instrument(
+        name = "CachingSchema::create_iceberg_table_async",
+        level = "debug",
+        skip(self, builder),
+        err
+    )]
+    pub async fn create_iceberg_table_async(
+        &self,
+        name: String,
+        mut builder: CreateTableBuilder,
+    ) -> CatalogResult<Arc<dyn TableProvider>> {
+        let catalog = self
+            .iceberg_catalog
+            .clone()
+            .ok_or_else(|| iceberg_rust::error::Error::NotFound("iceberg catalog".to_string()))
+            .context(error::IcebergSnafu)?;
+        let namespace = vec![self.name.clone()];
+        let ident = Identifier::new(&namespace, &name);
+        let iceberg_table = builder
+            .build(ident.namespace(), catalog)
+            .await
+            .context(error::IcebergSnafu)?;
+
+        let provider: Arc<dyn TableProvider> = Arc::new(DataFusionTable::new(
+            IcebergTabular::Table(iceberg_table),
+            None,
+            None,
+            None,
+        ));
+
+        // Update the inner mirror. Argument is ignored by IcebergSchema.
+        self.schema
+            .register_table(name.clone(), Arc::clone(&provider))
+            .context(error::DataFusionSnafu)?;
+
+        let caching_table = Arc::new(CachingTable::new(name.clone(), Arc::clone(&provider)));
+        self.tables_cache.insert(name, caching_table);
+        Ok(provider)
+    }
+
+    /// Asynchronously drop an iceberg table and remove it from the mirror and
+    /// local cache.
+    #[tracing::instrument(
+        name = "CachingSchema::drop_table_async",
+        level = "debug",
+        skip(self),
+        err
+    )]
+    pub async fn drop_table_async(
+        &self,
+        name: &str,
+    ) -> CatalogResult<Option<Arc<CachingTable>>> {
+        let removed = self.tables_cache.remove(name).map(|(_, t)| t);
+
+        if let Some(catalog) = &self.iceberg_catalog {
+            let namespace = vec![self.name.clone()];
+            let ident = Identifier::new(&namespace, name);
+            // Best-effort: ignore errors when dropping a view through this path —
+            // views go through deregister via the catalog provider, not here.
+            if removed
+                .as_ref()
+                .is_some_and(|t| t.table_type() != TableType::View)
+            {
+                catalog
+                    .drop_table(&ident)
+                    .await
+                    .context(error::IcebergSnafu)?;
+            }
+            // Mirror update.
+            let _ = self
+                .schema
+                .deregister_table(name)
+                .context(error::DataFusionSnafu)?;
+        } else {
+            let _ = self
+                .schema
+                .deregister_table(name)
+                .context(error::DataFusionSnafu)?;
+        }
+        Ok(removed)
     }
 }

@@ -1,10 +1,3 @@
-use error::Result;
-use snafu::ResultExt;
-use std::future::Future;
-use tokio::runtime::{Builder, Handle, RuntimeFlavor};
-use tokio::task;
-use tracing::{Span, instrument};
-
 #[allow(clippy::module_inception)]
 pub mod catalog;
 pub mod catalog_list;
@@ -19,57 +12,6 @@ pub mod utils;
 
 #[cfg(test)]
 pub mod tests;
-
-/// Runs an async future from synchronous code without triggering Tokio runtime deadlocks.
-///
-/// If already inside a Tokio runtime:
-///   - On a single-threaded runtime, the future is executed in a `spawn_blocking` worker
-///     using a non-Tokio executor to avoid nested `block_on`.
-///   - On a multithreaded runtime, `block_in_place` is used safely.
-///
-/// If no Tokio runtime is active, a new temporary runtime is created and used to run the future.
-#[instrument(level = "debug", skip(future), fields(future_type = ""))]
-pub fn block_in_new_runtime<F, R>(future: F) -> Result<R>
-where
-    F: Future<Output = Result<R>> + Send + 'static,
-    R: Send + 'static,
-{
-    Span::current().record("future_type", std::any::type_name::<F>());
-    if let Ok(handle) = Handle::try_current() {
-        match handle.runtime_flavor() {
-            RuntimeFlavor::CurrentThread => {
-                let join_handle = task::spawn_blocking(|| futures::executor::block_on(future));
-                match futures::executor::block_on(join_handle) {
-                    Ok(res) => res,
-                    Err(_) => error::ThreadPanickedWhileExecutingFutureSnafu.fail()?,
-                }
-            }
-            _ => task::block_in_place(|| handle.block_on(future)),
-        }
-    } else {
-        // Try to create a dedicated Tokio runtime when none is available
-        let rt = Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .context(error::CreateTokioRuntimeSnafu)?;
-        // Execute the future and map its error
-        rt.block_on(future)
-    }
-}
-
-fn block_on_with_timeout<F>(future: F, timeout_duration: tokio::time::Duration) -> Result<F::Output>
-where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
-{
-    let future_with_timeout = async move {
-        tokio::time::timeout(timeout_duration, future)
-            .await
-            .context(error::TimeoutSnafu)
-    };
-
-    block_in_new_runtime(future_with_timeout)
-}
 
 pub mod test_utils {
     use datafusion::arrow::array::{ArrayRef, RecordBatch};

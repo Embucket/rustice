@@ -36,21 +36,6 @@ pub enum Error {
         location: Location,
     },
 
-    // TODO: find better place. maybe separate tokio-runtime module in core-utils ?
-    #[snafu(display("Error creating Tokio runtime: {error}"))]
-    CreateTokioRuntime {
-        #[snafu(source)]
-        error: std::io::Error,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    #[snafu(display("Thread panicked while executing future"))]
-    ThreadPanickedWhileExecutingFuture {
-        #[snafu(implicit)]
-        location: Location,
-    },
-
     #[snafu(display("Invalid cache: Can't locate '{entity:?}' entity = {name}"))]
     InvalidCache {
         entity: String,
@@ -88,13 +73,6 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("Timeout occured: {error:?}"))]
-    Timeout {
-        #[snafu(source(from(tokio::time::error::Elapsed, std::io::Error::from)))]
-        error: std::io::Error,
-        #[snafu(implicit)]
-        location: Location,
-    },
 }
 
 #[allow(clippy::from_over_into)]

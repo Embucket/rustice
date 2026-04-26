@@ -1,6 +1,7 @@
 use crate::catalog_list::CatalogListConfig;
+use crate::error;
+use crate::error::Result as CatalogResult;
 use crate::schema::CachingSchema;
-use crate::{block_on_with_timeout, error};
 use chrono::NaiveDateTime;
 use dashmap::DashMap;
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
@@ -133,6 +134,94 @@ impl CachingCatalog {
         self
     }
 
+    /// Asynchronously create a namespace in the underlying iceberg catalog and
+    /// reflect it in the in-memory mirror. Use this from async SQL handlers
+    /// instead of calling the sync `register_schema` trait method, which only
+    /// updates the mirror.
+    ///
+    /// Returns the resulting `CachingSchema` wrapper.
+    #[tracing::instrument(
+        name = "CachingCatalog::create_namespace_async",
+        level = "debug",
+        skip(self),
+        err
+    )]
+    pub async fn create_namespace_async(&self, name: &str) -> CatalogResult<Arc<CachingSchema>> {
+        if let Some(catalog) = &self.iceberg_catalog {
+            let namespace = Namespace::try_new(std::slice::from_ref(&name.to_string()))
+                .map_err(|err| iceberg_rust::error::Error::External(Box::new(err)))
+                .context(error::IcebergSnafu)?;
+            catalog
+                .create_namespace(&namespace, None)
+                .await
+                .context(error::IcebergSnafu)?;
+        }
+
+        // Update the mirror so subsequent reads see the namespace.
+        // The schema argument is required by the trait but ignored by IcebergCatalog.
+        let dummy = empty_mirror_schema();
+        let _ = self
+            .catalog
+            .register_schema(name, dummy)
+            .context(error::DataFusionSnafu)?;
+
+        let schema_provider = self
+            .catalog
+            .schema(name)
+            .ok_or_else(|| {
+                DataFusionError::Internal(format!(
+                    "Failed to look up newly registered schema {name} in catalog {}",
+                    self.name
+                ))
+            })
+            .context(error::DataFusionSnafu)?;
+
+        let caching_schema = Arc::new(CachingSchema {
+            name: name.to_string(),
+            schema: schema_provider,
+            tables_cache: DashMap::new(),
+            iceberg_catalog: self.iceberg_catalog.clone(),
+            config: self.config.clone(),
+        });
+        self.schemas_cache
+            .insert(name.to_string(), Arc::clone(&caching_schema));
+        Ok(caching_schema)
+    }
+
+    /// Asynchronously drop a namespace from the underlying iceberg catalog and
+    /// remove it from the in-memory mirror.
+    #[tracing::instrument(
+        name = "CachingCatalog::drop_namespace_async",
+        level = "debug",
+        skip(self),
+        err
+    )]
+    pub async fn drop_namespace_async(
+        &self,
+        name: &str,
+        cascade: bool,
+    ) -> CatalogResult<Option<Arc<CachingSchema>>> {
+        if let Some(catalog) = &self.iceberg_catalog {
+            let namespace = Namespace::try_new(std::slice::from_ref(&name.to_string()))
+                .map_err(|err| iceberg_rust::error::Error::External(Box::new(err)))
+                .context(error::IcebergSnafu)?;
+            catalog
+                .drop_namespace(&namespace)
+                .await
+                .context(error::IcebergSnafu)?;
+        }
+
+        let _ = self
+            .catalog
+            .deregister_schema(name, cascade)
+            .context(error::DataFusionSnafu)?;
+        Ok(self.schemas_cache.remove(name).map(|(_, s)| s))
+    }
+}
+
+fn empty_mirror_schema() -> Arc<dyn SchemaProvider> {
+    use datafusion::catalog::MemorySchemaProvider;
+    Arc::new(MemorySchemaProvider::new())
 }
 
 #[allow(clippy::missing_fields_in_debug)]
@@ -159,7 +248,11 @@ impl CatalogProvider for CachingCatalog {
         fields(schemas_names_count, catalog_name=format!("{:?}", self.name)),
     )]
     fn schema_names(&self) -> Vec<String> {
-        let schema_names = self.catalog.schema_names();
+        let mut schema_names = self.catalog.schema_names();
+        // The underlying iceberg mirror uses a DashMap whose iteration order is
+        // non-deterministic. Sort here so callers (information_schema, SHOW
+        // SCHEMAS, snapshot tests) see a stable ordering.
+        schema_names.sort();
 
         // Remove outdated records
         let schema_names_set: std::collections::HashSet<_> = schema_names.iter().cloned().collect();
@@ -200,34 +293,20 @@ impl CatalogProvider for CachingCatalog {
         skip(self),
         fields(schemas_names_count, catalog_name=format!("{:?}", self.name)),
     )]
+    /// Register a schema. For non-iceberg catalogs this delegates to the inner
+    /// provider as usual. For iceberg-backed catalogs this only updates the
+    /// in-memory mirror — the namespace must already have been created in the
+    /// iceberg catalog by an earlier `create_namespace_async` call.
     fn register_schema(
         &self,
         name: &str,
         schema: Arc<dyn SchemaProvider>,
     ) -> datafusion_common::Result<Option<Arc<dyn SchemaProvider>>> {
-        let Some(catalog) = self.iceberg_catalog.clone() else {
+        if self.iceberg_catalog.is_none() {
             return self.catalog.register_schema(name, schema);
-        };
-        let namespace = Namespace::try_new(std::slice::from_ref(&name.to_string()))
-            .map_err(|err| DataFusionError::External(Box::new(err)))?;
+        }
 
-        #[allow(clippy::expect_used)]
-        block_on_with_timeout(
-            async move {
-                catalog
-                    .create_namespace(&namespace, None)
-                    .await
-                    .context(error::IcebergSnafu)
-            },
-            self.config.catalog_timeout(),
-        )
-        .expect("Catalog timeout on: create_namespace")
-        .map_err(|err| DataFusionError::External(Box::new(err)))?;
-
-        // Update the inner mirror so that subsequent reads see the new namespace.
-        // The argument is required by the trait but ignored by IcebergCatalog.
         let _ = self.catalog.register_schema(name, Arc::clone(&schema))?;
-
         let schema_provider = self.catalog.schema(name).ok_or_else(|| {
             DataFusionError::Internal(format!(
                 "Failed to look up newly registered schema {name} in catalog {}",
@@ -247,6 +326,9 @@ impl CatalogProvider for CachingCatalog {
         Ok(Some(caching_schema))
     }
 
+    /// Deregister a schema. For non-iceberg catalogs this delegates to the inner
+    /// provider. For iceberg-backed catalogs this only updates the mirror — the
+    /// underlying namespace must be dropped via `drop_namespace_async`.
     #[tracing::instrument(
         name = "CachingCatalog::deregister_schema",
         level = "debug",
@@ -258,32 +340,13 @@ impl CatalogProvider for CachingCatalog {
         name: &str,
         cascade: bool,
     ) -> datafusion_common::Result<Option<Arc<dyn SchemaProvider>>> {
-        let Some(catalog) = self.iceberg_catalog.clone() else {
+        if self.iceberg_catalog.is_none() {
             return self.catalog.deregister_schema(name, cascade);
-        };
-
-        let schema = self.schemas_cache.remove(name);
-        let namespace = Namespace::try_new(std::slice::from_ref(&name.to_string()))
-            .map_err(|err| DataFusionError::External(Box::new(err)))?;
-        #[allow(clippy::expect_used)]
-        block_on_with_timeout(
-            async move {
-                catalog
-                    .drop_namespace(&namespace)
-                    .await
-                    .context(error::IcebergSnafu)
-            },
-            self.config.catalog_timeout(),
-        )
-        .expect("Catalog timeout on: drop_namespace")
-        .map_err(|err| DataFusionError::External(Box::new(err)))?;
-
-        // Drop the namespace from the mirror so reads stop returning it.
-        let _ = self.catalog.deregister_schema(name, cascade)?;
-
-        if let Some((_, caching_schema)) = schema {
-            return Ok(Some(caching_schema));
         }
-        Ok(None)
+        let _ = self.catalog.deregister_schema(name, cascade)?;
+        Ok(self
+            .schemas_cache
+            .remove(name)
+            .map(|(_, s)| s as Arc<dyn SchemaProvider>))
     }
 }

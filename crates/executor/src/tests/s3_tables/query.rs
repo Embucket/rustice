@@ -3,6 +3,9 @@ use crate::running_queries::RunningQueriesRegistry;
 use crate::service::CoreExecutionService;
 use crate::session::UserSession;
 use crate::utils::Config;
+use catalog::catalog::CachingCatalog;
+use catalog::schema::CachingSchema;
+use datafusion::catalog::{CatalogProvider, SchemaProvider};
 use datafusion::prelude::SessionContext;
 use std::sync::Arc;
 
@@ -82,15 +85,7 @@ async fn run_queries() {
 
     let session = create_s3_tables_df_session().await;
     // cleanup BEFORE running test
-    CleanupGuard {
-        ctx: session.ctx.clone(),
-    }
-    .cleanup();
-
-    // cleanup AFTER running test (guard dropped at end of scope)
-    let _guard = CleanupGuard {
-        ctx: session.ctx.clone(),
-    };
+    cleanup_iceberg_catalog(&session.ctx).await;
 
     for (query, ident) in queries {
         let mut q = session.query(query, QueryContext::default());
@@ -123,27 +118,22 @@ async fn run_queries() {
     }
 }
 
-struct CleanupGuard {
-    ctx: SessionContext,
-}
+async fn cleanup_iceberg_catalog(ctx: &SessionContext) {
+    let Some(catalog) = ctx.state().catalog_list().catalog("embucket") else {
+        return;
+    };
+    let Some(caching) = catalog.as_any().downcast_ref::<CachingCatalog>() else {
+        return;
+    };
 
-impl CleanupGuard {
-    fn cleanup(&self) {
-        if let Some(catalog) = self.ctx.state().catalog_list().catalog("embucket") {
-            for schema_name in catalog.schema_names() {
-                if let Some(schema) = catalog.schema(&schema_name) {
-                    for table in schema.table_names() {
-                        let _ = schema.deregister_table(&table);
-                    }
-                }
-                let _ = catalog.deregister_schema(&schema_name, true);
+    for schema_name in caching.schema_names() {
+        if let Some(schema) = caching.schema(&schema_name)
+            && let Some(caching_schema) = schema.as_any().downcast_ref::<CachingSchema>()
+        {
+            for table in caching_schema.table_names() {
+                let _ = caching_schema.drop_table_async(&table).await;
             }
         }
-    }
-}
-
-impl Drop for CleanupGuard {
-    fn drop(&mut self) {
-        self.cleanup();
+        let _ = caching.drop_namespace_async(&schema_name, true).await;
     }
 }

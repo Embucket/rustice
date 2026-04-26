@@ -19,6 +19,8 @@ use crate::datafusion::rewriters::session_context::SessionContextExprRewriter;
 use crate::error::{OperationOn, OperationType};
 use crate::models::{QueryContext, QueryMetric, QueryResult, metrics_set_to_json};
 use crate::query_types::{DdlStType, DmlStType, MiscStType, QueryStats, QueryType};
+use catalog::catalog::CachingCatalog;
+use catalog::schema::CachingSchema;
 use catalog::table::{CachingTable, IcebergTableBuilder};
 use catalog_metastore::{
     AwsAccessKeyCredentials, AwsCredentials, S3Volume,
@@ -778,7 +780,7 @@ impl UserQuery {
                         ex_error::TableNotFoundInSchemaInDatabaseSnafu {
                             operation_on: OperationOn::Table(OperationType::Drop),
                             table: table_ref.table.to_string(),
-                            schema: schema_name,
+                            schema: schema_name.clone(),
                             db: catalog_name.to_string(),
                         }
                         .fail()?;
@@ -802,6 +804,36 @@ impl UserQuery {
             }
             _ => {}
         }
+
+        // Iceberg-backed catalogs use async DDL helpers directly so we don't
+        // call DataFusion's plan execution (which would invoke the sync
+        // register/deregister trait methods that can't perform async iceberg
+        // ops without block_on).
+        let caching_catalog = catalog.as_any().downcast_ref::<CachingCatalog>();
+        match (object_type, caching_catalog) {
+            (ObjectType::Schema, Some(c)) if c.iceberg_catalog.is_some() => {
+                c.drop_namespace_async(&schema_name, cascade)
+                    .await
+                    .map_err(|err| DataFusionError::External(Box::new(err)))
+                    .context(ex_error::DataFusionSnafu)?;
+                return self.status_response();
+            }
+            (ObjectType::Table, Some(c)) if c.iceberg_catalog.is_some() => {
+                if let Some(schema) = c.schema(&schema_name)
+                    && let Some(caching_schema) =
+                        schema.as_any().downcast_ref::<CachingSchema>()
+                {
+                    caching_schema
+                        .drop_table_async(&table_ref.table)
+                        .await
+                        .map_err(|err| DataFusionError::External(Box::new(err)))
+                        .context(ex_error::DataFusionSnafu)?;
+                    return self.status_response();
+                }
+            }
+            _ => {}
+        }
+
         self.execute_logical_plan(plan).await?;
         self.status_response()
     }
@@ -827,11 +859,6 @@ impl UserQuery {
                 location: location!(),
             });
         }
-
-        let table_location = create_table_statement
-            .location
-            .clone()
-            .or_else(|| create_table_statement.base_location.clone());
 
         let new_table_ident =
             self.resolve_table_object_name(create_table_statement.name.0.clone())?;
@@ -884,17 +911,50 @@ impl UserQuery {
             .build()
         })?;
 
-        let table_provider: Option<Arc<dyn TableProvider>> = self.create_iceberg_table_provider(
-            table_ref,
-            schema_provider.clone(),
-            table_location,
-            if_not_exists,
-            or_replace,
-            plan.clone(),
-        )?;
-        if let Some(provider) = table_provider {
+        // Find the CachingSchema that we'll use for the async iceberg create
+        // path, if any. Falling back to the trait `register_table` is only
+        // valid for non-iceberg-backed schemas.
+        let caching_schema = schema_provider
+            .as_any()
+            .downcast_ref::<CachingSchema>()
+            .filter(|c| c.iceberg_catalog.is_some());
+
+        // Existence + or-replace handling. For iceberg-backed schemas we drop
+        // via the async helper; otherwise we use the sync trait method.
+        let already_existed = schema_provider.table_exist(&table_ref.table);
+        if already_existed {
+            if if_not_exists {
+                return self.created_entity_response();
+            }
+            if or_replace {
+                if let Some(c) = caching_schema {
+                    c.drop_table_async(&table_ref.table)
+                        .await
+                        .map_err(|err| DataFusionError::External(Box::new(err)))
+                        .context(ex_error::DataFusionSnafu)?;
+                } else {
+                    schema_provider
+                        .deregister_table(&table_ref.table)
+                        .context(ex_error::DataFusionSnafu)?;
+                }
+            } else {
+                return ex_error::ObjectAlreadyExistsSnafu {
+                    r#type: ExistingObjectType::Table,
+                    name: table_ref.table.to_string(),
+                }
+                .fail();
+            }
+        }
+
+        let builder = self.build_iceberg_create_table_builder(&table_ref, plan.clone())?;
+        if let Some(c) = caching_schema {
+            c.create_iceberg_table_async(table_name, builder)
+                .await
+                .map_err(|err| DataFusionError::External(Box::new(err)))
+                .context(ex_error::DataFusionSnafu)?;
+        } else {
             schema_provider
-                .register_table(table_name, provider)
+                .register_table(table_name, Arc::new(IcebergTableBuilder::new(builder)))
                 .context(ex_error::DataFusionSnafu)?;
         }
 
@@ -947,34 +1007,17 @@ impl UserQuery {
         self.created_entity_response()
     }
 
-    #[allow(unused_variables, clippy::needless_pass_by_value)]
     #[instrument(
-        name = "UserQuery::create_iceberg_table",
+        name = "UserQuery::build_iceberg_create_table_builder",
         level = "trace",
-        skip(self),
+        skip(self, plan),
         err
     )]
-    pub fn create_iceberg_table_provider(
+    pub fn build_iceberg_create_table_builder(
         &self,
-        table_ref: ResolvedTableReference,
-        schema_provider: Arc<dyn SchemaProvider>,
-        table_location: Option<String>,
-        if_not_exists: bool,
-        or_replace: bool,
+        table_ref: &ResolvedTableReference,
         plan: LogicalPlan,
-    ) -> Result<Option<Arc<dyn TableProvider>>> {
-        // Check if table already exists, if exists and CREATE OR REPLACE - drop it
-        if schema_provider.table_exist(&table_ref.table) {
-            if if_not_exists {
-                return Ok(None);
-            }
-            if or_replace {
-                schema_provider
-                    .deregister_table(&table_ref.table)
-                    .context(ex_error::DataFusionSnafu)?;
-            }
-        }
-
+    ) -> Result<CreateTableBuilder> {
         let fields_with_ids = StructType::try_from(&new_fields_with_ids(
             &Fields::from(
                 plan.schema()
@@ -1016,7 +1059,7 @@ impl UserQuery {
             .with_name(table_ref.table.to_string())
             .with_schema(schema)
             .with_stage_create(false);
-        Ok(Some(Arc::new(IcebergTableBuilder::new(builder))))
+        Ok(builder)
     }
 
     /// This is experimental CREATE STAGE support
@@ -1533,7 +1576,16 @@ impl UserQuery {
             }
             .fail();
         }
-        self.execute_logical_plan(plan).await?;
+
+        if let Some(caching) = catalog.as_any().downcast_ref::<CachingCatalog>() {
+            caching
+                .create_namespace_async(&schema_ref.schema)
+                .await
+                .map_err(|err| DataFusionError::External(Box::new(err)))
+                .context(ex_error::DataFusionSnafu)?;
+        } else {
+            self.execute_logical_plan(plan).await?;
+        }
         self.created_entity_response()
     }
 
