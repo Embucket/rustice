@@ -6,7 +6,6 @@ pub(crate) mod helpers;
 pub(crate) mod layers;
 
 use api_snowflake_rest::server::core_state::CoreState;
-use api_snowflake_rest::server::core_state::MetastoreConfig;
 use api_snowflake_rest::server::make_snowflake_router;
 use api_snowflake_rest::server::server_models::RestApiConfig;
 use api_snowflake_rest::server::state::AppState;
@@ -17,7 +16,6 @@ use axum::{
     routing::{get, post},
 };
 use build_info::BuildInfo;
-use catalog_metastore::metastore_settings_config::MetastoreSettingsConfig;
 use clap::Parser;
 use dotenv::dotenv;
 use executor::service::{ExecutionService, TIMEOUT_SIGNAL_INTERVAL_SECONDS};
@@ -153,23 +151,9 @@ async fn async_main(
     let host = opts.host.clone().unwrap();
     let port = opts.port.unwrap();
 
-    let metatore_settings_config = MetastoreSettingsConfig::default()
-        .with_object_store_timeout(opts.object_store_timeout_secs)
-        .with_object_store_connect_timeout(opts.object_store_connect_timeout_secs);
-
-    let metastore_cfg = if let Some(config_path) = &opts.metastore_config {
-        MetastoreConfig::ConfigPath(config_path.clone())
-    } else {
-        MetastoreConfig::Env
-    };
-    let core_state = CoreState::new(
-        execution_cfg,
-        snowflake_rest_cfg,
-        metatore_settings_config,
-        metastore_cfg,
-    )
-    .await
-    .expect("Core state creation error");
+    let core_state = CoreState::new(execution_cfg, snowflake_rest_cfg)
+        .await
+        .expect("Core state creation error");
 
     core_state
         .with_session_timeout(tokio::time::Duration::from_secs(SESSION_EXPIRATION_SECONDS))?;

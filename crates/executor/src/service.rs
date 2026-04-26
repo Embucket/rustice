@@ -33,7 +33,7 @@ use crate::session::{SESSION_INACTIVITY_EXPIRATION_SECONDS, to_unix};
 use crate::tracing::SpanTracer;
 use crate::utils::{Config, MemPoolType};
 use catalog::catalog_list::EmbucketCatalogList;
-use catalog_metastore::{InMemoryMetastore, Metastore, TableIdent as MetastoreTableIdent};
+use catalog_metastore::TableIdent as MetastoreTableIdent;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing::Instrument;
@@ -141,7 +141,6 @@ pub trait ExecutionService: Send + Sync {
 }
 
 pub struct CoreExecutionService {
-    metastore: Arc<dyn Metastore>,
     df_sessions: Arc<RwLock<HashMap<String, Arc<UserSession>>>>,
     config: Arc<Config>,
     catalog_list: Arc<EmbucketCatalogList>,
@@ -153,16 +152,15 @@ impl CoreExecutionService {
     #[tracing::instrument(
         name = "CoreExecutionService::new",
         level = "debug",
-        skip(metastore, config),
+        skip(config),
         err
     )]
-    pub async fn new(metastore: Arc<dyn Metastore>, config: Arc<Config>) -> Result<Self> {
+    pub async fn new(config: Arc<Config>) -> Result<Self> {
         Self::initialize_datafusion_tracer();
 
-        let catalog_list = Self::catalog_list(metastore.clone(), &config).await?;
+        let catalog_list = Self::catalog_list(&config)?;
         let runtime_env = Self::runtime_env(&config, catalog_list.clone())?;
         Ok(Self {
-            metastore,
             df_sessions: Arc::new(RwLock::new(HashMap::new())),
             config,
             catalog_list,
@@ -171,25 +169,8 @@ impl CoreExecutionService {
         })
     }
 
-    #[tracing::instrument(
-        name = "CoreExecutionService::catalog_list",
-        level = "debug",
-        skip(metastore),
-        err
-    )]
-    pub async fn catalog_list(
-        metastore: Arc<dyn Metastore>,
-        config: &Config,
-    ) -> Result<Arc<EmbucketCatalogList>> {
-        let catalog_list = Arc::new(EmbucketCatalogList::new(metastore.clone(), config.into()));
-        catalog_list
-            .register_catalogs()
-            .await
-            .context(ex_error::RegisterCatalogSnafu)?;
-        catalog_list
-            .refresh()
-            .await
-            .context(ex_error::RefreshCatalogListSnafu)?;
+    pub fn catalog_list(config: &Config) -> Result<Arc<EmbucketCatalogList>> {
+        let catalog_list = Arc::new(EmbucketCatalogList::new(config.into()));
         Ok(catalog_list)
     }
 
@@ -738,9 +719,8 @@ impl ExecutionService for CoreExecutionService {
 //Test environment
 #[allow(clippy::expect_used)]
 pub async fn make_test_execution_svc() -> Arc<CoreExecutionService> {
-    let metastore = Arc::new(InMemoryMetastore::new());
     Arc::new(
-        CoreExecutionService::new(metastore, Arc::new(Config::default()))
+        CoreExecutionService::new(Arc::new(Config::default()))
             .await
             .expect("Failed to create a execution service"),
     )

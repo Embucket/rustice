@@ -3,28 +3,15 @@ use crate::running_queries::RunningQueriesRegistry;
 use crate::service::CoreExecutionService;
 use crate::session::UserSession;
 use crate::utils::Config;
-use catalog_metastore::InMemoryMetastore;
-use catalog_metastore::metastore_bootstrap_config::MetastoreBootstrapConfig;
 use datafusion::prelude::SessionContext;
 use std::sync::Arc;
 
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 pub async fn create_s3_tables_df_session() -> Arc<UserSession> {
-    let metastore = Arc::new(InMemoryMetastore::new());
-    let metastore_config = MetastoreBootstrapConfig::load_from_env()
-        .await
-        .expect("Failed to load volume config");
-    assert!(
-        metastore_config.contains_s3_tables_volume(),
-        "Failed to load volume config"
-    );
-    metastore_config
-        .apply(metastore.clone())
-        .await
-        .expect("Failed to apply config");
+    // TODO: This needs to be updated to work with Iceberg REST Catalog
+    // Previously bootstrapped volumes/databases/schemas via metastore
     let config = Arc::new(Config::default());
-    let catalog_list = CoreExecutionService::catalog_list(metastore.clone(), &config)
-        .await
+    let catalog_list = CoreExecutionService::catalog_list(&config)
         .expect("Failed to create catalog list");
     let runtime_env = CoreExecutionService::runtime_env(&config, catalog_list.clone())
         .expect("Failed to create runtime env");

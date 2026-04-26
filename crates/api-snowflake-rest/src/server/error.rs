@@ -117,11 +117,6 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("Metastore config error: {error}"))]
-    MetastoreConfig {
-        #[snafu(source)]
-        error: catalog_metastore::metastore_bootstrap_config::ConfigError,
-    },
 }
 
 impl IntoResponse for Error {
@@ -260,7 +255,6 @@ impl Error {
                 ErrorCode::Other,
             ),
             Self::Utf8 { .. }
-            | Self::MetastoreConfig { .. }
             | Self::CreateExecutor { .. }
             | Self::RetryDisabled { .. }
             | Self::Arrow { .. }

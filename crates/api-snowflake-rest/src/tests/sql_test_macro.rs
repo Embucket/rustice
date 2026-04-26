@@ -1,5 +1,4 @@
 use super::run_test_rest_api_server;
-use crate::server::core_state::MetastoreConfig;
 use crate::server::logic::JWT_TOKEN_EXPIRATION_SECONDS;
 use crate::tests::TEST_JWT_SECRET;
 use crate::tests::snow_sql::{ACCESS_TOKEN_KEY, snow_sql};
@@ -8,7 +7,6 @@ use crate::{models::JsonResponse, server::server_models::RestApiConfig};
 use api_snowflake_rest_sessions::TokenizedSession;
 use api_snowflake_rest_sessions::helpers::{create_jwt, jwt_claims};
 use arrow::record_batch::RecordBatch;
-use catalog_metastore::metastore_settings_config::MetastoreSettingsConfig;
 use executor::utils::Config as UtilsConfig;
 
 pub const DEMO_USER: &str = "embucket";
@@ -82,8 +80,6 @@ impl std::fmt::Display for HistoricalCodes {
 pub struct SqlTest {
     pub server_cfg: Option<RestApiConfig>,
     pub executor_cfg: Option<UtilsConfig>,
-    pub metastore_settings_config: Option<MetastoreSettingsConfig>,
-    pub metastore_cfg: MetastoreConfig,
     pub setup_queries: Vec<String>,
     pub params: Vec<(&'static str, String)>,
     pub sqls: Vec<String>,
@@ -96,8 +92,6 @@ impl SqlTest {
         Self {
             server_cfg: None,
             executor_cfg: None,
-            metastore_settings_config: None,
-            metastore_cfg: MetastoreConfig::None,
             setup_queries: vec![],
             params: vec![],
             sqls: sqls.iter().map(|&s| s.to_string()).collect(),
@@ -135,28 +129,9 @@ impl SqlTest {
     }
 
     #[must_use]
-    pub fn with_metastore_settings_config(
-        self,
-        metastore_settings_config: MetastoreSettingsConfig,
-    ) -> Self {
-        Self {
-            metastore_settings_config: Some(metastore_settings_config),
-            ..self
-        }
-    }
-
-    #[must_use]
     pub fn with_skip_login(self) -> Self {
         Self {
             skip_login: true,
-            ..self
-        }
-    }
-
-    #[must_use]
-    pub fn with_metastore_bootstrap_config(self, metastore_cfg: MetastoreConfig) -> Self {
-        Self {
-            metastore_cfg,
             ..self
         }
     }
@@ -187,8 +162,6 @@ where
     let server_addr = run_test_rest_api_server(
         sql_test.server_cfg.clone(),
         sql_test.executor_cfg.clone(),
-        sql_test.metastore_settings_config.clone(),
-        sql_test.metastore_cfg.clone(),
     )
     .await;
     let skip_login_token = sql_test

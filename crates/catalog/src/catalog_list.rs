@@ -1,13 +1,9 @@
 use super::catalogs::embucket::catalog::EmbucketCatalog;
-use super::catalogs::embucket::iceberg_catalog::EmbucketIcebergCatalog;
 use crate::catalog::{CachingCatalog, CatalogType, Properties};
 #[cfg(feature = "rest-catalog")]
 use crate::catalogs::rest::catalog::RestCatalog;
 use crate::df_error;
-use crate::error::{
-    self as catalog_error, InvalidCacheSnafu, MetastoreSnafu, MissingVolumeSnafu,
-    NotImplementedSnafu, Result, UnsupportedFeature,
-};
+use crate::error::{self as catalog_error, InvalidCacheSnafu, Result};
 use crate::schema::CachingSchema;
 use crate::table::CachingTable;
 use crate::utils::fetch_table_providers;
@@ -15,9 +11,7 @@ use crate::utils::fetch_table_providers;
 use aws_config::{BehaviorVersion, Region, defaults, timeout::TimeoutConfigBuilder};
 #[cfg(not(feature = "rest-catalog"))]
 use aws_credential_types::{Credentials, provider::SharedCredentialsProvider};
-use catalog_metastore::{
-    AwsCredentials, Database, Metastore, RwObject, S3TablesVolume, VolumeType,
-};
+use catalog_metastore::{AwsCredentials, S3TablesVolume};
 use dashmap::DashMap;
 use datafusion::{
     catalog::{CatalogProvider, CatalogProviderList},
@@ -36,7 +30,6 @@ use object_store::ObjectStore;
 use object_store::local::LocalFileSystem;
 #[cfg(feature = "rest-catalog")]
 use secrecy::SecretString;
-use snafu::OptionExt;
 use snafu::ResultExt;
 use std::any::Any;
 use std::sync::Arc;
@@ -45,7 +38,6 @@ use url::Url;
 pub const DEFAULT_CATALOG: &str = "embucket";
 
 pub struct EmbucketCatalogList {
-    pub metastore: Arc<dyn Metastore>,
     pub table_object_store: Arc<DashMap<String, Arc<dyn ObjectStore>>>,
     pub catalogs: DashMap<String, Arc<CachingCatalog>>,
     pub config: CatalogListConfig,
@@ -61,11 +53,10 @@ pub struct CatalogListConfig {
 }
 
 impl EmbucketCatalogList {
-    pub fn new(metastore: Arc<dyn Metastore>, config: CatalogListConfig) -> Self {
+    pub fn new(config: CatalogListConfig) -> Self {
         let table_object_store: DashMap<String, Arc<dyn ObjectStore>> = DashMap::new();
         table_object_store.insert("file://".to_string(), Arc::new(LocalFileSystem::new()));
         Self {
-            metastore,
             table_object_store: Arc::new(table_object_store),
             catalogs: DashMap::default(),
             config,
@@ -78,162 +69,15 @@ impl EmbucketCatalogList {
         skip(self),
         err
     )]
-    pub async fn drop_catalog(&self, name: &str, cascade: bool) -> Result<()> {
-        let Some((_, catalog)) = self.catalogs.remove(name) else {
+    pub async fn drop_catalog(&self, name: &str, _cascade: bool) -> Result<()> {
+        let Some(_) = self.catalogs.remove(name) else {
             return InvalidCacheSnafu {
                 entity: "catalog",
                 name,
             }
             .fail();
         };
-        match catalog.catalog_type {
-            CatalogType::Embucket | CatalogType::Memory => self
-                .metastore
-                .delete_database(&name.to_string(), cascade)
-                .await
-                .context(MetastoreSnafu),
-            CatalogType::S3tables => NotImplementedSnafu {
-                feature: UnsupportedFeature::DropS3TablesDatabase,
-                details: "Dropping S3 tables catalogs is not supported",
-            }
-            .fail(),
-        }
-    }
-
-    #[tracing::instrument(
-        name = "EmbucketCatalogList::create_catalog",
-        level = "debug",
-        skip(self),
-        err
-    )]
-    pub async fn create_catalog(&self, catalog_name: &str, volume_ident: &str) -> Result<()> {
-        let volume = self
-            .metastore
-            .get_volume(&volume_ident.to_string())
-            .await
-            .context(MetastoreSnafu)?
-            .context(MissingVolumeSnafu {
-                name: volume_ident.to_string(),
-            })?;
-
-        let ident = Database {
-            ident: catalog_name.to_owned(),
-            volume: volume_ident.to_owned(),
-            properties: None,
-            should_refresh: false,
-        };
-        let database = self
-            .metastore
-            .create_database(&catalog_name.to_owned(), ident)
-            .await
-            .context(MetastoreSnafu)?;
-
-        let catalog = match &volume.volume {
-            VolumeType::S3(_) | VolumeType::File(_) => self.get_embucket_catalog(&database).await?,
-            VolumeType::Memory => self
-                .get_embucket_catalog(&database)
-                .await?
-                .with_catalog_type(CatalogType::Memory),
-            VolumeType::S3Tables(vol) => {
-                self.s3tables_iceberg_catalog(vol.clone(), &database)
-                    .await?
-            }
-        };
-        self.catalogs
-            .insert(catalog_name.to_owned(), Arc::new(catalog));
         Ok(())
-    }
-
-    /// Discovers and registers all available catalogs into the catalog registry.
-    ///
-    /// This method performs the following steps:
-    /// 1. Retrieves internal catalogs from the metastore (typically representing Iceberg-backed databases).
-    /// 2. Retrieves external catalogs (e.g., `S3Tables`) from volume definitions in the metastore.
-    ///
-    /// # Errors
-    ///
-    /// This method can fail in the following cases:
-    /// - Failure to access or query the metastore (e.g., database listing or volume parsing).
-    /// - Errors initializing internal or external catalogs (e.g., Iceberg metadata failures).
-    #[allow(clippy::as_conversions)]
-    #[tracing::instrument(
-        name = "EmbucketCatalogList::register_catalogs",
-        level = "debug",
-        skip(self),
-        err
-    )]
-    pub async fn register_catalogs(self: &Arc<Self>) -> Result<()> {
-        // Add metastore databases as catalogs
-        let all_catalogs = self.metastore_catalogs().await?;
-        for catalog in all_catalogs {
-            self.catalogs
-                .insert(catalog.name.clone(), Arc::new(catalog));
-        }
-        Ok(())
-    }
-
-    #[tracing::instrument(
-        name = "EmbucketCatalogList::internal_catalogs",
-        level = "trace",
-        skip(self),
-        err
-    )]
-    pub async fn metastore_catalogs(&self) -> Result<Vec<CachingCatalog>> {
-        let mut catalogs = Vec::new();
-        let databases = self
-            .metastore
-            .list_databases()
-            .await
-            .context(MetastoreSnafu)?;
-        for db in databases {
-            let volume = self
-                .metastore
-                .get_volume(&db.volume)
-                .await
-                .context(MetastoreSnafu)?
-                .context(MissingVolumeSnafu {
-                    name: db.volume.clone(),
-                })?;
-            // Create catalog depending on the volume type
-            let catalog = match &volume.volume {
-                VolumeType::S3Tables(vol) => {
-                    self.s3tables_iceberg_catalog(vol.clone(), &db).await?
-                }
-                _ => self.get_embucket_catalog(&db).await?,
-            };
-            catalogs.push(catalog);
-        }
-        Ok(catalogs)
-    }
-
-    async fn get_embucket_catalog(&self, db: &RwObject<Database>) -> Result<CachingCatalog> {
-        let iceberg_catalog: Arc<dyn Catalog> = Arc::new(
-            EmbucketIcebergCatalog::new(
-                self.metastore.clone(),
-                db.ident.clone(),
-                self.config.clone().into(),
-            )
-            .await
-            .context(MetastoreSnafu)?,
-        );
-        let catalog_provider: Arc<dyn CatalogProvider> = Arc::new(EmbucketCatalog::new(
-            db.ident.clone(),
-            self.metastore.clone(),
-            iceberg_catalog.clone(),
-            self.config.clone().into(),
-        ));
-        Ok(CachingCatalog::new(
-            catalog_provider,
-            db.ident.clone(),
-            Some(iceberg_catalog),
-            (&self.config).into(),
-        )
-        .with_refresh(db.should_refresh)
-        .with_properties(Properties {
-            created_at: db.created_at,
-            updated_at: db.created_at,
-        })
-        .with_metastore(self.metastore.clone()))
     }
 
     #[tracing::instrument(
@@ -245,7 +89,8 @@ impl EmbucketCatalogList {
     pub async fn s3tables_iceberg_catalog(
         &self,
         volume: S3TablesVolume,
-        db: &RwObject<Database>,
+        db_name: &str,
+        should_refresh: bool,
     ) -> Result<CachingCatalog> {
         let (ak, sk, token) = match volume.credentials {
             AwsCredentials::AccessKey(ref creds) => (
@@ -276,11 +121,11 @@ impl EmbucketCatalogList {
             let catalog = DataFusionIcebergCatalog::new_sync(iceberg_catalog.clone(), None);
             return Ok(CachingCatalog::new(
                 Arc::new(catalog),
-                db.ident.clone(),
+                db_name.to_owned(),
                 Some(iceberg_catalog),
                 self.config.clone().into(),
             )
-            .with_refresh(db.should_refresh)
+            .with_refresh(should_refresh)
             .with_catalog_type(CatalogType::S3tables));
         }
 
@@ -315,16 +160,41 @@ impl EmbucketCatalogList {
             let catalog = DataFusionIcebergCatalog::new_sync(iceberg_catalog.clone(), None);
             Ok(CachingCatalog::new(
                 Arc::new(catalog),
-                db.ident.clone(),
+                db_name.to_owned(),
                 Some(iceberg_catalog),
                 self.config.clone().into(),
             )
-            .with_refresh(db.should_refresh)
+            .with_refresh(should_refresh)
             .with_catalog_type(CatalogType::S3tables))
         }
     }
 
-    #[allow(clippy::as_conversions, clippy::too_many_lines)]
+    /// Register an iceberg catalog as an embucket catalog (with EmbucketCatalog as
+    /// the DataFusion CatalogProvider).
+    pub fn register_iceberg_catalog(
+        &self,
+        name: &str,
+        iceberg_catalog: Arc<dyn Catalog>,
+        should_refresh: bool,
+    ) {
+        let catalog_provider: Arc<dyn CatalogProvider> = Arc::new(EmbucketCatalog::new(
+            name.to_owned(),
+            iceberg_catalog.clone(),
+            (&self.config).into(),
+        ));
+        let caching = CachingCatalog::new(
+            catalog_provider,
+            name.to_owned(),
+            Some(iceberg_catalog),
+            (&self.config).into(),
+        )
+        .with_refresh(should_refresh)
+        .with_properties(Properties::default());
+
+        self.catalogs.insert(name.to_owned(), Arc::new(caching));
+    }
+
+    #[allow(clippy::as_conversions)]
     #[tracing::instrument(
         name = "EmbucketCatalogList::refresh",
         level = "debug",

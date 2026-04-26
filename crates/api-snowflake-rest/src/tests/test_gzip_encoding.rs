@@ -4,7 +4,6 @@ mod tests {
     use crate::models::{
         JsonResponse, LoginRequestBody, LoginRequestData, LoginResponse, QueryRequestBody,
     };
-    use crate::server::core_state::MetastoreConfig;
     use crate::tests::create_test_server::run_test_rest_api_server;
     use axum::body::Bytes;
     use axum::http;
@@ -19,7 +18,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_login() {
-        let addr = run_test_rest_api_server(None, None, None, MetastoreConfig::None).await;
+        let addr = run_test_rest_api_server(None, None).await;
         let client = reqwest::Client::new();
         let login_url = format!("http://{addr}/session/v1/login-request");
         let query_url = format!("http://{addr}/queries/v1/query-request");

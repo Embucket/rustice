@@ -2,7 +2,6 @@ mod config;
 
 use crate::config::EnvConfig;
 use api_snowflake_rest::server::core_state::CoreState;
-use api_snowflake_rest::server::core_state::MetastoreConfig;
 use api_snowflake_rest::server::make_snowflake_router;
 use api_snowflake_rest::server::server_models::RestApiConfig as SnowflakeServerConfig;
 use api_snowflake_rest::server::state::AppState;
@@ -11,7 +10,6 @@ use axum::Router;
 use axum::body::Body as AxumBody;
 use axum::extract::connect_info::ConnectInfo;
 use build_info::BuildInfo;
-use catalog_metastore::metastore_settings_config::MetastoreSettingsConfig;
 use http::HeaderMap;
 use http_body_util::BodyExt;
 use lambda_http::{Body as LambdaBody, Error as LambdaError, Request, Response, service_fn};
@@ -113,23 +111,7 @@ impl LambdaApp {
         );
         let execution_cfg = config.execution_config();
 
-        let metastore_cfg = if let Some(config_path) = &config.metastore_config {
-            MetastoreConfig::ConfigPath(config_path.clone())
-        } else {
-            MetastoreConfig::Env
-        };
-
-        let metastore_settings_config = MetastoreSettingsConfig::default()
-            .with_object_store_timeout(config.object_store_timeout_secs)
-            .with_object_store_connect_timeout(config.object_store_connect_timeout_secs);
-
-        let core_state = CoreState::new(
-            execution_cfg,
-            snowflake_cfg,
-            metastore_settings_config,
-            metastore_cfg,
-        )
-        .await?;
+        let core_state = CoreState::new(execution_cfg, snowflake_cfg).await?;
         core_state
             .with_session_timeout(tokio::time::Duration::from_secs(SESSION_EXPIRATION_SECONDS))?;
 

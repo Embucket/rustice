@@ -1,47 +1,26 @@
 use crate::server::error::CreateExecutorSnafu;
-use crate::server::error::MetastoreConfigSnafu;
 use crate::server::error::Result;
 use crate::server::server_models::RestApiConfig;
 use api_snowflake_rest_sessions::session::SessionStore;
-use catalog_metastore::InMemoryMetastore;
-use catalog_metastore::Metastore;
-use catalog_metastore::metastore_bootstrap_config::MetastoreBootstrapConfig;
-use catalog_metastore::metastore_settings_config::MetastoreSettingsConfig;
 use executor::service::CoreExecutionService;
 use executor::utils::Config as ExecutionConfig;
 use snafu::ResultExt;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::Duration;
 
 pub struct CoreState {
     pub executor: Arc<CoreExecutionService>,
-    pub metastore: Arc<InMemoryMetastore>,
     pub rest_api_config: RestApiConfig,
-}
-
-#[derive(Clone)]
-pub enum MetastoreConfig {
-    ConfigPath(PathBuf),
-    ConfigJson(String),
-    Env,
-    DefaultConfig,
-    None,
 }
 
 impl CoreState {
     pub async fn new(
         execution_cfg: ExecutionConfig,
         rest_api_config: RestApiConfig,
-        metastore_settings_config: MetastoreSettingsConfig,
-        metastore_bootstrap_config: MetastoreConfig,
     ) -> Result<Self> {
-        let metastore = create_metastore(metastore_settings_config);
-        apply_metastore_bootstrap_config(metastore.clone(), metastore_bootstrap_config).await?;
-        let executor = create_executor(metastore.clone(), execution_cfg).await?;
+        let executor = create_executor(execution_cfg).await?;
         Ok(Self {
             executor,
-            metastore,
             rest_api_config,
         })
     }
@@ -61,68 +40,12 @@ impl CoreState {
     }
 }
 
-#[must_use]
-fn create_metastore(metastore_settings_config: MetastoreSettingsConfig) -> Arc<InMemoryMetastore> {
-    Arc::new(InMemoryMetastore::new().with_settings_config(metastore_settings_config))
-}
-
-async fn apply_metastore_bootstrap_config(
-    metastore: Arc<InMemoryMetastore>,
-    metastore_bootstrap_config: MetastoreConfig,
-) -> Result<()> {
-    match metastore_bootstrap_config {
-        MetastoreConfig::Env => {
-            tracing::info!("Bootstrapping metastore from environment");
-            let config = MetastoreBootstrapConfig::load_from_env()
-                .await
-                .context(MetastoreConfigSnafu)?;
-            config
-                .apply(metastore.clone())
-                .await
-                .context(MetastoreConfigSnafu)?;
-        }
-        MetastoreConfig::ConfigPath(path) => {
-            tracing::info!(
-                path = %path.display(),
-                "Bootstrapping metastore from config"
-            );
-            let config = MetastoreBootstrapConfig::load(&path)
-                .await
-                .context(MetastoreConfigSnafu)?;
-            config
-                .apply(metastore.clone())
-                .await
-                .context(MetastoreConfigSnafu)?;
-        }
-        MetastoreConfig::ConfigJson(data) => {
-            tracing::info!("Bootstrapping metastore from config json");
-            let config = MetastoreBootstrapConfig::load_from_json_data(&data)
-                .await
-                .context(MetastoreConfigSnafu)?;
-            config
-                .apply(metastore.clone())
-                .await
-                .context(MetastoreConfigSnafu)?;
-        }
-        MetastoreConfig::DefaultConfig => {
-            tracing::info!("Bootstrapping metastore from default config");
-            MetastoreBootstrapConfig::bootstrap()
-                .apply(metastore.clone())
-                .await
-                .context(MetastoreConfigSnafu)?;
-        }
-        MetastoreConfig::None => {}
-    }
-    Ok(())
-}
-
 async fn create_executor(
-    metastore: Arc<dyn Metastore>,
     execution_cfg: ExecutionConfig,
 ) -> Result<Arc<CoreExecutionService>> {
     tracing::info!("Creating execution service");
     let executor = Arc::new(
-        CoreExecutionService::new(metastore, Arc::new(execution_cfg))
+        CoreExecutionService::new(Arc::new(execution_cfg))
             .await
             .context(CreateExecutorSnafu)?,
     );

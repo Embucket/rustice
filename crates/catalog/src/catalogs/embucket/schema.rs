@@ -1,22 +1,26 @@
 use crate::catalog::CatalogConfig;
 use crate::{block_on_with_timeout, error};
 use async_trait::async_trait;
-use catalog_metastore::error as metastore_error;
-use catalog_metastore::{Metastore, SchemaIdent, TableIdent};
 use datafusion::catalog::{SchemaProvider, TableProvider};
 use datafusion_common::DataFusionError;
 use datafusion_iceberg::DataFusionTable as IcebergDataFusionTable;
 use iceberg_rust::catalog::Catalog as IcebergCatalog;
-use iceberg_rust::{catalog::tabular::Tabular as IcebergTabular, table::Table as IcebergTable};
+use iceberg_rust::catalog::identifier::Identifier as IcebergIdentifier;
+use iceberg_rust::error::Error as IcebergError;
+use iceberg_rust_spec::namespace::Namespace;
 use snafu::ResultExt;
 use std::any::Any;
 use std::sync::Arc;
 use tracing::error;
 
+fn make_namespace(schema: &str) -> Result<Namespace, IcebergError> {
+    Namespace::try_new(std::slice::from_ref(&schema.to_string()))
+        .map_err(|e| IcebergError::External(Box::new(e)))
+}
+
 pub struct EmbucketSchema {
     pub database: String,
     pub schema: String,
-    pub metastore: Arc<dyn Metastore>,
     pub iceberg_catalog: Arc<dyn IcebergCatalog>,
     pub config: CatalogConfig,
 }
@@ -27,7 +31,6 @@ impl std::fmt::Debug for EmbucketSchema {
         f.debug_struct("DFSchema")
             .field("database", &self.database)
             .field("schema", &self.schema)
-            .field("metastore", &"")
             .field("iceberg_catalog", &"")
             .finish()
     }
@@ -46,22 +49,27 @@ impl SchemaProvider for EmbucketSchema {
         fields(tables_names_count, schema_name=format!("{}.{}", self.database, self.schema))
     )]
     fn table_names(&self) -> Vec<String> {
-        let metastore = self.metastore.clone();
-        let database = self.database.clone();
+        let iceberg_catalog = self.iceberg_catalog.clone();
         let schema = self.schema.clone();
 
         #[allow(clippy::expect_used)]
         let table_names = block_on_with_timeout(
             async move {
-                metastore
-                    .list_tables(&SchemaIdent::new(database, schema))
+                let namespace = make_namespace(&schema).context(error::IcebergSnafu)?;
+                iceberg_catalog
+                    .list_tabulars(&namespace)
                     .await
-                    .map(|tables| tables.into_iter().map(|s| s.ident.table.clone()).collect())
-                    .context(error::MetastoreSnafu)
+                    .context(error::IcebergSnafu)
+                    .map(|tabulars| {
+                        tabulars
+                            .into_iter()
+                            .map(|ident| ident.name().to_string())
+                            .collect()
+                    })
             },
             self.config.catalog_timeout(),
         )
-        .expect("Catalog timeout on: list_tables")
+        .expect("Catalog timeout on: list_tabulars")
         .unwrap_or_else(|error| {
             error!(?error, "Failed to list tables; returning empty list");
             vec![]
@@ -74,56 +82,35 @@ impl SchemaProvider for EmbucketSchema {
 
     #[tracing::instrument(name = "EmbucketSchema::table", level = "debug", skip(self), err)]
     async fn table(&self, name: &str) -> Result<Option<Arc<dyn TableProvider>>, DataFusionError> {
-        let ident = &TableIdent::new(&self.database.clone(), &self.schema.clone(), name);
-        let object_store = self
-            .metastore
-            .table_object_store(ident)
+        let namespace = make_namespace(&self.schema)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let ident = IcebergIdentifier::new(&namespace, name);
+
+        let tabular = self
+            .iceberg_catalog
+            .clone()
+            .load_tabular(&ident)
             .await
-            .map_err(|e| DataFusionError::External(Box::new(e)))?
-            .ok_or_else(|| {
-                DataFusionError::External(Box::new(
-                    metastore_error::TableObjectStoreNotFoundSnafu {
-                        table: ident.table.clone(),
-                        schema: ident.schema.clone(),
-                        db: ident.database.clone(),
-                    }
-                    .build(),
-                ))
-            })?;
-        match self.metastore.get_table(ident).await {
-            Ok(Some(table)) => {
-                let iceberg_table = IcebergTable::new(
-                    ident.to_iceberg_ident(),
-                    self.iceberg_catalog.clone(),
-                    object_store,
-                    table.metadata.clone(),
-                )
-                .await
-                .map_err(|e| DataFusionError::External(Box::new(e)))?;
-                let tabular = IcebergTabular::Table(iceberg_table);
-                let table_provider: Arc<dyn TableProvider> =
-                    Arc::new(IcebergDataFusionTable::new(tabular, None, None, None));
-                Ok(Some(table_provider))
-            }
-            Ok(None) => Ok(None),
-            Err(e) => Err(DataFusionError::External(Box::new(e))),
-        }
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+        let table_provider: Arc<dyn TableProvider> =
+            Arc::new(IcebergDataFusionTable::new(tabular, None, None, None));
+        Ok(Some(table_provider))
     }
 
     #[tracing::instrument(name = "EmbucketSchema::table_exist", level = "debug", skip(self))]
     fn table_exist(&self, name: &str) -> bool {
         let iceberg_catalog = self.iceberg_catalog.clone();
-        let database = self.database.clone();
         let schema = self.schema.clone();
         let table = name.to_string();
-        let ident = TableIdent::new(&database, &schema, &table);
-        let ident_for_runtime = ident.clone();
 
         #[allow(clippy::expect_used)]
         block_on_with_timeout(
             async move {
+                let namespace = make_namespace(&schema).context(error::IcebergSnafu)?;
+                let ident = IcebergIdentifier::new(&namespace, &table);
                 iceberg_catalog
-                    .tabular_exists(&ident_for_runtime.to_iceberg_ident())
+                    .tabular_exists(&ident)
                     .await
                     .context(error::IcebergSnafu)
             },
@@ -133,8 +120,7 @@ impl SchemaProvider for EmbucketSchema {
         .unwrap_or_else(|error| {
             error!(
                 ?error,
-                schema_name = %ident.schema,
-                table_name = %ident.table,
+                table_name = %name,
                 "Failed to check table existence; assuming missing",
             );
             false

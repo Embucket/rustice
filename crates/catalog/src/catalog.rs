@@ -1,8 +1,7 @@
 use crate::catalog_list::CatalogListConfig;
 use crate::catalogs::embucket::schema::EmbucketSchema;
 use crate::schema::CachingSchema;
-use crate::{block_on_with_timeout, df_error, error};
-use catalog_metastore::Metastore;
+use crate::{block_on_with_timeout, error};
 use chrono::NaiveDateTime;
 use dashmap::DashMap;
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
@@ -11,7 +10,7 @@ use datafusion_iceberg::catalog::catalog::IcebergCatalog;
 use datafusion_iceberg::catalog::schema::IcebergSchema;
 use iceberg_rust::catalog::Catalog;
 use iceberg_rust_spec::namespace::Namespace;
-use snafu::{OptionExt, ResultExt};
+use snafu::ResultExt;
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 use std::{any::Any, sync::Arc};
@@ -20,7 +19,6 @@ use tracing::error;
 #[derive(Clone)]
 pub struct CachingCatalog {
     pub catalog: Arc<dyn CatalogProvider>,
-    pub metastore: Option<Arc<dyn Metastore>>,
     pub iceberg_catalog: Option<Arc<dyn Catalog>>,
     pub catalog_type: CatalogType,
     pub schemas_cache: DashMap<String, Arc<CachingSchema>>,
@@ -107,7 +105,6 @@ impl CachingCatalog {
         Self {
             catalog: catalog_provider,
             iceberg_catalog,
-            metastore: None,
             schemas_cache: DashMap::new(),
             should_refresh: false,
             enable_information_schema: true,
@@ -137,12 +134,6 @@ impl CachingCatalog {
     #[must_use]
     pub const fn with_properties(mut self, properties: Properties) -> Self {
         self.properties = Some(properties);
-        self
-    }
-
-    #[must_use]
-    pub fn with_metastore(mut self, metastore: Arc<dyn Metastore>) -> Self {
-        self.metastore = Some(metastore);
         self
     }
 
@@ -293,14 +284,9 @@ impl CatalogProvider for CachingCatalog {
 
             let schema_provider: Arc<dyn SchemaProvider> = match self.catalog_type {
                 CatalogType::Embucket | CatalogType::Memory => {
-                    let metastore = self
-                        .metastore
-                        .clone()
-                        .context(df_error::MetastoreIsMissingSnafu)?;
                     Arc::new(EmbucketSchema {
                         database: self.name.clone(),
                         schema: name.to_string(),
-                        metastore: Arc::clone(&metastore),
                         iceberg_catalog: catalog.clone(),
                         config: self.config.clone(),
                     })

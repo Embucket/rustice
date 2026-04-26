@@ -1,5 +1,5 @@
 use super::TEST_JWT_SECRET;
-use crate::server::core_state::MetastoreConfig;
+
 use crate::sql_test;
 use crate::tests::snow_sql::*;
 use crate::tests::sql_test_macro::{SqlTest, sql_test_wrapper};
@@ -99,7 +99,6 @@ mod compatible {
             // Schema 'TESTS.MISSING_SCHEMA' does not exist or not authorized."
             "create table missing_schema.foo(a int)",
         ])
-        .with_metastore_bootstrap_config(MetastoreConfig::DefaultConfig)
     );
 
     sql_test!(
@@ -109,7 +108,6 @@ mod compatible {
             // Table 'EMBUCKET.PUBLIC.TEST2' does not exist or not authorized.
             "ALTER TABLE embucket.public.test ADD COLUMN new_col INT",
         ])
-        .with_metastore_bootstrap_config(MetastoreConfig::DefaultConfig)
     );
 
     sql_test!(
@@ -119,7 +117,6 @@ mod compatible {
             // Schema 'EMBUCKET.MISSING_SCHEMA' does not exist or not authorized.
             "ALTER TABLE embucket.missing_schema.test ADD COLUMN new_col INT",
         ])
-        .with_metastore_bootstrap_config(MetastoreConfig::DefaultConfig)
     );
 
     sql_test!(
@@ -133,7 +130,6 @@ mod compatible {
                 (DATABASE_QUERY_PARAM_KEY, "embucket".to_string()),
                 (SCHEMA_QUERY_PARAM_KEY, "test_schema".to_string()),
             ])
-            .with_metastore_bootstrap_config(MetastoreConfig::DefaultConfig)
     );
 }
 
@@ -184,7 +180,6 @@ mod known_issues {
                 "create schema if not exists embucket.test_schema",
                 "create table if not exists embucket.test_schema.test_table (id int)",
             ])
-            .with_metastore_bootstrap_config(MetastoreConfig::DefaultConfig)
     );
 }
 

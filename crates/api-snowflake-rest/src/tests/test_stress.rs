@@ -1,4 +1,4 @@
-use crate::server::core_state::MetastoreConfig;
+
 use crate::tests::sql_test_macro::{SqlTest, sql_test_wrapper};
 use tokio::task::JoinError;
 
@@ -30,7 +30,6 @@ mod stress {
     //                         "create table if not exists embucket.public.test_table (id int)",
     //                         "drop table if exists embucket.public.test_table",
     //                     ])
-    //                     .with_metastore_bootstrap_config(MetastoreConfig::DefaultConfig)
     //                     .with_skip_login(),
     //                     move |(sql, _), response| {
     //                         let err_msg = response.message.clone().unwrap_or_default();
@@ -74,11 +73,8 @@ mod stress {
             // create table if not exists
             "S3Tables get table failed with service error NotFoundException (HTTP 404)",
         ];
-        if let Ok(metastore_config_json) = std::env::var("METASTORE_CONFIG_JSON") {
-            let metastore_config = MetastoreConfig::ConfigJson(metastore_config_json);
-
+        if std::env::var("METASTORE_CONFIG_JSON").is_ok() {
             let handles = (0..50).map(|idx| {
-                let metastore_config = metastore_config.clone();
                 let expected_patterns = expected_patterns.clone();
                 tokio::spawn(async move {
                     sql_test_wrapper(
@@ -87,7 +83,6 @@ mod stress {
                         "create table if not exists s3_table_db.schema1.test_table (id int)",
                         "drop table if exists s3_table_db.schema1.test_table",
                     ])
-                    .with_metastore_bootstrap_config(metastore_config)
                     .with_skip_login(),
                     move |sql_info, response| {
                         let sql = sql_info.0;

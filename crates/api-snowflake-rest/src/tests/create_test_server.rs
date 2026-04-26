@@ -1,10 +1,8 @@
 use super::TEST_JWT_SECRET;
 use crate::server::core_state::CoreState;
-use crate::server::core_state::MetastoreConfig;
 use crate::server::make_snowflake_router;
 use crate::server::server_models::RestApiConfig;
 use crate::server::state::AppState;
-use catalog_metastore::metastore_settings_config::MetastoreSettingsConfig;
 use executor::utils::Config as UtilsConfig;
 use std::net::SocketAddr;
 use std::net::TcpListener;
@@ -31,24 +29,13 @@ pub fn executor_default_cfg() -> UtilsConfig {
     UtilsConfig::default().with_max_concurrency_level(2)
 }
 
-#[must_use]
-pub fn metastore_default_settings_cfg() -> MetastoreSettingsConfig {
-    MetastoreSettingsConfig::default()
-        .with_object_store_connect_timeout(1)
-        .with_object_store_timeout(1)
-}
-
 #[allow(clippy::expect_used)]
 pub async fn run_test_rest_api_server(
     rest_cfg: Option<RestApiConfig>,
     executor_cfg: Option<UtilsConfig>,
-    metastore_settings_cfg: Option<MetastoreSettingsConfig>,
-    metastore_cfg: MetastoreConfig,
 ) -> SocketAddr {
     let rest_cfg = rest_cfg.unwrap_or_else(|| rest_default_cfg("json"));
     let executor_cfg = executor_cfg.unwrap_or_else(executor_default_cfg);
-    let metastore_settings_cfg =
-        metastore_settings_cfg.unwrap_or_else(metastore_default_settings_cfg);
 
     let notify = Arc::new(Notify::new());
     let notify_clone = Arc::clone(&notify);
@@ -70,8 +57,6 @@ pub async fn run_test_rest_api_server(
             run_test_rest_api_server_with_config(
                 rest_cfg,
                 executor_cfg,
-                metastore_settings_cfg,
-                metastore_cfg,
                 listener,
                 notify_clone,
             )
@@ -114,8 +99,6 @@ fn setup_tracing() {
 
         let resource = Resource::builder().with_service_name("Em").build();
 
-        // Since BatchSpanProcessor and BatchSpanProcessorAsyncRuntime are not compatible with each other
-        // we just create TracerProvider with different span processors
         let tracing_provider = SdkTracerProvider::builder()
             .with_span_processor(BatchSpanProcessor::builder(exporter).build())
             .with_resource(resource)
@@ -127,7 +110,6 @@ fn setup_tracing() {
             };
 
         let registry = tracing_subscriber::registry()
-            // Telemetry filtering
             .with(
                 tracing_opentelemetry::OpenTelemetryLayer::new(tracing_provider.tracer("embucket"))
                     .with_level(true)
@@ -140,7 +122,6 @@ fn setup_tracing() {
 
         #[cfg(feature = "traces-test-log")]
         let registry = registry
-            // Logs filtering
             .with(
                 fmt::layer()
                     .with_writer(
@@ -174,8 +155,6 @@ fn setup_tracing() {
 pub async fn run_test_rest_api_server_with_config(
     snowflake_rest_cfg: RestApiConfig,
     execution_cfg: UtilsConfig,
-    metastore_settings_cfg: MetastoreSettingsConfig,
-    metastore_cfg: MetastoreConfig,
     listener: std::net::TcpListener,
     notify: Arc<Notify>,
 ) {
@@ -184,14 +163,9 @@ pub async fn run_test_rest_api_server_with_config(
     setup_tracing();
     tracing::info!("Starting server at {addr}");
 
-    let core_state = CoreState::new(
-        execution_cfg,
-        snowflake_rest_cfg,
-        metastore_settings_cfg,
-        metastore_cfg,
-    )
-    .await
-    .expect("Core state creation error");
+    let core_state = CoreState::new(execution_cfg, snowflake_rest_cfg)
+        .await
+        .expect("Core state creation error");
 
     let app = make_snowflake_router(AppState::from(&core_state))
         .into_make_service_with_connect_info::<SocketAddr>();

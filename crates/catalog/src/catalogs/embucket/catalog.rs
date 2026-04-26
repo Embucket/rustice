@@ -1,16 +1,21 @@
 use super::schema::EmbucketSchema;
 use crate::catalog::CatalogConfig;
 use crate::{block_on_with_timeout, error};
-use catalog_metastore::{Metastore, SchemaIdent};
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
 use iceberg_rust::catalog::Catalog as IcebergCatalog;
+use iceberg_rust::error::Error as IcebergError;
+use iceberg_rust_spec::namespace::Namespace;
 use snafu::ResultExt;
+
+fn make_namespace(schema: &str) -> Result<Namespace, IcebergError> {
+    Namespace::try_new(std::slice::from_ref(&schema.to_string()))
+        .map_err(|e| IcebergError::External(Box::new(e)))
+}
 use std::{any::Any, sync::Arc};
 use tracing::error;
 
 pub struct EmbucketCatalog {
     pub database: String,
-    pub metastore: Arc<dyn Metastore>,
     pub iceberg_catalog: Arc<dyn IcebergCatalog>,
     pub config: CatalogConfig,
 }
@@ -18,13 +23,11 @@ pub struct EmbucketCatalog {
 impl EmbucketCatalog {
     pub fn new(
         database: String,
-        metastore: Arc<dyn Metastore>,
         iceberg_catalog: Arc<dyn IcebergCatalog>,
         config: CatalogConfig,
     ) -> Self {
         Self {
             database,
-            metastore,
             iceberg_catalog,
             config,
         }
@@ -53,26 +56,25 @@ impl CatalogProvider for EmbucketCatalog {
 
     #[tracing::instrument(name = "EmbucketCatalog::schema_names", level = "debug", skip(self))]
     fn schema_names(&self) -> Vec<String> {
-        let metastore = self.metastore.clone();
-        let database = self.database.clone();
+        let iceberg_catalog = self.iceberg_catalog.clone();
 
         #[allow(clippy::expect_used)]
         block_on_with_timeout(
             async move {
-                metastore
-                    .list_schemas(&database)
+                iceberg_catalog
+                    .list_namespaces(None)
                     .await
-                    .map(|schemas| {
-                        schemas
+                    .context(error::IcebergSnafu)
+                    .map(|namespaces| {
+                        namespaces
                             .into_iter()
-                            .map(|s| s.ident.schema.clone())
+                            .map(|ns| ns.to_string())
                             .collect()
                     })
-                    .context(error::MetastoreSnafu)
             },
             self.config.catalog_timeout(),
         )
-        .expect("Catalog timeout on: list_schemas")
+        .expect("Catalog timeout on: list_namespaces")
         .unwrap_or_else(|error| {
             error!(
                 ?error,
@@ -84,7 +86,6 @@ impl CatalogProvider for EmbucketCatalog {
 
     #[tracing::instrument(name = "EmbucketCatalog::schema", level = "debug", skip(self))]
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        let metastore = self.metastore.clone();
         let iceberg_catalog = self.iceberg_catalog.clone();
         let database = self.database.clone();
         let schema_name = name.to_string();
@@ -93,26 +94,27 @@ impl CatalogProvider for EmbucketCatalog {
         #[allow(clippy::expect_used)]
         block_on_with_timeout(
             async move {
-                let schema_opt = metastore
-                    .get_schema(&SchemaIdent::new(database.clone(), schema_name.clone()))
+                let namespace = make_namespace(&schema_name).context(error::IcebergSnafu)?;
+                let exists = iceberg_catalog
+                    .namespace_exists(&namespace)
                     .await
-                    .context(error::MetastoreSnafu)?;
+                    .context(error::IcebergSnafu)?;
 
-                let provider = schema_opt.map(|_| {
-                    let schema: Arc<dyn SchemaProvider> = Arc::new(EmbucketSchema {
+                if exists {
+                    let provider: Arc<dyn SchemaProvider> = Arc::new(EmbucketSchema {
                         database,
                         schema: schema_name,
-                        metastore,
                         iceberg_catalog,
                         config,
                     });
-                    schema
-                });
-                Ok(provider)
+                    Ok(Some(provider))
+                } else {
+                    Ok(None)
+                }
             },
             self.config.catalog_timeout(),
         )
-        .expect("Catalog timeout on: get_schema")
+        .expect("Catalog timeout on: namespace_exists")
         .unwrap_or_else(|error: error::Error| {
             error!(?error, "Failed to get schema; assuming missing");
             None
