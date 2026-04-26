@@ -125,7 +125,6 @@ pub async fn create_df_session() -> Arc<UserSession> {
 
     let user_session = Arc::new(
         UserSession::new(
-            metastore,
             running_queries, // queries aborting will not work, unless its properly used (as in ExecutionService)
             Arc::new(Config::default()),
             catalog_list,

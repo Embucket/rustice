@@ -31,7 +31,6 @@ pub async fn create_s3_tables_df_session() -> Arc<UserSession> {
 
     Arc::new(
         UserSession::new(
-            metastore,
             Arc::new(RunningQueriesRegistry::new()),
             Arc::new(Config::default()),
             catalog_list,

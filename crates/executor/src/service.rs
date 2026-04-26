@@ -269,7 +269,6 @@ impl ExecutionService for CoreExecutionService {
         }
         let user_session: Arc<UserSession> = Arc::new(
             UserSession::new(
-                self.metastore.clone(),
                 self.queries.clone(),
                 self.config.clone(),
                 self.catalog_list.clone(),

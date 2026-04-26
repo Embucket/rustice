@@ -16,7 +16,6 @@ use crate::query_types::QueryId;
 use crate::running_queries::RunningQueries;
 use crate::utils::Config;
 use catalog::catalog_list::{DEFAULT_CATALOG, EmbucketCatalogList};
-use catalog_metastore::Metastore;
 use dashmap::DashMap;
 use datafusion::config::ConfigOptions;
 use datafusion::execution::runtime_env::RuntimeEnv;
@@ -47,7 +46,6 @@ pub const fn to_unix(t: OffsetDateTime) -> i64 {
 }
 
 pub struct UserSession {
-    pub metastore: Arc<dyn Metastore>,
     // running_queries contains all the queries running across sessions
     pub running_queries: Arc<dyn RunningQueries>,
     pub ctx: SessionContext,
@@ -65,7 +63,6 @@ pub struct UserSession {
 impl UserSession {
     #[allow(clippy::unused_async)]
     pub async fn new(
-        metastore: Arc<dyn Metastore>,
         running_queries: Arc<dyn RunningQueries>,
         config: Arc<Config>,
         catalog_list: Arc<EmbucketCatalogList>,
@@ -135,7 +132,6 @@ impl UserSession {
 
         let enable_ident_normalization = ctx.enable_ident_normalization();
         let session = Self {
-            metastore,
             running_queries,
             ctx,
             ident_normalizer: IdentNormalizer::new(enable_ident_normalization),
