@@ -48,16 +48,16 @@ datafusion-expr = { version = "53.0.0" }
 datafusion-functions-json = { git = "https://github.com/Embucket/datafusion-functions-json.git", rev = "96050386c6ab9215e49967cac94111517a6efc27" }
 datafusion-macros = { version = "53.0.0" }
 datafusion-physical-plan = { version = "53.0.0" }
-datafusion_iceberg = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4035b2b0ca56c3748da1d1308f4429fc7c949b94" }
+datafusion_iceberg = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4dbf7930fe6536c6acc5ae23e25c941320bfa691" }
 futures = { version = "0.3" }
 http = "1.2"
 http-body-util = "0.1.0"
 iceberg = { git = "https://github.com/apache/iceberg-rust.git", rev="7a5ad1fcaf00d4638857812bab788105f6c60573"}
-iceberg-rest-catalog = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4035b2b0ca56c3748da1d1308f4429fc7c949b94" }
-iceberg-rust = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4035b2b0ca56c3748da1d1308f4429fc7c949b94" }
-iceberg-rust-spec = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4035b2b0ca56c3748da1d1308f4429fc7c949b94" }
-iceberg-s3tables-catalog = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4035b2b0ca56c3748da1d1308f4429fc7c949b94" }
-iceberg-sql-catalog = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4035b2b0ca56c3748da1d1308f4429fc7c949b94" }
+iceberg-rest-catalog = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4dbf7930fe6536c6acc5ae23e25c941320bfa691" }
+iceberg-rust = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4dbf7930fe6536c6acc5ae23e25c941320bfa691" }
+iceberg-rust-spec = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4dbf7930fe6536c6acc5ae23e25c941320bfa691" }
+iceberg-s3tables-catalog = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4dbf7930fe6536c6acc5ae23e25c941320bfa691" }
+iceberg-sql-catalog = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "4dbf7930fe6536c6acc5ae23e25c941320bfa691" }
 indexmap = "2.7.1"
 jsonwebtoken = "9.3.1"
 lazy_static = { version = "1.5" }
