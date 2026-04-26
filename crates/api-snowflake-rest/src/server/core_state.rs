@@ -1,7 +1,9 @@
+use crate::server::error::BuildDevCatalogSnafu;
 use crate::server::error::CreateExecutorSnafu;
 use crate::server::error::Result;
 use crate::server::server_models::RestApiConfig;
 use api_snowflake_rest_sessions::session::SessionStore;
+use catalog::dev_catalog::build_dev_catalog_list;
 use executor::service::CoreExecutionService;
 use executor::utils::Config as ExecutionConfig;
 use snafu::ResultExt;
@@ -25,6 +27,27 @@ impl CoreState {
         })
     }
 
+    /// Construct a `CoreState` running with an in-memory Iceberg SQL catalog
+    /// (sqlite://) and an in-memory object store. Intended for local development
+    /// and tests.
+    pub async fn new_dev(
+        execution_cfg: ExecutionConfig,
+        rest_api_config: RestApiConfig,
+    ) -> Result<Self> {
+        let config = Arc::new(execution_cfg);
+        let catalog_list = build_dev_catalog_list((&*config).into())
+            .await
+            .context(BuildDevCatalogSnafu)?;
+        let executor = Arc::new(
+            CoreExecutionService::new_with_catalog_list(config, catalog_list)
+                .context(CreateExecutorSnafu)?,
+        );
+        Ok(Self {
+            executor,
+            rest_api_config,
+        })
+    }
+
     pub fn with_session_timeout(&self, session_timeout: Duration) -> Result<()> {
         tracing::info!(
             "With session timeout, by {} seconds",
@@ -40,9 +63,7 @@ impl CoreState {
     }
 }
 
-async fn create_executor(
-    execution_cfg: ExecutionConfig,
-) -> Result<Arc<CoreExecutionService>> {
+async fn create_executor(execution_cfg: ExecutionConfig) -> Result<Arc<CoreExecutionService>> {
     tracing::info!("Creating execution service");
     let executor = Arc::new(
         CoreExecutionService::new(Arc::new(execution_cfg))

@@ -8,6 +8,15 @@ use tracing_subscriber::filter::LevelFilter;
 pub struct CliOpts {
     #[arg(
         long,
+        env = "EMBUCKET_DEV",
+        default_value = "false",
+        help = "Run in dev mode with an in-memory Iceberg SQL catalog (sqlite://) \
+                and in-memory object store. Useful for local development."
+    )]
+    pub dev_mode: bool,
+
+    #[arg(
+        long,
         env = "METASTORE_CONFIG",
         value_name = "PATH",
         help = "Path to YAML config describing volumes/databases to seed the metastore"

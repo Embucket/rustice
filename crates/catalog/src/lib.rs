@@ -9,6 +9,7 @@ use tracing::{Span, instrument};
 pub mod catalog;
 pub mod catalog_list;
 pub mod catalogs;
+pub mod dev_catalog;
 pub mod df_error;
 pub mod error;
 pub mod information_schema;

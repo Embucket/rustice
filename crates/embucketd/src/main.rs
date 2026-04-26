@@ -151,9 +151,15 @@ async fn async_main(
     let host = opts.host.clone().unwrap();
     let port = opts.port.unwrap();
 
-    let core_state = CoreState::new(execution_cfg, snowflake_rest_cfg)
-        .await
-        .expect("Core state creation error");
+    let core_state = if opts.dev_mode {
+        tracing::info!(
+            "Starting in dev mode (in-memory SQLite Iceberg catalog + in-memory object store)"
+        );
+        CoreState::new_dev(execution_cfg, snowflake_rest_cfg).await
+    } else {
+        CoreState::new(execution_cfg, snowflake_rest_cfg).await
+    }
+    .expect("Core state creation error");
 
     core_state
         .with_session_timeout(tokio::time::Duration::from_secs(SESSION_EXPIRATION_SECONDS))?;

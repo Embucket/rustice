@@ -117,6 +117,13 @@ pub enum Error {
         location: Location,
     },
 
+    #[snafu(display("Failed to build dev catalog: {error}"))]
+    BuildDevCatalog {
+        #[snafu(source(from(catalog::error::Error, Box::new)))]
+        error: Box<catalog::error::Error>,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 impl IntoResponse for Error {
@@ -256,6 +263,7 @@ impl Error {
             ),
             Self::Utf8 { .. }
             | Self::CreateExecutor { .. }
+            | Self::BuildDevCatalog { .. }
             | Self::RetryDisabled { .. }
             | Self::Arrow { .. }
             | Self::NotImplemented { .. } => {

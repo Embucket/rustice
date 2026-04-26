@@ -156,9 +156,18 @@ impl CoreExecutionService {
         err
     )]
     pub async fn new(config: Arc<Config>) -> Result<Self> {
+        let catalog_list = Self::catalog_list(&config)?;
+        Self::new_with_catalog_list(config, catalog_list)
+    }
+
+    /// Create an execution service with a pre-built catalog list. Used by dev mode
+    /// and tests to inject a working iceberg catalog.
+    pub fn new_with_catalog_list(
+        config: Arc<Config>,
+        catalog_list: Arc<EmbucketCatalogList>,
+    ) -> Result<Self> {
         Self::initialize_datafusion_tracer();
 
-        let catalog_list = Self::catalog_list(&config)?;
         let runtime_env = Self::runtime_env(&config, catalog_list.clone())?;
         Ok(Self {
             df_sessions: Arc::new(RwLock::new(HashMap::new())),

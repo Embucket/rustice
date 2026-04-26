@@ -12,6 +12,7 @@ traces-test-log = []
 [dependencies]
 api-snowflake-rest-sessions = { path = "../api-snowflake-rest-sessions" }
 executor = { path = "../executor" }
+catalog = { path = "../catalog" }
 catalog-metastore = { path = "../catalog-metastore" }
 
 error-stack-trace = { path = "../error-stack-trace" }
