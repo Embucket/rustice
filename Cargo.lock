@@ -3407,6 +3407,7 @@ dependencies = [
  "http 1.4.0",
  "http-body-util",
  "lambda_http",
+ "object_store",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",

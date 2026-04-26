@@ -88,6 +88,15 @@ impl EnvConfig {
             aws_sdk_operation_attempt_timeout_secs: self.aws_sdk_operation_attempt_timeout_secs,
             iceberg_table_timeout_secs: self.iceberg_table_timeout_secs,
             iceberg_catalog_timeout_secs: self.iceberg_catalog_timeout_secs,
+            object_store_client_options: Some(
+                object_store::ClientOptions::default()
+                    .with_timeout(std::time::Duration::from_secs(
+                        self.object_store_timeout_secs,
+                    ))
+                    .with_connect_timeout(std::time::Duration::from_secs(
+                        self.object_store_connect_timeout_secs,
+                    )),
+            ),
         }
     }
 }

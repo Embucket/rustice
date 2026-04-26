@@ -5,6 +5,7 @@ use aws_config::timeout::TimeoutConfigBuilder;
 use catalog::catalog_list::CatalogListConfig;
 use catalog_metastore::SchemaIdent as MetastoreSchemaIdent;
 use catalog_metastore::TableIdent as MetastoreTableIdent;
+use object_store::ClientOptions;
 use chrono::{DateTime, FixedOffset, Offset, TimeZone};
 use clap::ValueEnum;
 use datafusion::arrow::array::timezone::Tz;
@@ -52,6 +53,7 @@ pub struct Config {
     pub aws_sdk_operation_attempt_timeout_secs: u64,
     pub iceberg_table_timeout_secs: u64,
     pub iceberg_catalog_timeout_secs: u64,
+    pub object_store_client_options: Option<ClientOptions>,
 }
 
 impl From<&Config> for CatalogListConfig {
@@ -97,6 +99,7 @@ impl Default for Config {
             aws_sdk_operation_attempt_timeout_secs: 10,
             iceberg_table_timeout_secs: 30,
             iceberg_catalog_timeout_secs: 10,
+            object_store_client_options: None,
         }
     }
 }

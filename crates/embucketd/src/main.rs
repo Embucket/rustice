@@ -141,6 +141,13 @@ async fn async_main(
         aws_sdk_connect_timeout_secs: opts.aws_sdk_connect_timeout_secs,
         iceberg_table_timeout_secs: opts.iceberg_table_timeout_secs,
         iceberg_catalog_timeout_secs: opts.iceberg_catalog_timeout_secs,
+        object_store_client_options: Some(
+            object_store::ClientOptions::default()
+                .with_timeout(std::time::Duration::from_secs(opts.object_store_timeout_secs))
+                .with_connect_timeout(std::time::Duration::from_secs(
+                    opts.object_store_connect_timeout_secs,
+                )),
+        ),
     };
 
     let host = opts.host.clone().unwrap();

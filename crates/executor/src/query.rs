@@ -1692,7 +1692,7 @@ impl UserQuery {
                             arn: params.aws_access_point_arn.unwrap_or_default(),
                             client_options: None,
                         }
-                        .with_client_options(self.metastore.settings_config().map(Into::into)),
+                        .with_client_options(self.session.config.object_store_client_options.clone()),
                     ),
                 )
             }
@@ -1718,7 +1718,7 @@ impl UserQuery {
                             credentials: Some(aws_credentials),
                             client_options: None,
                         }
-                        .with_client_options(self.metastore.settings_config().map(Into::into)),
+                        .with_client_options(self.session.config.object_store_client_options.clone()),
                     ),
                 )
             }
@@ -3074,7 +3074,7 @@ impl UserQuery {
                         credentials,
                         client_options: None, // could set timeouts here
                     }
-                    .with_client_options(self.metastore.settings_config().map(Into::into));
+                    .with_client_options(self.session.config.object_store_client_options.clone());
 
                     let s3 = s3_volume
                         .get_s3_builder()
@@ -3086,9 +3086,10 @@ impl UserQuery {
                     Ok(create_object_store_from_url(
                         url.as_str(),
                         stage_params.endpoint,
-                        self.metastore
-                            .settings_config()
-                            .map(|config| config.object_store_client_options),
+                        self.session
+                            .config
+                            .object_store_client_options
+                            .clone(),
                     )
                     .await
                     .context(ex_error::MetastoreSnafu)?)
@@ -3098,9 +3099,10 @@ impl UserQuery {
             _ => create_object_store_from_url(
                 url.as_str(),
                 stage_params.endpoint,
-                self.metastore
-                    .settings_config()
-                    .map(|config| config.object_store_client_options),
+                self.session
+                    .config
+                    .object_store_client_options
+                    .clone(),
             )
             .await
             .context(ex_error::MetastoreSnafu),
