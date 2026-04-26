@@ -21,9 +21,7 @@ use crate::models::{QueryContext, QueryMetric, QueryResult, metrics_set_to_json}
 use crate::query_types::{DdlStType, DmlStType, MiscStType, QueryStats, QueryType};
 use catalog::table::{CachingTable, IcebergTableBuilder};
 use catalog_metastore::{
-    AwsAccessKeyCredentials, AwsCredentials, FileVolume, Metastore, S3TablesVolume, S3Volume,
-    TableCreateRequest as MetastoreTableCreateRequest, TableFormat as MetastoreTableFormat,
-    TableIdent as MetastoreTableIdent, Volume, VolumeType,
+    AwsAccessKeyCredentials, AwsCredentials, S3Volume,
     models::volumes::create_object_store_from_url,
 };
 use datafusion::arrow::array::{Int64Array, RecordBatch, StringArray};
@@ -47,7 +45,7 @@ use datafusion::logical_expr::{LogicalPlan, TableSource};
 use datafusion::physical_optimizer::PhysicalOptimizerRule;
 use datafusion::prelude::{CsvReadOptions, DataFrame};
 use datafusion::scalar::ScalarValue;
-use datafusion::sql::parser::{CreateExternalTable, Statement as DFStatement};
+use datafusion::sql::parser::Statement as DFStatement;
 use datafusion::sql::planner::SqlToRel;
 use datafusion::sql::resolve::resolve_table_references;
 use datafusion::sql::sqlparser::ast::{
@@ -94,7 +92,7 @@ use snafu::{OptionExt, ResultExt, location};
 use sqlparser::ast::helpers::key_value_options::{KeyValueOptionKind, KeyValueOptions};
 use sqlparser::ast::helpers::stmt_data_loading::StageParamsObject;
 use sqlparser::ast::{
-    AlterTableOperation, AssignmentTarget, CloudProviderParams, MergeAction, MergeClause,
+    AlterTableOperation, AssignmentTarget, MergeAction, MergeClause,
     MergeClauseKind, MergeInsertKind, ObjectNamePart, ObjectType, PivotValueSource, ShowObjects,
     ShowStatementFilter, ShowStatementIn, ShowStatementInParentType as ShowType,
     ShowStatementInParentType, TruncateTableTarget, Use, Value, visit_relations_mut,
@@ -112,7 +110,6 @@ use tracing_attributes::instrument;
 use url::Url;
 
 pub struct UserQuery {
-    pub metastore: Arc<dyn Metastore>,
     pub running_queries: Arc<dyn RunningQueries>,
     pub raw_query: String,
     pub query: String,
@@ -127,7 +124,6 @@ impl UserQuery {
         S: Into<String> + Clone,
     {
         Self {
-            metastore: session.metastore.clone(),
             running_queries: session.running_queries.clone(),
             raw_query: query.clone().into(),
             query: query.into(),
@@ -183,24 +179,6 @@ impl UserQuery {
                 .drop_catalog(catalog, cascade)
                 .await
                 .context(ex_error::DropDatabaseSnafu)?;
-        }
-        Ok(())
-    }
-
-    #[instrument(name = "UserQuery::create_catalog", level = "debug", skip(self), err)]
-    async fn create_catalog(&self, catalog: &str, volume: &str) -> Result<()> {
-        if let Some(catalog_list_impl) = self
-            .session
-            .ctx
-            .state()
-            .catalog_list()
-            .as_any()
-            .downcast_ref::<EmbucketCatalogList>()
-        {
-            catalog_list_impl
-                .create_catalog(catalog, volume)
-                .await
-                .context(ex_error::CreateDatabaseSnafu)?;
         }
         Ok(())
     }
@@ -393,25 +371,17 @@ impl UserQuery {
                 Statement::CreateView { .. } => {
                     return Box::pin(self.create_view(*s)).await;
                 }
-                Statement::CreateDatabase {
-                    db_name,
-                    if_not_exists,
-                    external_volume,
-                    ..
-                } => {
-                    return self
-                        .create_database(db_name, if_not_exists, external_volume)
-                        .await;
+                Statement::CreateDatabase { .. } => {
+                    return ex_error::NotSupportedStatementSnafu {
+                        statement: "CREATE DATABASE is not supported. Databases should be managed directly via the Iceberg REST Catalog".to_string(),
+                    }
+                    .fail();
                 }
-                Statement::CreateExternalVolume {
-                    name,
-                    storage_locations,
-                    if_not_exists,
-                    ..
-                } => {
-                    return self
-                        .create_volume(name, storage_locations, if_not_exists)
-                        .await;
+                Statement::CreateExternalVolume { .. } => {
+                    return ex_error::NotSupportedStatementSnafu {
+                        statement: "CREATE EXTERNAL VOLUME is not supported. Storage is managed by the Iceberg REST Catalog".to_string(),
+                    }
+                    .fail();
                 }
                 Statement::CreateSchema { .. } => return Box::pin(self.create_schema(*s)).await,
                 Statement::CreateStage { .. } => {
@@ -462,8 +432,11 @@ impl UserQuery {
                 }
                 _ => {}
             }
-        } else if let DFStatement::CreateExternalTable(cetable) = statement {
-            return Box::pin(self.create_external_table_query(cetable)).await;
+        } else if let DFStatement::CreateExternalTable(_) = statement {
+            return ex_error::NotSupportedStatementSnafu {
+                statement: "CREATE EXTERNAL TABLE is not supported. Tables should be managed via the Iceberg REST Catalog".to_string(),
+            }
+            .fail();
         } else if let DFStatement::Explain(explain) = &statement {
             // DataFusion's default planner rejects `EXPLAIN MERGE INTO ...` as
             // "Unsupported SQL statement: MERGE INTO" because MERGE has its
@@ -1046,74 +1019,6 @@ impl UserQuery {
         Ok(Some(Arc::new(IcebergTableBuilder::new(builder))))
     }
 
-    #[instrument(
-        name = "UserQuery::create_external_table_query",
-        level = "trace",
-        skip(self),
-        err
-    )]
-    pub async fn create_external_table_query(
-        &self,
-        statement: CreateExternalTable,
-    ) -> Result<QueryResult> {
-        let table_location = statement.location.clone();
-        let table_format = MetastoreTableFormat::from(statement.file_type);
-        let session_context = HashMap::new();
-        let session_context_planner = SessionContextProvider {
-            state: &self.session.ctx.state(),
-            tables: session_context,
-        };
-
-        let planner = SqlToRel::new(&session_context_planner);
-        let table_schema = planner
-            .build_schema(statement.columns)
-            .context(ex_error::DataFusionSnafu)?;
-        let fields_with_ids =
-            StructType::try_from(&new_fields_with_ids(table_schema.fields(), &mut 0))
-                .map_err(|err| DataFusionError::External(Box::new(err)))
-                .context(ex_error::DataFusionSnafu)?;
-
-        // TODO: Use the options with the table format in the future
-        let _table_options = statement.options.clone();
-        let table_ident: MetastoreTableIdent =
-            self.resolve_table_object_name(statement.name.0)?.into();
-
-        // Create builder and configure it
-        let mut builder = Schema::builder();
-        builder.with_schema_id(0);
-        builder.with_identifier_field_ids(vec![]);
-
-        // Add each struct field individually
-        for field in fields_with_ids.iter() {
-            builder.with_struct_field(field.clone());
-        }
-
-        let table_schema = builder
-            .build()
-            .map_err(|err| DataFusionError::External(Box::new(err)))
-            .context(ex_error::DataFusionSnafu)?;
-
-        let table_create_request = MetastoreTableCreateRequest {
-            ident: table_ident.clone(),
-            schema: table_schema,
-            location: Some(table_location),
-            partition_spec: None,
-            sort_order: None,
-            stage_create: None,
-            volume_ident: None,
-            is_temporary: Some(false),
-            format: Some(table_format),
-            properties: None,
-        };
-
-        self.metastore
-            .create_table(&table_ident, table_create_request)
-            .await
-            .context(ex_error::MetastoreSnafu)?;
-
-        self.created_entity_response()
-    }
-
     /// This is experimental CREATE STAGE support
     /// Current limitations
     /// TODO
@@ -1592,151 +1497,6 @@ impl UserQuery {
         }))
     }
 
-    #[instrument(name = "UserQuery::create_database", level = "trace", skip(self), err)]
-    pub async fn create_database(
-        &self,
-        db_name: ObjectName,
-        if_not_exists: bool,
-        external_volume: Option<String>,
-    ) -> Result<QueryResult> {
-        let catalog_name = object_name_to_string(&db_name);
-        if external_volume.is_none() {
-            return ex_error::ExternalVolumeRequiredForCreateDatabaseSnafu { name: catalog_name }
-                .fail();
-        }
-        let catalog_exist = self.get_catalog(&catalog_name).is_ok();
-        if catalog_exist {
-            if if_not_exists {
-                return self.created_entity_response();
-            }
-            return ex_error::ObjectAlreadyExistsSnafu {
-                r#type: ExistingObjectType::Database,
-                name: catalog_name,
-            }
-            .fail();
-        }
-        self.create_catalog(&catalog_name, &external_volume.unwrap_or_default())
-            .await?;
-        self.created_entity_response()
-    }
-
-    /// Creates a new volume in the system
-    ///
-    /// This function handles multiple types of storage volumes: `file`, `memory`, `s3`, and `s3tables`.
-    ///
-    /// # Parameters
-    /// - `name`: The logical name for the volume, represented as an `ObjectName`.
-    /// - `storage_locations`: A list of `CloudProviderParams`, where only the first entry is currently used.
-    ///   This includes provider type (e.g. "s3tables"), credentials, endpoint, base URL, etc.
-    /// # Behavior
-    /// - Validates that the storage location is not empty.
-    /// - Parses provider-specific parameters and constructs the appropriate `VolumeType`.
-    /// - Stores the volume in the metastore.
-    /// # Errors
-    /// - Returns a descriptive error if:
-    ///     - The provider type is unrecognized.
-    ///     - Required credentials (e.g. AWS key/secret) are missing.
-    ///     - The metastore fails to persist the volume.
-    #[instrument(name = "UserQuery::create_volume", level = "trace", skip(self), err)]
-    pub async fn create_volume(
-        &self,
-        name: ObjectName,
-        storage_locations: Vec<CloudProviderParams>,
-        if_not_exists: bool,
-    ) -> Result<QueryResult> {
-        let ident = object_name_to_string(&name);
-
-        if let Ok(Some(_)) = self.metastore.get_volume(&ident).await {
-            if if_not_exists {
-                return self.created_entity_response();
-            }
-            return ex_error::ObjectAlreadyExistsSnafu {
-                r#type: ExistingObjectType::Volume,
-                name: ident,
-            }
-            .fail();
-        }
-
-        if storage_locations.is_empty() {
-            return ex_error::VolumeFieldRequiredSnafu {
-                volume_type: "",
-                field: "storage_locations".to_string(),
-            }
-            .fail();
-        }
-        let params = storage_locations[0].clone();
-
-        let volume = match params.provider.to_lowercase().as_str() {
-            "file" => Volume::new(
-                ident.clone(),
-                VolumeType::File(FileVolume {
-                    path: params.base_url.unwrap_or_default(),
-                }),
-            ),
-            "memory" => Volume::new(ident.clone(), VolumeType::Memory),
-            "s3tables" => {
-                let vol_type = "s3tables";
-                let key_id = get_volume_kv_option(&params.credentials, "aws_key_id", vol_type)?;
-                let secret_key =
-                    get_volume_kv_option(&params.credentials, "aws_secret_key", vol_type)?;
-                Volume::new(
-                    ident.clone(),
-                    VolumeType::S3Tables(
-                        S3TablesVolume {
-                            endpoint: params.storage_endpoint,
-                            credentials: AwsCredentials::AccessKey(AwsAccessKeyCredentials {
-                                aws_access_key_id: key_id,
-                                aws_secret_access_key: secret_key,
-                                aws_session_token: None,
-                            }),
-                            arn: params.aws_access_point_arn.unwrap_or_default(),
-                            client_options: None,
-                        }
-                        .with_client_options(self.session.config.object_store_client_options.clone()),
-                    ),
-                )
-            }
-            "s3" => {
-                let vol_type = "s3";
-                let region = get_volume_kv_option(&params.credentials, "region", vol_type)?;
-                let key_id = get_volume_kv_option(&params.credentials, "aws_key_id", vol_type)?;
-                let secret_key =
-                    get_volume_kv_option(&params.credentials, "aws_secret_key", vol_type)?;
-                let aws_credentials = AwsCredentials::AccessKey(AwsAccessKeyCredentials {
-                    aws_access_key_id: key_id,
-                    aws_secret_access_key: secret_key,
-                    aws_session_token: None,
-                });
-
-                Volume::new(
-                    ident.clone(),
-                    VolumeType::S3(
-                        S3Volume {
-                            region: Some(region),
-                            bucket: params.base_url,
-                            endpoint: params.storage_endpoint,
-                            credentials: Some(aws_credentials),
-                            client_options: None,
-                        }
-                        .with_client_options(self.session.config.object_store_client_options.clone()),
-                    ),
-                )
-            }
-            other => {
-                return ex_error::VolumeFieldRequiredSnafu {
-                    volume_type: other.to_string(),
-                    field: "storage provider one of S3, S3TABLES, MEMORY OR FILE".to_string(),
-                }
-                .fail();
-            }
-        };
-        // Create volume in the metastore
-        self.metastore
-            .create_volume(&ident, volume.clone())
-            .await
-            .context(ex_error::MetastoreSnafu)?;
-        self.created_entity_response()
-    }
 
     #[instrument(name = "UserQuery::create_view", level = "trace", skip(self), err)]
     pub async fn create_view(&self, statement: Statement) -> Result<QueryResult> {
@@ -3030,15 +2790,10 @@ impl UserQuery {
     ) -> Result<Arc<dyn ObjectStore + 'static>> {
         match (&stage_params.storage_integration, &stage_params.credentials) {
             (Some(volume), _) => {
-                let volume = self
-                    .metastore
-                    .get_volume(volume)
-                    .await
-                    .context(ex_error::MetastoreSnafu)?
-                    .context(ex_error::VolumeNotFoundSnafu { volume })?;
-                Ok(volume
-                    .get_object_store()
-                    .context(ex_error::MetastoreSnafu)?)
+                ex_error::NotSupportedStatementSnafu {
+                    statement: format!("Storage integration '{volume}' is not supported. Volumes have been removed. Use inline credentials instead"),
+                }
+                .fail()
             }
             (None, credentials) if !credentials.options.is_empty() => {
                 // Create object store from credentials
@@ -3673,29 +3428,6 @@ fn kv_option_value_to_string(kind: &KeyValueOptionKind) -> String {
             .collect::<Vec<_>>()
             .join(","),
         KeyValueOptionKind::KeyValueOptions(_) => String::new(),
-    }
-}
-
-pub fn get_volume_kv_option(
-    options: &KeyValueOptions,
-    key: &str,
-    volume_type: &str,
-) -> Result<String> {
-    let value = options
-        .options
-        .iter()
-        .find(|opt| opt.option_name.eq_ignore_ascii_case(key))
-        .map(|opt| kv_option_value_to_string(&opt.option_value))
-        .unwrap_or_default();
-
-    if value.is_empty() {
-        ex_error::VolumeFieldRequiredSnafu {
-            volume_type: volume_type.to_string(),
-            field: key.to_ascii_uppercase(),
-        }
-        .fail()
-    } else {
-        Ok(value)
     }
 }
 
