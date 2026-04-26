@@ -1,4 +1,3 @@
-use super::catalogs::embucket::catalog::EmbucketCatalog;
 use crate::catalog::{CachingCatalog, CatalogType, Properties};
 #[cfg(feature = "rest-catalog")]
 use crate::catalogs::rest::catalog::RestCatalog;
@@ -118,7 +117,9 @@ impl EmbucketCatalogList {
                 )
                 .context(catalog_error::S3TablesSnafu)?,
             );
-            let catalog = DataFusionIcebergCatalog::new_sync(iceberg_catalog.clone(), None);
+            let catalog = DataFusionIcebergCatalog::new(iceberg_catalog.clone(), None)
+                .await
+                .context(catalog_error::DataFusionSnafu)?;
             return Ok(CachingCatalog::new(
                 Arc::new(catalog),
                 db_name.to_owned(),
@@ -157,7 +158,9 @@ impl EmbucketCatalogList {
                 rest_catalog,
                 object_store_builder,
             ));
-            let catalog = DataFusionIcebergCatalog::new_sync(iceberg_catalog.clone(), None);
+            let catalog = DataFusionIcebergCatalog::new(iceberg_catalog.clone(), None)
+                .await
+                .context(catalog_error::DataFusionSnafu)?;
             Ok(CachingCatalog::new(
                 Arc::new(catalog),
                 db_name.to_owned(),
@@ -169,19 +172,21 @@ impl EmbucketCatalogList {
         }
     }
 
-    /// Register an iceberg catalog as an embucket catalog (with EmbucketCatalog as
-    /// the DataFusion CatalogProvider).
-    pub fn register_iceberg_catalog(
+    /// Register an iceberg catalog wrapped in a `CachingCatalog`. The underlying
+    /// `IcebergCatalog` mirror cache is prefilled here so that read paths
+    /// (`schema_names`, `schema`, `table_names`, `table_exist`) can be answered
+    /// synchronously without `block_on`.
+    pub async fn register_iceberg_catalog(
         &self,
         name: &str,
         iceberg_catalog: Arc<dyn Catalog>,
         should_refresh: bool,
-    ) {
-        let catalog_provider: Arc<dyn CatalogProvider> = Arc::new(EmbucketCatalog::new(
-            name.to_owned(),
-            iceberg_catalog.clone(),
-            (&self.config).into(),
-        ));
+    ) -> Result<()> {
+        let catalog_provider: Arc<dyn CatalogProvider> = Arc::new(
+            DataFusionIcebergCatalog::new(iceberg_catalog.clone(), None)
+                .await
+                .context(catalog_error::DataFusionSnafu)?,
+        );
         let caching = CachingCatalog::new(
             catalog_provider,
             name.to_owned(),
@@ -192,6 +197,7 @@ impl EmbucketCatalogList {
         .with_properties(Properties::default());
 
         self.catalogs.insert(name.to_owned(), Arc::new(caching));
+        Ok(())
     }
 
     #[allow(clippy::as_conversions)]

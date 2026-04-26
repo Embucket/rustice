@@ -1,20 +1,16 @@
 use crate::catalog_list::CatalogListConfig;
-use crate::catalogs::embucket::schema::EmbucketSchema;
 use crate::schema::CachingSchema;
 use crate::{block_on_with_timeout, error};
 use chrono::NaiveDateTime;
 use dashmap::DashMap;
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
 use datafusion_common::DataFusionError;
-use datafusion_iceberg::catalog::catalog::IcebergCatalog;
-use datafusion_iceberg::catalog::schema::IcebergSchema;
 use iceberg_rust::catalog::Catalog;
 use iceberg_rust_spec::namespace::Namespace;
 use snafu::ResultExt;
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 use std::{any::Any, sync::Arc};
-use tracing::error;
 
 #[derive(Clone)]
 pub struct CachingCatalog {
@@ -137,52 +133,6 @@ impl CachingCatalog {
         self
     }
 
-    #[tracing::instrument(
-        name = "CachingCatalog::iceberg_schema_provider",
-        level = "debug",
-        skip(self)
-    )]
-    #[allow(clippy::as_conversions)]
-    fn iceberg_schema_provider(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        let Some(iceberg_catalog) = &self.iceberg_catalog else {
-            return None;
-        };
-
-        let namespace = Namespace::try_new(std::slice::from_ref(&name.to_string())).ok()?;
-        let namespace_to_check = namespace.clone();
-        let catalog = iceberg_catalog.clone();
-
-        // Check if schema exists
-        #[allow(clippy::expect_used)]
-        let schema_exists = block_on_with_timeout(
-            async move {
-                catalog
-                    .namespace_exists(&namespace_to_check)
-                    .await
-                    .context(error::IcebergSnafu)
-            },
-            self.config.catalog_timeout(),
-        )
-        .expect("Catalog timeout on namespace_exists")
-        .unwrap_or_else(|error| {
-            error!(?error, "Failed to check schema");
-            false
-        });
-
-        if !schema_exists {
-            return None;
-        }
-        let iceberg_catalog = self.catalog.as_any().downcast_ref::<IcebergCatalog>()?;
-        Some(
-            Arc::new(IcebergSchema::new(namespace, iceberg_catalog.mirror()))
-                as Arc<dyn SchemaProvider>,
-        )
-    }
-
-    fn lookup_schema_provider(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        self.iceberg_schema_provider(name)
-            .or_else(|| self.catalog.schema(name))
-    }
 }
 
 #[allow(clippy::missing_fields_in_debug)]
@@ -209,30 +159,7 @@ impl CatalogProvider for CachingCatalog {
         fields(schemas_names_count, catalog_name=format!("{:?}", self.name)),
     )]
     fn schema_names(&self) -> Vec<String> {
-        let schema_names = match &self.iceberg_catalog {
-            Some(catalog) => {
-                let catalog = catalog.clone();
-                #[allow(clippy::expect_used)]
-                block_on_with_timeout(
-                    async move {
-                        catalog
-                            .list_namespaces(None)
-                            .await
-                            .context(error::IcebergSnafu)
-                            .map(|namespaces| {
-                                namespaces.into_iter().map(|ns| ns.to_string()).collect()
-                            })
-                    },
-                    self.config.catalog_timeout(),
-                )
-                .expect("Catalog timeout on: list_namespaces")
-                .unwrap_or_else(|error| {
-                    error!(?error, "Failed to list schema names; returning empty list");
-                    vec![]
-                })
-            }
-            None => self.catalog.schema_names(),
-        };
+        let schema_names = self.catalog.schema_names();
 
         // Remove outdated records
         let schema_names_set: std::collections::HashSet<_> = schema_names.iter().cloned().collect();
@@ -250,7 +177,7 @@ impl CatalogProvider for CachingCatalog {
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
         if let Some(schema) = self.schemas_cache.get(name) {
             Some(Arc::clone(schema.value()) as Arc<dyn SchemaProvider>)
-        } else if let Some(schema) = self.lookup_schema_provider(name) {
+        } else if let Some(schema) = self.catalog.schema(name) {
             let caching_schema = Arc::new(CachingSchema {
                 name: name.to_string(),
                 schema: Arc::clone(&schema),
@@ -278,51 +205,35 @@ impl CatalogProvider for CachingCatalog {
         name: &str,
         schema: Arc<dyn SchemaProvider>,
     ) -> datafusion_common::Result<Option<Arc<dyn SchemaProvider>>> {
-        let schema_provider = if let Some(catalog) = &self.iceberg_catalog {
-            let namespace = Namespace::try_new(std::slice::from_ref(&name.to_string()))
-                .map_err(|err| DataFusionError::External(Box::new(err)))?;
-
-            let schema_provider: Arc<dyn SchemaProvider> = match self.catalog_type {
-                CatalogType::Embucket | CatalogType::Memory => {
-                    Arc::new(EmbucketSchema {
-                        database: self.name.clone(),
-                        schema: name.to_string(),
-                        iceberg_catalog: catalog.clone(),
-                        config: self.config.clone(),
-                    })
-                }
-                CatalogType::S3tables => {
-                    let Some(iceberg_catalog) =
-                        self.catalog.as_any().downcast_ref::<IcebergCatalog>()
-                    else {
-                        return Err(DataFusionError::Plan(format!(
-                            "Catalog {} is not an Iceberg catalog.",
-                            self.name
-                        )));
-                    };
-                    Arc::new(IcebergSchema::new(
-                        namespace.clone(),
-                        iceberg_catalog.mirror(),
-                    ))
-                }
-            };
-            let catalog = catalog.clone();
-            #[allow(clippy::expect_used)]
-            block_on_with_timeout(
-                async move {
-                    catalog
-                        .create_namespace(&namespace, None)
-                        .await
-                        .context(error::IcebergSnafu)
-                },
-                self.config.catalog_timeout(),
-            )
-            .expect("Catalog timeout on: create_namespace")
-            .map_err(|err| DataFusionError::External(Box::new(err)))?;
-            schema_provider
-        } else {
+        let Some(catalog) = self.iceberg_catalog.clone() else {
             return self.catalog.register_schema(name, schema);
         };
+        let namespace = Namespace::try_new(std::slice::from_ref(&name.to_string()))
+            .map_err(|err| DataFusionError::External(Box::new(err)))?;
+
+        #[allow(clippy::expect_used)]
+        block_on_with_timeout(
+            async move {
+                catalog
+                    .create_namespace(&namespace, None)
+                    .await
+                    .context(error::IcebergSnafu)
+            },
+            self.config.catalog_timeout(),
+        )
+        .expect("Catalog timeout on: create_namespace")
+        .map_err(|err| DataFusionError::External(Box::new(err)))?;
+
+        // Update the inner mirror so that subsequent reads see the new namespace.
+        // The argument is required by the trait but ignored by IcebergCatalog.
+        let _ = self.catalog.register_schema(name, Arc::clone(&schema))?;
+
+        let schema_provider = self.catalog.schema(name).ok_or_else(|| {
+            DataFusionError::Internal(format!(
+                "Failed to look up newly registered schema {name} in catalog {}",
+                self.name
+            ))
+        })?;
 
         let caching_schema = Arc::new(CachingSchema {
             name: name.to_string(),
@@ -347,27 +258,29 @@ impl CatalogProvider for CachingCatalog {
         name: &str,
         cascade: bool,
     ) -> datafusion_common::Result<Option<Arc<dyn SchemaProvider>>> {
-        let schema = self.schemas_cache.remove(name);
-
-        if let Some(catalog) = &self.iceberg_catalog {
-            let namespace = Namespace::try_new(std::slice::from_ref(&name.to_string()))
-                .map_err(|err| DataFusionError::External(Box::new(err)))?;
-            let catalog = catalog.clone();
-            #[allow(clippy::expect_used)]
-            block_on_with_timeout(
-                async move {
-                    catalog
-                        .drop_namespace(&namespace)
-                        .await
-                        .context(error::IcebergSnafu)
-                },
-                self.config.catalog_timeout(),
-            )
-            .expect("Catalog timeout on: drop_namespace")
-            .map_err(|err| DataFusionError::External(Box::new(err)))?;
-        } else {
+        let Some(catalog) = self.iceberg_catalog.clone() else {
             return self.catalog.deregister_schema(name, cascade);
-        }
+        };
+
+        let schema = self.schemas_cache.remove(name);
+        let namespace = Namespace::try_new(std::slice::from_ref(&name.to_string()))
+            .map_err(|err| DataFusionError::External(Box::new(err)))?;
+        #[allow(clippy::expect_used)]
+        block_on_with_timeout(
+            async move {
+                catalog
+                    .drop_namespace(&namespace)
+                    .await
+                    .context(error::IcebergSnafu)
+            },
+            self.config.catalog_timeout(),
+        )
+        .expect("Catalog timeout on: drop_namespace")
+        .map_err(|err| DataFusionError::External(Box::new(err)))?;
+
+        // Drop the namespace from the mirror so reads stop returning it.
+        let _ = self.catalog.deregister_schema(name, cascade)?;
+
         if let Some((_, caching_schema)) = schema {
             return Ok(Some(caching_schema));
         }

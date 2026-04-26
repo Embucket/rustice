@@ -23,7 +23,9 @@ pub async fn build_dev_catalog_list(
     let embucket = Arc::new(EmbucketCatalogList::new(config));
 
     if let Some(catalog) = sql_catalog_list.catalog(DEFAULT_CATALOG) {
-        embucket.register_iceberg_catalog(DEFAULT_CATALOG, catalog, false);
+        embucket
+            .register_iceberg_catalog(DEFAULT_CATALOG, catalog, false)
+            .await?;
     }
 
     Ok(embucket)
