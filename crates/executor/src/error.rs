@@ -300,16 +300,6 @@ pub enum Error {
         location: Location,
     },
 
-    #[cfg(feature = "dedicated-executor")]
-    #[snafu(display("Threaded Job error: {error}: {backtrace}"))]
-    JobError {
-        #[snafu(source)]
-        error: crate::dedicated_executor::JobError,
-        backtrace: std::backtrace::Backtrace,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
     #[snafu(display("Failed to upload file: {message}"))]
     UploadFailed {
         message: String,

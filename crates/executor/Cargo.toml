@@ -7,7 +7,6 @@ license-file.workspace = true
 [features]
 default = []
 rest-catalog = ["catalog/rest-catalog"]
-dedicated-executor = []
 
 [dependencies]
 catalog-metastore = { path = "../catalog-metastore" }
@@ -61,8 +60,6 @@ indexmap = { workspace = true }
 time = { workspace = true }
 pin-project-lite = "0.2.16"
 lru = "0.15.0"
-
-cfg-if = { workspace = true }
 
 [dev-dependencies]
 bytes = { workspace = true }

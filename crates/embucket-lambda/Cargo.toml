@@ -46,7 +46,6 @@ default = ["retry-disable"]
 retry-disable = ["api-snowflake-rest/retry-disable"]
 streaming = []
 rest-catalog = ["executor/rest-catalog"]
-dedicated-executor = ["executor/dedicated-executor"]
 
 [package.metadata.lambda]
 # Default binary to deploy

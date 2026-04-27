@@ -2131,22 +2131,7 @@ impl UserQuery {
     #[instrument(name = "UserQuery::execute_sql", level = "debug", skip(self), err, ret)]
     async fn execute_sql(&self, query: &str) -> Result<QueryResult> {
         let session = self.session.clone();
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "dedicated-executor")] {
-                let query = query.to_string();
-                let stream = self
-                    .session
-                    .executor
-                    .spawn(async move {
-                        Self::_execute_sql(session, &query).await
-                    })
-                    .await
-                    .context(ex_error::JobSnafu)??;
-                Ok(stream)
-            } else {
-                Self::_execute_sql(session, query).await
-            }
-        }
+        Self::_execute_sql(session, query).await
     }
 
     async fn _execute_logical_plan(
@@ -2185,21 +2170,7 @@ impl UserQuery {
         let session = self.session.clone();
         let span = tracing::debug_span!("UserQuery::execute_logical_plan");
 
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "dedicated-executor")] {
-                let stream = self
-                    .session
-                    .executor
-                    .spawn(async move {
-                        Self::_execute_logical_plan(session, plan, span).await
-                    })
-                    .await
-                    .context(ex_error::JobSnafu)??;
-                Ok(stream)
-            } else {
-                Self::_execute_logical_plan(session, plan, span).await
-            }
-        }
+        Self::_execute_logical_plan(session, plan, span).await
     }
 
     async fn _execute_logical_plan_with_custom_rules(
@@ -2251,21 +2222,7 @@ impl UserQuery {
         rules: Vec<Arc<dyn PhysicalOptimizerRule + Send + Sync>>,
     ) -> Result<QueryResult> {
         let session = self.session.clone();
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "dedicated-executor")] {
-                let stream = self
-                    .session
-                    .executor
-                    .spawn(async move {
-                        Self::_execute_logical_plan_with_custom_rules(session, plan, rules).await
-                    })
-                    .await
-                    .context(ex_error::JobSnafu)??;
-                Ok(stream)
-            } else {
-                Self::_execute_logical_plan_with_custom_rules(session, plan, rules).await
-            }
-        }
+        Self::_execute_logical_plan_with_custom_rules(session, plan, rules).await
     }
 
     #[instrument(
