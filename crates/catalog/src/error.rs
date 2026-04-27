@@ -64,7 +64,6 @@ pub enum Error {
         #[snafu(implicit)]
         location: Location,
     },
-
 }
 
 #[allow(clippy::from_over_into)]
