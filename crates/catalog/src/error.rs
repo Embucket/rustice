@@ -65,13 +65,6 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("Iceberg SQL catalog error: {error}"))]
-    IcebergSqlCatalog {
-        #[snafu(source(from(iceberg_sql_catalog::error::Error, Box::new)))]
-        error: Box<iceberg_sql_catalog::error::Error>,
-        #[snafu(implicit)]
-        location: Location,
-    },
 }
 
 #[allow(clippy::from_over_into)]
