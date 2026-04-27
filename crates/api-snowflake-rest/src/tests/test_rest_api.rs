@@ -175,11 +175,10 @@ mod known_issues {
 
     sql_test!(
         use_command_then_select,
-        SqlTest::new(&["select count(*) from test_table"])
-            .with_setup_queries(&[
-                "create schema if not exists embucket.test_schema",
-                "create table if not exists embucket.test_schema.test_table (id int)",
-            ])
+        SqlTest::new(&["select count(*) from test_table"]).with_setup_queries(&[
+            "create schema if not exists embucket.test_schema",
+            "create table if not exists embucket.test_schema.test_table (id int)",
+        ])
     );
 }
 

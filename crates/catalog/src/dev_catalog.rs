@@ -21,9 +21,7 @@ use std::sync::Arc;
 /// Iceberg SQL catalog and an in-memory object store.
 ///
 /// Registers a single default catalog under the name [`DEFAULT_CATALOG`].
-pub async fn build_dev_catalog_list(
-    config: CatalogListConfig,
-) -> Result<Arc<EmbucketCatalogList>> {
+pub async fn build_dev_catalog_list(config: CatalogListConfig) -> Result<Arc<EmbucketCatalogList>> {
     let object_store = ObjectStoreBuilder::memory();
     let sql_catalog_list = Arc::new(
         SqlCatalogList::new("sqlite://", object_store)
@@ -34,8 +32,7 @@ pub async fn build_dev_catalog_list(
     let embucket = Arc::new(EmbucketCatalogList::new(config));
 
     if let Some(catalog) = sql_catalog_list.catalog(DEFAULT_CATALOG) {
-        let wrapped: Arc<dyn Catalog> =
-            Arc::new(DevCatalog::new(catalog, "/dev".to_string()));
+        let wrapped: Arc<dyn Catalog> = Arc::new(DevCatalog::new(catalog, "/dev".to_string()));
         embucket
             .register_iceberg_catalog(DEFAULT_CATALOG, wrapped, false)
             .await?;
@@ -92,10 +89,7 @@ impl Catalog for DevCatalog {
         self.inner.create_namespace(namespace, properties).await
     }
 
-    async fn drop_namespace(
-        &self,
-        namespace: &Namespace,
-    ) -> std::result::Result<(), IcebergError> {
+    async fn drop_namespace(&self, namespace: &Namespace) -> std::result::Result<(), IcebergError> {
         self.inner.drop_namespace(namespace).await
     }
 
@@ -175,7 +169,10 @@ impl Catalog for DevCatalog {
         if create_table.location.is_none() {
             create_table.location = Some(self.tabular_path(&identifier));
         }
-        self.inner.clone().create_table(identifier, create_table).await
+        self.inner
+            .clone()
+            .create_table(identifier, create_table)
+            .await
     }
 
     async fn create_view(
@@ -186,7 +183,10 @@ impl Catalog for DevCatalog {
         if create_view.location.is_none() {
             create_view.location = Some(self.tabular_path(&identifier));
         }
-        self.inner.clone().create_view(identifier, create_view).await
+        self.inner
+            .clone()
+            .create_view(identifier, create_view)
+            .await
     }
 
     async fn create_materialized_view(

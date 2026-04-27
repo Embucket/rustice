@@ -149,12 +149,7 @@ pub struct CoreExecutionService {
 }
 
 impl CoreExecutionService {
-    #[tracing::instrument(
-        name = "CoreExecutionService::new",
-        level = "debug",
-        skip(config),
-        err
-    )]
+    #[tracing::instrument(name = "CoreExecutionService::new", level = "debug", skip(config), err)]
     pub async fn new(config: Arc<Config>) -> Result<Self> {
         let catalog_list = Self::catalog_list(&config)?;
         Self::new_with_catalog_list(config, catalog_list)

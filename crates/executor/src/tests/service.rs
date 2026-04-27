@@ -287,9 +287,10 @@ async fn test_max_concurrency_level2() {
 #[allow(clippy::items_after_statements)]
 async fn test_parallel_run() {
     const MAX_CONCURRENCY_LEVEL: usize = 10;
-    let execution_svc =
-        make_test_execution_svc(Config::default().with_max_concurrency_level(MAX_CONCURRENCY_LEVEL))
-            .await;
+    let execution_svc = make_test_execution_svc(
+        Config::default().with_max_concurrency_level(MAX_CONCURRENCY_LEVEL),
+    )
+    .await;
 
     let _ = execution_svc
         .create_session("test_session_id")
@@ -325,8 +326,7 @@ async fn test_parallel_run() {
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::expect_used)]
 async fn test_query_timeout() {
-    let execution_svc =
-        make_test_execution_svc(Config::default().with_query_timeout(1)).await;
+    let execution_svc = make_test_execution_svc(Config::default().with_query_timeout(1)).await;
 
     let _session = execution_svc
         .create_session("test_session_id")

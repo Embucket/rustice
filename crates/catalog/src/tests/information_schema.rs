@@ -10,9 +10,7 @@ use std::sync::Arc;
 
 #[allow(clippy::unwrap_used)]
 async fn create_session_context() -> Arc<SessionContext> {
-    let catalog_list_impl = Arc::new(EmbucketCatalogList::new(
-        CatalogListConfig::default(),
-    ));
+    let catalog_list_impl = Arc::new(EmbucketCatalogList::new(CatalogListConfig::default()));
     let state = SessionStateBuilder::new()
         .with_config(
             SessionConfig::new()

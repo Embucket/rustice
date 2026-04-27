@@ -54,13 +54,8 @@ pub async fn run_test_rest_api_server(
             .expect("Failed to create Tokio runtime");
 
         rt.block_on(async {
-            run_test_rest_api_server_with_config(
-                rest_cfg,
-                executor_cfg,
-                listener,
-                notify_clone,
-            )
-            .await;
+            run_test_rest_api_server_with_config(rest_cfg, executor_cfg, listener, notify_clone)
+                .await;
         });
     });
 
@@ -109,42 +104,40 @@ fn setup_tracing() {
                 targets.iter().map(|t| ((*t), level)).collect()
             };
 
-        let registry = tracing_subscriber::registry()
-            .with(
-                tracing_opentelemetry::OpenTelemetryLayer::new(tracing_provider.tracer("embucket"))
-                    .with_level(true)
-                    .with_filter(
-                        Targets::default()
-                            .with_targets(targets_with_level(&DISABLED_TARGETS, LevelFilter::OFF))
-                            .with_default(LevelFilter::TRACE),
-                    ),
-            );
+        let registry = tracing_subscriber::registry().with(
+            tracing_opentelemetry::OpenTelemetryLayer::new(tracing_provider.tracer("embucket"))
+                .with_level(true)
+                .with_filter(
+                    Targets::default()
+                        .with_targets(targets_with_level(&DISABLED_TARGETS, LevelFilter::OFF))
+                        .with_default(LevelFilter::TRACE),
+                ),
+        );
 
         #[cfg(feature = "traces-test-log")]
-        let registry = registry
-            .with(
-                fmt::layer()
-                    .with_writer(
-                        std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open("traces.log")
-                            .expect("Failed to open traces.log"),
-                    )
-                    .with_ansi(false)
-                    .with_thread_ids(true)
-                    .with_thread_names(true)
-                    .with_file(true)
-                    .with_line_number(true)
-                    .with_span_events(FmtSpan::NONE)
-                    .json()
-                    .with_level(true)
-                    .with_filter(
-                        Targets::default()
-                            .with_targets(targets_with_level(&DISABLED_TARGETS, LevelFilter::OFF))
-                            .with_default(LevelFilter::TRACE),
-                    ),
-            );
+        let registry = registry.with(
+            fmt::layer()
+                .with_writer(
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open("traces.log")
+                        .expect("Failed to open traces.log"),
+                )
+                .with_ansi(false)
+                .with_thread_ids(true)
+                .with_thread_names(true)
+                .with_file(true)
+                .with_line_number(true)
+                .with_span_events(FmtSpan::NONE)
+                .json()
+                .with_level(true)
+                .with_filter(
+                    Targets::default()
+                        .with_targets(targets_with_level(&DISABLED_TARGETS, LevelFilter::OFF))
+                        .with_default(LevelFilter::TRACE),
+                ),
+        );
 
         registry.init();
         opentelemetry::global::set_tracer_provider(tracing_provider);

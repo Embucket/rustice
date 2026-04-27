@@ -1,4 +1,3 @@
-
 use crate::tests::sql_test_macro::{SqlTest, sql_test_wrapper};
 use tokio::task::JoinError;
 

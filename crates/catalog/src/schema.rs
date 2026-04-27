@@ -88,7 +88,10 @@ impl SchemaProvider for CachingSchema {
         table: Arc<dyn TableProvider>,
     ) -> datafusion_common::Result<Option<Arc<dyn TableProvider>>> {
         if self.iceberg_catalog.is_some()
-            && table.as_any().downcast_ref::<IcebergTableBuilder>().is_some()
+            && table
+                .as_any()
+                .downcast_ref::<IcebergTableBuilder>()
+                .is_some()
         {
             return Err(DataFusionError::Internal(
                 "register_table called with IcebergTableBuilder; \
@@ -198,10 +201,7 @@ impl CachingSchema {
         skip(self),
         err
     )]
-    pub async fn drop_table_async(
-        &self,
-        name: &str,
-    ) -> CatalogResult<Option<Arc<CachingTable>>> {
+    pub async fn drop_table_async(&self, name: &str) -> CatalogResult<Option<Arc<CachingTable>>> {
         let removed = self.tables_cache.remove(name).map(|(_, t)| t);
 
         if let Some(catalog) = &self.iceberg_catalog {

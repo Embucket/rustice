@@ -14,8 +14,8 @@ pub async fn create_s3_tables_df_session() -> Arc<UserSession> {
     // TODO: This needs to be updated to work with Iceberg REST Catalog
     // Previously bootstrapped volumes/databases/schemas via metastore
     let config = Arc::new(Config::default());
-    let catalog_list = CoreExecutionService::catalog_list(&config)
-        .expect("Failed to create catalog list");
+    let catalog_list =
+        CoreExecutionService::catalog_list(&config).expect("Failed to create catalog list");
     let runtime_env = CoreExecutionService::runtime_env(&config, catalog_list.clone())
         .expect("Failed to create runtime env");
 

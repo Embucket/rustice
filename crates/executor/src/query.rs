@@ -94,8 +94,8 @@ use snafu::{OptionExt, ResultExt, location};
 use sqlparser::ast::helpers::key_value_options::{KeyValueOptionKind, KeyValueOptions};
 use sqlparser::ast::helpers::stmt_data_loading::StageParamsObject;
 use sqlparser::ast::{
-    AlterTableOperation, AssignmentTarget, MergeAction, MergeClause,
-    MergeClauseKind, MergeInsertKind, ObjectNamePart, ObjectType, PivotValueSource, ShowObjects,
+    AlterTableOperation, AssignmentTarget, MergeAction, MergeClause, MergeClauseKind,
+    MergeInsertKind, ObjectNamePart, ObjectType, PivotValueSource, ShowObjects,
     ShowStatementFilter, ShowStatementIn, ShowStatementInParentType as ShowType,
     ShowStatementInParentType, TruncateTableTarget, Use, Value, visit_relations_mut,
 };
@@ -820,8 +820,7 @@ impl UserQuery {
             }
             (ObjectType::Table, Some(c)) if c.iceberg_catalog.is_some() => {
                 if let Some(schema) = c.schema(&schema_name)
-                    && let Some(caching_schema) =
-                        schema.as_any().downcast_ref::<CachingSchema>()
+                    && let Some(caching_schema) = schema.as_any().downcast_ref::<CachingSchema>()
                 {
                     caching_schema
                         .drop_table_async(&table_ref.table)
@@ -1539,7 +1538,6 @@ impl UserQuery {
             node: Arc::new(merge_into_plan),
         }))
     }
-
 
     #[instrument(name = "UserQuery::create_view", level = "trace", skip(self), err)]
     pub async fn create_view(&self, statement: Statement) -> Result<QueryResult> {
