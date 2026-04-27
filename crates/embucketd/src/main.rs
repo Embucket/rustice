@@ -153,13 +153,12 @@ async fn async_main(
     let host = opts.host.clone().unwrap();
     let port = opts.port.unwrap();
 
-    let core_state = if opts.dev_mode {
-        tracing::info!(
-            "Starting in dev mode (in-memory SQLite Iceberg catalog + in-memory object store)"
-        );
-        CoreState::new_dev(execution_cfg, snowflake_rest_cfg).await
-    } else {
-        CoreState::new(execution_cfg, snowflake_rest_cfg).await
+    let core_state = match opts.catalog_url.as_deref() {
+        Some(url) if url.starts_with("file:") || url.starts_with("s3:") => {
+            tracing::info!("Starting with iceberg-file-catalog rooted at {url}");
+            CoreState::new_dev(execution_cfg, snowflake_rest_cfg, url.to_string()).await
+        }
+        _ => CoreState::new(execution_cfg, snowflake_rest_cfg).await,
     }
     .expect("Core state creation error");
 

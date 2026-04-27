@@ -72,7 +72,7 @@ const TABLE_SETUP: &str = include_str!(r"./table_setup.sql");
 pub async fn create_df_session() -> Arc<UserSession> {
     let running_queries = Arc::new(RunningQueriesRegistry::new());
     let config = Arc::new(Config::default());
-    let catalog_list = build_dev_catalog_list((&*config).into())
+    let catalog_list = build_dev_catalog_list((&*config).into(), "/dev")
         .await
         .expect("Failed to build dev catalog list");
     let runtime_env = CoreExecutionService::runtime_env(&config, catalog_list.clone())

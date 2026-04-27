@@ -8,12 +8,13 @@ use tracing_subscriber::filter::LevelFilter;
 pub struct CliOpts {
     #[arg(
         long,
-        env = "EMBUCKET_DEV",
-        default_value = "false",
-        help = "Run in dev mode with an in-memory Iceberg SQL catalog (sqlite://) \
-                and in-memory object store. Useful for local development."
+        env = "CATALOG_URL",
+        value_name = "URL",
+        help = "Iceberg catalog URL. When set with a `file:` or `s3:` scheme, runs \
+                with an iceberg-file-catalog rooted at the given URL. Otherwise the \
+                regular Embucket metastore is used."
     )]
-    pub dev_mode: bool,
+    pub catalog_url: Option<String>,
 
     #[arg(
         long,

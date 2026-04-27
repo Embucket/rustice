@@ -27,15 +27,16 @@ impl CoreState {
         })
     }
 
-    /// Construct a `CoreState` running with an in-memory Iceberg SQL catalog
-    /// (sqlite://) and an in-memory object store. Intended for local development
-    /// and tests.
+    /// Construct a `CoreState` running with an `iceberg-file-catalog` rooted at
+    /// `catalog_url`. Selects the object store backend from the URL scheme
+    /// (`s3:` or `file:`); any other prefix falls back to in-memory storage.
     pub async fn new_dev(
         execution_cfg: ExecutionConfig,
         rest_api_config: RestApiConfig,
+        catalog_url: String,
     ) -> Result<Self> {
         let config = Arc::new(execution_cfg);
-        let catalog_list = build_dev_catalog_list((&*config).into())
+        let catalog_list = build_dev_catalog_list((&*config).into(), &catalog_url)
             .await
             .context(BuildDevCatalogSnafu)?;
         let executor = Arc::new(

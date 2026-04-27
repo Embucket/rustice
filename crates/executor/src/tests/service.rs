@@ -10,7 +10,7 @@ use std::sync::Arc;
 #[allow(clippy::expect_used)]
 async fn make_test_execution_svc(config: Config) -> Arc<CoreExecutionService> {
     let config = Arc::new(config);
-    let catalog_list = build_dev_catalog_list((&*config).into())
+    let catalog_list = build_dev_catalog_list((&*config).into(), "/dev")
         .await
         .expect("Failed to build dev catalog list");
     Arc::new(
