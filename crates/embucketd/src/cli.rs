@@ -10,9 +10,10 @@ pub struct CliOpts {
         long,
         env = "CATALOG_URL",
         value_name = "URL",
-        help = "Iceberg catalog URL. When set with a `file:` or `s3:` scheme, runs \
-                with an iceberg-file-catalog rooted at the given URL. Otherwise the \
-                regular Embucket metastore is used."
+        help = "Iceberg catalog URL. With a `file:` or `s3:` scheme, runs an \
+                iceberg-file-catalog rooted at the given URL. With `http:` or \
+                `https:`, connects to an Iceberg REST catalog at the given \
+                base path. Otherwise the regular Embucket metastore is used."
     )]
     pub catalog_url: Option<String>,
 
@@ -178,30 +179,6 @@ pub struct CliOpts {
         help = "The maximum number of concurrent requests to get tables details"
     )]
     pub max_concurrent_table_fetches: usize,
-
-    #[arg(
-        long,
-        env = "AWS_SDK_CONNECT_TIMEOUT_SECS",
-        default_value = "3",
-        help = "AWS SDK connect timeout in seconds"
-    )]
-    pub aws_sdk_connect_timeout_secs: u64,
-
-    #[arg(
-        long,
-        env = "AWS_SDK_OPERATION_TIMEOUT_SECS",
-        default_value = "30",
-        help = "AWS SDK operation timeout in seconds"
-    )]
-    pub aws_sdk_operation_timeout_secs: u64,
-
-    #[arg(
-        long,
-        env = "AWS_SDK_OPERATION_ATTEMPT_TIMEOUT_SECS",
-        default_value = "10",
-        help = "AWS SDK operation attempt timeout in seconds"
-    )]
-    pub aws_sdk_operation_attempt_timeout_secs: u64,
 
     #[arg(
         long,

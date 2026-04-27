@@ -1139,30 +1139,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aws-sdk-s3tables"
-version = "1.55.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "051311af78d5fe5f4453303b7ef978a07cad2a00590d8d9e12adf8591a847a3b"
-dependencies = [
- "aws-credential-types",
- "aws-runtime",
- "aws-smithy-async",
- "aws-smithy-http",
- "aws-smithy-json",
- "aws-smithy-observability",
- "aws-smithy-runtime",
- "aws-smithy-runtime-api",
- "aws-smithy-types",
- "aws-types",
- "bytes",
- "fastrand",
- "http 0.2.12",
- "http 1.4.0",
- "regex-lite",
- "tracing",
-]
-
-[[package]]
 name = "aws-sdk-sso"
 version = "1.98.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1836,8 +1812,6 @@ name = "catalog"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "aws-config",
- "aws-credential-types",
  "bytes",
  "catalog-metastore",
  "chrono",
@@ -1856,12 +1830,10 @@ dependencies = [
  "iceberg-rest-catalog",
  "iceberg-rust",
  "iceberg-rust-spec",
- "iceberg-s3tables-catalog",
  "insta",
  "object_store",
  "once_cell",
  "paste",
- "secrecy 0.8.0",
  "snafu",
  "tokio",
  "tracing",
@@ -1873,9 +1845,6 @@ name = "catalog-metastore"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "aws-config",
- "aws-credential-types",
- "aws-sdk-s3tables",
  "bytes",
  "chrono",
  "dashmap",
@@ -3532,7 +3501,6 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-sdk-dynamodb",
- "aws-sdk-s3tables",
  "bytes",
  "catalog",
  "catalog-metastore",
@@ -3553,7 +3521,6 @@ dependencies = [
  "futures",
  "iceberg-rust",
  "iceberg-rust-spec",
- "iceberg-s3tables-catalog",
  "indexmap 2.14.0",
  "insta",
  "lru 0.15.0",
@@ -4598,7 +4565,7 @@ dependencies = [
  "iceberg-rust",
  "object_store",
  "reqwest",
- "secrecy 0.10.3",
+ "secrecy",
  "serde",
  "serde_derive",
  "serde_json",
@@ -4666,23 +4633,6 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_repr",
- "thiserror 2.0.18",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "iceberg-s3tables-catalog"
-version = "0.10.0"
-source = "git+https://github.com/Embucket/iceberg-rust.git?rev=9608fb8#9608fb8a1a012d8654050d502d28f2f74c9a3068"
-dependencies = [
- "async-trait",
- "aws-config",
- "aws-sdk-s3tables",
- "futures",
- "iceberg-rust",
- "object_store",
- "serde_json",
  "thiserror 2.0.18",
  "url",
  "uuid",
@@ -7062,15 +7012,6 @@ name = "seahash"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
-
-[[package]]
-name = "secrecy"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bd1c54ea06cfd2f6b63219704de0b9b4f72dcc2b8fdef820be6cd799780e91e"
-dependencies = [
- "zeroize",
-]
 
 [[package]]
 name = "secrecy"

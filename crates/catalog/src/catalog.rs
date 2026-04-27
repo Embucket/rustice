@@ -46,7 +46,6 @@ impl Default for Properties {
 pub enum CatalogType {
     Embucket,
     Memory,
-    S3tables,
 }
 
 impl Display for CatalogType {
@@ -54,7 +53,6 @@ impl Display for CatalogType {
         match self {
             Self::Embucket => write!(f, "embucket"),
             Self::Memory => write!(f, "memory"),
-            Self::S3tables => write!(f, "s3_tables"),
         }
     }
 }

@@ -33,7 +33,6 @@ queries = { path = "crates/queries" }
 async-trait = { version = "0.1.84" }
 aws-config = { version = "1.5.17" }
 aws-sdk-dynamodb = { version = "1.100.0" }
-aws-sdk-s3tables = { version = "1.47.0" }
 aws-credential-types = { version = "1.2.11",  features = ["hardcoded-credentials"]}
 axum = { version = "0.8.1", features = ["multipart", "macros"] }
 axum-macros = "0.5"
@@ -57,7 +56,6 @@ iceberg-rest-catalog = { git = "https://github.com/Embucket/iceberg-rust.git", r
 iceberg-rust = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "9608fb8" }
 iceberg-file-catalog = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "9608fb8" }
 iceberg-rust-spec = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "9608fb8" }
-iceberg-s3tables-catalog = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "9608fb8" }
 iceberg-sql-catalog = { git = "https://github.com/Embucket/iceberg-rust.git", rev = "9608fb8" }
 indexmap = "2.7.1"
 jsonwebtoken = "9.3.1"

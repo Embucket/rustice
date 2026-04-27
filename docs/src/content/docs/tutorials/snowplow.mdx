@@ -50,14 +50,14 @@ Before you begin, make sure you have the following:
 
 2. **Set deploy values**
 
-   Define a unique stack name and your S3 Table Bucket ARN:
+   Define a unique stack name and your S3 bucket name:
 
    ```bash
    STACK_NAME="embucket-demo-$(whoami)-$(date +%s)"
-   BUCKET_ARN="arn:aws:s3tables:us-east-2:YOUR_ACCOUNT:bucket/YOUR_BUCKET"
+   BUCKET_NAME="YOUR_BUCKET"
    ```
 
-   Replace `YOUR_ACCOUNT` and `YOUR_BUCKET` with your actual AWS account ID and bucket name.
+   Replace `YOUR_BUCKET` with your actual S3 bucket name.
 
 3. **Deploy the Lambda stack**
 

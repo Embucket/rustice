@@ -39,12 +39,6 @@ fn s3_endpoint_regex_func() -> Regex {
     Regex::new(r"^https?://").expect("Failed to create s3_endpoint_regex")
 }
 
-#[allow(clippy::expect_used)]
-fn s3tables_arn_regex_func() -> Regex {
-    Regex::new(r"^arn:aws:s3tables:[a-z0-9-]+:\d+:bucket/[a-zA-Z0-9.\-_]+$")
-        .expect("Failed to create s3tables_arn_regex")
-}
-
 // AWS Access Key Credentials
 #[derive(Validate, Serialize, Deserialize, PartialEq, Eq, Clone, utoipa::ToSchema)]
 #[serde(rename_all = "kebab-case")]
@@ -200,81 +194,6 @@ impl S3Volume {
     }
 }
 
-#[derive(Validate, Serialize, Deserialize, Debug, Clone, utoipa::ToSchema)]
-#[serde(rename_all = "kebab-case")]
-pub struct S3TablesVolume {
-    #[validate(regex(path = s3_endpoint_regex_func(), message="Endpoint must start with https:// or http:// .\n"))]
-    pub endpoint: Option<String>,
-    #[validate(nested)]
-    pub credentials: AwsCredentials,
-    #[validate(regex(path = s3tables_arn_regex_func(), message="ARN must start with arn:aws:s3tables: .\n"))]
-    pub arn: String,
-    #[serde(skip)]
-    pub client_options: Option<ClientOptions>, // for object store timeout
-}
-
-impl Eq for S3TablesVolume {}
-
-impl PartialEq for S3TablesVolume {
-    fn eq(&self, other: &Self) -> bool {
-        self.endpoint == other.endpoint
-            && self.credentials == other.credentials
-            && self.arn == other.arn
-    }
-}
-
-impl S3TablesVolume {
-    #[must_use]
-    pub fn with_client_options(self, client_options: Option<ClientOptions>) -> Self {
-        Self {
-            client_options,
-            ..self
-        }
-    }
-
-    #[must_use]
-    pub fn with_client_options_from_env(self) -> Self {
-        Self {
-            client_options: Some(client_options_from_env()),
-            ..self
-        }
-    }
-
-    #[must_use]
-    pub fn s3_builder(&self) -> AmazonS3Builder {
-        let s3_volume = S3Volume {
-            region: Some(self.region()),
-            bucket: self.bucket(),
-            // do not map `db_name` to the AmazonS3Builder
-            endpoint: self.endpoint.clone(),
-            credentials: Some(self.credentials.clone()),
-            client_options: self.client_options.clone(),
-        };
-        s3_volume.get_s3_builder()
-    }
-
-    pub fn bucket(&self) -> Option<String> {
-        // Get bucket name from S3Tables ARN
-        // arn:aws:s3tables:us-east-1:111122223333:bucket/my-table-bucket
-        self.arn.split(":bucket/").last().map(Into::into)
-    }
-
-    pub fn region(&self) -> String {
-        self.arn
-            .split(':')
-            .nth(3)
-            .map_or_else(|| "us-east-1".to_string(), Into::into)
-    }
-
-    pub fn account_id(&self) -> String {
-        self.arn
-            .split(':')
-            .nth(4)
-            .map(Into::into)
-            .unwrap_or_default()
-    }
-}
-
 fn validate_bucket_name(bucket_name: &str) -> std::result::Result<(), ValidationError> {
     if !bucket_name
         .chars()
@@ -307,7 +226,6 @@ pub struct FileVolume {
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum VolumeType {
     S3(S3Volume),
-    S3Tables(S3TablesVolume),
     File(FileVolume),
     Memory,
 }
@@ -316,7 +234,6 @@ impl Display for VolumeType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::S3(_) => write!(f, "s3"),
-            Self::S3Tables(_) => write!(f, "s3_tables"),
             Self::File(_) => write!(f, "file"),
             Self::Memory => write!(f, "memory"),
         }
@@ -327,7 +244,6 @@ impl Validate for VolumeType {
     fn validate(&self) -> std::result::Result<(), ValidationErrors> {
         match self {
             Self::S3(volume) => volume.validate(),
-            Self::S3Tables(volume) => volume.validate(),
             Self::File(volume) => volume.validate(),
             Self::Memory => Ok(()),
         }
@@ -361,13 +277,6 @@ impl Volume {
                     .map(|s3| Arc::new(s3) as Arc<dyn ObjectStore>)
                     .context(metastore_error::ObjectStoreSnafu)
             }
-            VolumeType::S3Tables(volume) => {
-                let s3_builder = volume.s3_builder();
-                s3_builder
-                    .build()
-                    .map(|s3| Arc::new(s3) as Arc<dyn ObjectStore>)
-                    .context(metastore_error::ObjectStoreSnafu)
-            }
             VolumeType::File(file) => {
                 let path = StdPath::new(&file.path);
                 fs::create_dir_all(path).context(metastore_error::FilesystemSnafu)?;
@@ -390,9 +299,6 @@ impl Volume {
             VolumeType::S3(volume) => volume
                 .bucket
                 .as_ref()
-                .map_or_else(|| "s3://".to_string(), |bucket| format!("s3://{bucket}")),
-            VolumeType::S3Tables(volume) => volume
-                .bucket()
                 .map_or_else(|| "s3://".to_string(), |bucket| format!("s3://{bucket}")),
             VolumeType::File(volume) => format!("file://{}", volume.path),
             VolumeType::Memory => "memory://".to_string(),

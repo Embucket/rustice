@@ -14,72 +14,27 @@ Embucket runs as an AWS Lambda function that uses S3 Tables with Apache Iceberg 
 Before you begin, make sure you have the following:
 
 - AWS CLI installed and configured
-- AWS credentials with permissions for Lambda, S3 Tables, and IAM
+- AWS credentials with permissions for Lambda, S3, and IAM
 
-## Step 1: Create an S3 table bucket
-
-Create a new S3 table bucket to store your Iceberg tables:
-
-```bash
-aws s3tables create-table-bucket --name my-table-bucket --region us-east-2
-```
-
-The command returns a JSON response with the bucket ARN:
-
-```json
-{
-  "arn": "arn:aws:s3tables:us-east-2:123456789012:bucket/my-table-bucket"
-}
-```
-
-Save the bucket name, region, and ARN. You need these values in the next step.
-
-## Step 2: Configure the metastore
+## Step 1: Configure the metastore
 
 <Tabs>
-  <TabItem label="YAML file">
-    Create the file `config/metastore.yaml`:
-
-    ```yaml
-    volumes:
-      - ident: embucket
-        type: s3-tables
-        database: demo
-        credentials:
-          credential_type: access_key
-          aws-access-key-id: ACCESS_KEY
-          aws-secret-access-key: SECRET_ACCESS_KEY
-        arn: arn:aws:s3tables:us-east-2:123456789012:bucket/my-table-bucket
-    ```
-
-    <Aside type="tip">
-      Replace `ACCESS_KEY`, `SECRET_ACCESS_KEY`, and the ARN with your real values. Each S3 table bucket maps to one database.
-    </Aside>
-
-    Set the `METASTORE_CONFIG` environment variable on your Lambda function to the path of this file (for example, `config/metastore.yaml`).
-
-  </TabItem>
   <TabItem label="Environment variables">
     Configure a single volume through environment variables on the Lambda function:
 
-    | Variable                   | Purpose                                    | Example              |
-    | -------------------------- | ------------------------------------------ | -------------------- |
-    | `VOLUME_TYPE`              | Volume type: `s3tables`, `s3`, or `memory` | `s3tables`           |
-    | `VOLUME_IDENT`             | Volume identifier                          | `embucket`           |
-    | `VOLUME_DATABASE`          | Database name to associate                 | `demo`               |
-    | `VOLUME_ARN`               | S3 table bucket ARN (s3tables only)        | `arn:aws:s3tables:…` |
-    | `VOLUME_ACCESS_KEY`        | AWS access key ID                          | —                    |
-    | `VOLUME_SECRET_KEY`        | AWS secret access key                      | —                    |
-    | `VOLUME_AWS_SESSION_TOKEN` | AWS session token (optional)               | —                    |
-
-    <Aside type="note">
-      `VOLUME_ARN` is required for the `s3tables` volume type. `VOLUME_ACCESS_KEY` and `VOLUME_SECRET_KEY` apply to both `s3tables` and `s3` volume types.
-    </Aside>
+    | Variable                   | Purpose                          | Example    |
+    | -------------------------- | -------------------------------- | ---------- |
+    | `VOLUME_TYPE`              | Volume type: `s3` or `memory`    | `s3`       |
+    | `VOLUME_IDENT`             | Volume identifier                | `embucket` |
+    | `VOLUME_DATABASE`          | Database name to associate       | `demo`     |
+    | `VOLUME_ACCESS_KEY`        | AWS access key ID                | —          |
+    | `VOLUME_SECRET_KEY`        | AWS secret access key            | —          |
+    | `VOLUME_AWS_SESSION_TOKEN` | AWS session token (optional)     | —          |
 
   </TabItem>
 </Tabs>
 
-## Step 3: Deploy the Lambda function
+## Step 2: Deploy the Lambda function
 
 <Tabs>
   <TabItem label="Build from source">
@@ -204,27 +159,6 @@ The identity that runs `cargo lambda deploy` or `aws lambda create-function` nee
 ### Lambda execution role
 
 Attach policies that grant the Lambda function access to the services it uses. The required permissions depend on your volume type and whether you enable the state store.
-
-**S3 Tables permissions -- for the `s3tables` volume type:**
-
-```json
-{
-  "Effect": "Allow",
-  "Action": [
-    "s3tables:GetTableBucket",
-    "s3tables:ListTableBuckets",
-    "s3tables:ListNamespaces",
-    "s3tables:GetNamespace",
-    "s3tables:ListTables",
-    "s3tables:GetTable",
-    "s3tables:GetTableMetadata",
-    "s3tables:PutTableMetadata",
-    "s3tables:CreateTable",
-    "s3tables:DeleteTable"
-  ],
-  "Resource": "arn:aws:s3tables:*:123456789012:bucket/*"
-}
-```
 
 **S3 permissions -- for the `s3` volume type:**
 

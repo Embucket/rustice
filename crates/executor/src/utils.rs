@@ -1,7 +1,5 @@
 use super::models::QueryResult;
 use crate::error::{ArrowSnafu, CantCastToSnafu, Result};
-#[cfg(not(feature = "rest-catalog"))]
-use aws_config::timeout::TimeoutConfigBuilder;
 use catalog::catalog_list::CatalogListConfig;
 use catalog_metastore::SchemaIdent as MetastoreSchemaIdent;
 use catalog_metastore::TableIdent as MetastoreTableIdent;
@@ -45,12 +43,6 @@ pub struct Config {
     pub mem_enable_track_consumers_pool: Option<bool>,
     pub disk_pool_size_mb: Option<usize>,
     pub max_concurrent_table_fetches: usize,
-    #[cfg(not(feature = "rest-catalog"))]
-    pub aws_sdk_connect_timeout_secs: u64,
-    #[cfg(not(feature = "rest-catalog"))]
-    pub aws_sdk_operation_timeout_secs: u64,
-    #[cfg(not(feature = "rest-catalog"))]
-    pub aws_sdk_operation_attempt_timeout_secs: u64,
     pub iceberg_table_timeout_secs: u64,
     pub iceberg_catalog_timeout_secs: u64,
     pub object_store_client_options: Option<ClientOptions>,
@@ -60,17 +52,6 @@ impl From<&Config> for CatalogListConfig {
     fn from(value: &Config) -> Self {
         Self {
             max_concurrent_table_fetches: value.max_concurrent_table_fetches,
-            #[cfg(not(feature = "rest-catalog"))]
-            aws_sdk_timeout_config: TimeoutConfigBuilder::default()
-                .connect_timeout(std::time::Duration::from_secs(
-                    value.aws_sdk_connect_timeout_secs,
-                ))
-                .operation_timeout(std::time::Duration::from_secs(
-                    value.aws_sdk_operation_timeout_secs,
-                ))
-                .operation_attempt_timeout(std::time::Duration::from_secs(
-                    value.aws_sdk_operation_attempt_timeout_secs,
-                )),
             iceberg_table_timeout_secs: value.iceberg_table_timeout_secs,
             iceberg_catalog_timeout_secs: value.iceberg_catalog_timeout_secs,
         }
@@ -91,12 +72,6 @@ impl Default for Config {
             mem_enable_track_consumers_pool: None,
             disk_pool_size_mb: None,
             max_concurrent_table_fetches: 5,
-            #[cfg(not(feature = "rest-catalog"))]
-            aws_sdk_connect_timeout_secs: 5,
-            #[cfg(not(feature = "rest-catalog"))]
-            aws_sdk_operation_timeout_secs: 30,
-            #[cfg(not(feature = "rest-catalog"))]
-            aws_sdk_operation_attempt_timeout_secs: 10,
             iceberg_table_timeout_secs: 30,
             iceberg_catalog_timeout_secs: 10,
             object_store_client_options: None,

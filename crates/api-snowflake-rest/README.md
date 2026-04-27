@@ -13,11 +13,6 @@ via Snowflake REST API in similar way as `snow sql` command line tool does.
 There is also a `sql_test` macro which is a wrapper around `snow_sql` function. Test suite uses this helper macro to run SQLs like it was executed from `snow sql`.
 
 ## Testing
-Set `METASTORE_CONFIG_JSON` env var to stress test on real s3_tables.
-``` shell
-export METASTORE_CONFIG_JSON="$(yq eval -o=json config/metastore.yaml)"
-```
-
 Run tests as usual:
 ```
 cargo test --workspace

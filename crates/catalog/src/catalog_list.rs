@@ -1,34 +1,18 @@
-use crate::catalog::{CachingCatalog, CatalogType, Properties};
-#[cfg(feature = "rest-catalog")]
-use crate::catalogs::rest::catalog::RestCatalog;
+use crate::catalog::{CachingCatalog, Properties};
 use crate::df_error;
 use crate::error::{self as catalog_error, InvalidCacheSnafu, Result};
 use crate::schema::CachingSchema;
 use crate::table::CachingTable;
 use crate::utils::fetch_table_providers;
-#[cfg(not(feature = "rest-catalog"))]
-use aws_config::{BehaviorVersion, Region, defaults, timeout::TimeoutConfigBuilder};
-#[cfg(not(feature = "rest-catalog"))]
-use aws_credential_types::{Credentials, provider::SharedCredentialsProvider};
-use catalog_metastore::{AwsCredentials, S3TablesVolume};
 use dashmap::DashMap;
 use datafusion::{
     catalog::{CatalogProvider, CatalogProviderList},
     execution::object_store::ObjectStoreRegistry,
 };
 use datafusion_iceberg::catalog::catalog::IcebergCatalog as DataFusionIcebergCatalog;
-#[cfg(feature = "rest-catalog")]
-use iceberg_rest_catalog::apis::configuration::{AWSv4Key, Configuration};
-#[cfg(feature = "rest-catalog")]
-use iceberg_rest_catalog::catalog::RestCatalog as IcebergRestCatalog;
 use iceberg_rust::catalog::Catalog;
-use iceberg_rust::object_store::ObjectStoreBuilder;
-#[cfg(not(feature = "rest-catalog"))]
-use iceberg_s3tables_catalog::S3TablesCatalog;
 use object_store::ObjectStore;
 use object_store::local::LocalFileSystem;
-#[cfg(feature = "rest-catalog")]
-use secrecy::SecretString;
 use snafu::ResultExt;
 use std::any::Any;
 use std::sync::Arc;
@@ -45,8 +29,6 @@ pub struct EmbucketCatalogList {
 #[derive(Default, Clone)]
 pub struct CatalogListConfig {
     pub max_concurrent_table_fetches: usize,
-    #[cfg(not(feature = "rest-catalog"))]
-    pub aws_sdk_timeout_config: TimeoutConfigBuilder, // using builder as it has default
     pub iceberg_table_timeout_secs: u64,
     pub iceberg_catalog_timeout_secs: u64,
 }
@@ -77,99 +59,6 @@ impl EmbucketCatalogList {
             .fail();
         };
         Ok(())
-    }
-
-    #[tracing::instrument(
-        name = "EmbucketCatalogList::s3tables_catalog",
-        level = "debug",
-        skip(self),
-        err
-    )]
-    pub async fn s3tables_iceberg_catalog(
-        &self,
-        volume: S3TablesVolume,
-        db_name: &str,
-        should_refresh: bool,
-    ) -> Result<CachingCatalog> {
-        let (ak, sk, token) = match volume.credentials {
-            AwsCredentials::AccessKey(ref creds) => (
-                Some(creds.aws_access_key_id.clone()),
-                Some(creds.aws_secret_access_key.clone()),
-                creds.aws_session_token.clone(),
-            ),
-            AwsCredentials::Token(ref t) => (None, None, Some(t.clone())),
-        };
-        #[cfg(not(feature = "rest-catalog"))]
-        {
-            let creds =
-                Credentials::from_keys(ak.unwrap_or_default(), sk.unwrap_or_default(), token);
-            let config = defaults(BehaviorVersion::latest())
-                .timeout_config(self.config.aws_sdk_timeout_config.clone().build())
-                .credentials_provider(SharedCredentialsProvider::new(creds))
-                .region(Region::new(volume.region()))
-                .load()
-                .await;
-            let iceberg_catalog: Arc<dyn Catalog> = Arc::new(
-                S3TablesCatalog::new(
-                    &config,
-                    volume.arn.as_str(),
-                    ObjectStoreBuilder::S3(Box::new(volume.s3_builder())),
-                )
-                .context(catalog_error::S3TablesSnafu)?,
-            );
-            let catalog = DataFusionIcebergCatalog::new(iceberg_catalog.clone(), None)
-                .await
-                .context(catalog_error::DataFusionSnafu)?;
-            return Ok(CachingCatalog::new(
-                Arc::new(catalog),
-                db_name.to_owned(),
-                Some(iceberg_catalog),
-                self.config.clone().into(),
-            )
-            .with_refresh(should_refresh)
-            .with_catalog_type(CatalogType::S3tables));
-        }
-
-        #[cfg(feature = "rest-catalog")]
-        {
-            let base_path = volume.endpoint.clone().unwrap_or_else(|| {
-                format!("https://s3tables.{}.amazonaws.com/iceberg", volume.region())
-            });
-            let config = Configuration {
-                base_path,
-                aws_v4_key: Some(AWSv4Key {
-                    access_key: ak.unwrap_or_default(),
-                    secret_key: SecretString::new(sk.unwrap_or_default()),
-                    session_token: token.map(SecretString::new),
-                    region: volume.region(),
-                    service: "s3tables".to_string(),
-                }),
-                ..Default::default()
-            };
-            let object_store_builder = ObjectStoreBuilder::S3(Box::new(volume.s3_builder()));
-            let rest_catalog: Arc<dyn Catalog> = Arc::new(IcebergRestCatalog::new(
-                Some(volume.arn.as_str()),
-                config.clone(),
-                Some(object_store_builder.clone()),
-            ));
-            let iceberg_catalog: Arc<dyn Catalog> = Arc::new(RestCatalog::new(
-                Some(volume.arn.as_str()),
-                config,
-                rest_catalog,
-                object_store_builder,
-            ));
-            let catalog = DataFusionIcebergCatalog::new(iceberg_catalog.clone(), None)
-                .await
-                .context(catalog_error::DataFusionSnafu)?;
-            Ok(CachingCatalog::new(
-                Arc::new(catalog),
-                db_name.to_owned(),
-                Some(iceberg_catalog),
-                self.config.clone().into(),
-            )
-            .with_refresh(should_refresh)
-            .with_catalog_type(CatalogType::S3tables))
-        }
     }
 
     /// Register an iceberg catalog wrapped in a `CachingCatalog`. The underlying

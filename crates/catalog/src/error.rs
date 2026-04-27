@@ -2,7 +2,6 @@
 use datafusion_common::DataFusionError;
 use error_stack_trace;
 use iceberg_rust::error::Error as IcebergError;
-use iceberg_s3tables_catalog::error::Error as S3TablesError;
 use snafu::Location;
 use snafu::prelude::*;
 
@@ -24,14 +23,6 @@ pub enum Error {
     DataFusion {
         #[snafu(source(from(DataFusionError, Box::new)))]
         error: Box<DataFusionError>,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    #[snafu(display("S3Tables error: {error}"))]
-    S3Tables {
-        #[snafu(source(from(S3TablesError, Box::new)))]
-        error: Box<S3TablesError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -74,6 +65,4 @@ impl Into<IcebergError> for Error {
 }
 
 #[derive(Debug)]
-pub enum UnsupportedFeature {
-    DropS3TablesDatabase,
-}
+pub enum UnsupportedFeature {}

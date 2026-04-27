@@ -1,7 +1,6 @@
 #[allow(clippy::module_inception)]
 pub mod catalog;
 pub mod catalog_list;
-pub mod catalogs;
 pub mod dev_catalog;
 pub mod df_error;
 pub mod error;

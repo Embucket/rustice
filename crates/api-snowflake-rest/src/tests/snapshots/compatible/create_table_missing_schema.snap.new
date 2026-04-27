@@ -1,0 +1,21 @@
+---
+source: crates/api-snowflake-rest/src/tests/test_rest_api.rs
+assertion_line: 94
+description: "SQL #1 [spent: 20/20ms]: create table missing_schema.foo(a int)\nQuery UUID: 019dcfaa-3285-74d1-8b2f-84e421256338"
+expression: snapshot
+---
+create table missing_schema.foo(a int)
+{
+  "data": {
+    "rowtype": [],
+    "rowsetBase64": null,
+    "rowset": null,
+    "queryResultFormat": null,
+    "errorCode": "002003",
+    "sqlState": "02000",
+    "queryId": "UUID"
+  },
+  "success": false,
+  "message": "SQL compilation error: Database 'embucket' does not exist or not authorized",
+  "code": "002003"
+}

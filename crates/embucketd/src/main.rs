@@ -131,12 +131,6 @@ async fn async_main(
         mem_enable_track_consumers_pool: opts.mem_enable_track_consumers_pool,
         disk_pool_size_mb: opts.disk_pool_size_mb,
         max_concurrent_table_fetches: opts.max_concurrent_table_fetches,
-        #[cfg(not(feature = "rest-catalog"))]
-        aws_sdk_operation_timeout_secs: opts.aws_sdk_operation_timeout_secs,
-        #[cfg(not(feature = "rest-catalog"))]
-        aws_sdk_operation_attempt_timeout_secs: opts.aws_sdk_operation_attempt_timeout_secs,
-        #[cfg(not(feature = "rest-catalog"))]
-        aws_sdk_connect_timeout_secs: opts.aws_sdk_connect_timeout_secs,
         iceberg_table_timeout_secs: opts.iceberg_table_timeout_secs,
         iceberg_catalog_timeout_secs: opts.iceberg_catalog_timeout_secs,
         object_store_client_options: Some(
@@ -154,8 +148,13 @@ async fn async_main(
     let port = opts.port.unwrap();
 
     let core_state = match opts.catalog_url.as_deref() {
-        Some(url) if url.starts_with("file:") || url.starts_with("s3:") => {
-            tracing::info!("Starting with iceberg-file-catalog rooted at {url}");
+        Some(url)
+            if url.starts_with("file:")
+                || url.starts_with("s3:")
+                || url.starts_with("http:")
+                || url.starts_with("https:") =>
+        {
+            tracing::info!("Starting with catalog at {url}");
             CoreState::new_dev(execution_cfg, snowflake_rest_cfg, url.to_string()).await
         }
         _ => CoreState::new(execution_cfg, snowflake_rest_cfg).await,

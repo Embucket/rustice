@@ -4,16 +4,10 @@ version = "0.1.0"
 edition = "2024"
 license-file.workspace = true
 
-[features]
-default = []
-rest-catalog = []
-
 [dependencies]
 catalog-metastore = { path = "../catalog-metastore" }
 functions = { path = "../functions" }
 async-trait = { workspace = true }
-aws-config = { workspace = true }
-aws-credential-types = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
 datafusion = { workspace = true }
@@ -28,7 +22,6 @@ error-stack = { path = "../error-stack" }
 
 iceberg-rust = { workspace = true }
 iceberg-rust-spec = { workspace = true }
-iceberg-s3tables-catalog = { workspace = true }
 iceberg-rest-catalog = { workspace = true }
 iceberg-file-catalog = { workspace = true }
 
@@ -38,7 +31,6 @@ snafu = { workspace = true }
 tokio = { workspace = true }
 url = { workspace = true }
 tracing = { workspace = true }
-secrecy = "0.8.0"
 
 [lints]
 workspace = true

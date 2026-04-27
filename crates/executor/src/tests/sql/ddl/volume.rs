@@ -41,16 +41,3 @@
 //     snapshot_path = "volume"
 // );
 
-// test_query!(
-//     s3tables,
-//     "SELECT volume_name, volume_type FROM slatedb.meta.volumes",
-//     setup_queries = [
-//         "CREATE EXTERNAL VOLUME s3 STORAGE_LOCATIONS = ((
-//             NAME = 's3-volume' STORAGE_PROVIDER = 'S3TABLES'
-//             STORAGE_ENDPOINT = 'https://s3.us-east-2.amazonaws.com'
-//             STORAGE_AWS_ACCESS_POINT_ARN = 'arn:aws:s3tables:us-east-1:111122223333:bucket/my-embucket'
-//             CREDENTIALS=(AWS_KEY_ID='1a2b3c...' AWS_SECRET_KEY='4x5y6z...')
-//         ))"
-//     ],
-//     snapshot_path = "volume"
-// );
