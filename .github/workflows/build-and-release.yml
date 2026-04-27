@@ -14,7 +14,7 @@ on:
     types: [created]
 
 env:
-  REGISTRY_IMAGE: embucket/embucket
+  REGISTRY_IMAGE: embucket/rustice
 
 jobs:
   
