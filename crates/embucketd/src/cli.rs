@@ -13,7 +13,11 @@ pub struct CliOpts {
         help = "Iceberg catalog URL. With a `file:` or `s3:` scheme, runs an \
                 iceberg-file-catalog rooted at the given URL. With `http:` or \
                 `https:`, connects to an Iceberg REST catalog at the given \
-                base path. Otherwise the regular Embucket metastore is used."
+                base path. Otherwise the regular Embucket metastore is used. \
+                COPY INTO from external locations (s3://, gcs://, file://, \
+                memory://) is supported in this dev mode; pass inline \
+                CREDENTIALS=(...) for non-public sources. Internal stages and \
+                STORAGE_INTEGRATION are not supported."
     )]
     pub catalog_url: Option<String>,
 

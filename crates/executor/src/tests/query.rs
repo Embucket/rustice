@@ -70,9 +70,14 @@ const TABLE_SETUP: &str = include_str!(r"./table_setup.sql");
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 pub async fn create_df_session() -> Arc<UserSession> {
+    create_df_session_with_catalog_url("/dev").await
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+pub async fn create_df_session_with_catalog_url(catalog_url: &str) -> Arc<UserSession> {
     let running_queries = Arc::new(RunningQueriesRegistry::new());
     let config = Arc::new(Config::default());
-    let catalog_list = build_dev_catalog_list((&*config).into(), "/dev")
+    let catalog_list = build_dev_catalog_list((&*config).into(), catalog_url)
         .await
         .expect("Failed to build dev catalog list");
     let runtime_env = CoreExecutionService::runtime_env(&config, catalog_list.clone())
@@ -118,11 +123,17 @@ macro_rules! test_query {
         $(, exclude_columns = [$($excluded:expr),* $(,)?])?
         $(, snapshot_path = $user_snapshot_path:expr)?
         $(, snowflake_error = $snowflake_error:expr)?
+        $(, catalog_url = $catalog_url:expr)?
+        $(, ignore_reason = $ignore_reason:expr)?
     ) => {
         paste::paste! {
             #[tokio::test]
+            $(#[ignore = $ignore_reason])?
             async fn [< query_ $test_fn_name >]() {
-                let ctx = $crate::tests::query::create_df_session().await;
+                #[allow(unused_assignments, unused_mut)]
+                let mut catalog_url: &str = "/dev";
+                $( catalog_url = $catalog_url; )?
+                let ctx = $crate::tests::query::create_df_session_with_catalog_url(catalog_url).await;
 
                 // Execute all setup queries (if provided) to set up the session context
                 $(

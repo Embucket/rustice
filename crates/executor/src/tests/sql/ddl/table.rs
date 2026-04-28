@@ -1,5 +1,81 @@
 use crate::test_query;
 
+// Smoke test for COPY INTO against the s3:// FileCatalog backend. Ignored by
+// default because it requires AWS credentials and a real bucket. Set
+// COPY_INTO_S3_CATALOG_URL (e.g. s3://my-bucket/warehouse) and AWS env vars,
+// then run with `cargo test -- --ignored copy_into_file_catalog_s3`.
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::large_futures)]
+#[tokio::test]
+#[ignore = "requires AWS credentials and COPY_INTO_S3_CATALOG_URL env var"]
+async fn copy_into_file_catalog_s3() {
+    use crate::models::QueryContext;
+    use crate::tests::query::create_df_session_with_catalog_url;
+
+    let catalog_url = std::env::var("COPY_INTO_S3_CATALOG_URL").expect("COPY_INTO_S3_CATALOG_URL");
+    let source_url = std::env::var("COPY_INTO_S3_SOURCE_URL").expect("COPY_INTO_S3_SOURCE_URL");
+
+    let session = create_df_session_with_catalog_url(&catalog_url).await;
+
+    let mut q = session.query(
+        "CREATE TABLE embucket.public.copy_into_s3 (id INT, name VARCHAR);",
+        QueryContext::default(),
+    );
+    q.execute().await.expect("create table");
+
+    let copy_sql = format!(
+        "COPY INTO embucket.public.copy_into_s3 FROM '{source_url}' FILE_FORMAT = ( TYPE = 'CSV' );"
+    );
+    let mut q = session.query(&copy_sql, QueryContext::default());
+    q.execute().await.expect("copy into");
+
+    let mut q = session.query(
+        "SELECT COUNT(*) FROM embucket.public.copy_into_s3;",
+        QueryContext::default(),
+    );
+    let res = q.execute().await.expect("select count");
+    assert!(!res.records.is_empty());
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::large_futures)]
+#[tokio::test]
+async fn copy_into_file_catalog_local() {
+    use crate::models::QueryContext;
+    use crate::tests::query::create_df_session_with_catalog_url;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let csv_path = tempdir.path().join("source.csv");
+    std::fs::write(&csv_path, "1,alice\n2,bob\n3,carol\n").expect("write csv");
+
+    let catalog_url = format!("file://{}", tempdir.path().display());
+    let session = create_df_session_with_catalog_url(&catalog_url).await;
+
+    let mut q = session.query(
+        "CREATE TABLE embucket.public.copy_into_local (id INT, name VARCHAR);",
+        QueryContext::default(),
+    );
+    q.execute().await.expect("create table");
+
+    let copy_sql = format!(
+        "COPY INTO embucket.public.copy_into_local FROM 'file://{}' FILE_FORMAT = ( TYPE = 'CSV' );",
+        csv_path.display()
+    );
+    let mut q = session.query(&copy_sql, QueryContext::default());
+    q.execute().await.expect("copy into");
+
+    let mut q = session.query(
+        "SELECT COUNT(*) FROM embucket.public.copy_into_local;",
+        QueryContext::default(),
+    );
+    let res = q.execute().await.expect("select count");
+    let formatted = datafusion::arrow::util::pretty::pretty_format_batches(&res.records)
+        .unwrap()
+        .to_string();
+    assert!(
+        formatted.contains("3"),
+        "expected count 3, got: {formatted}",
+    );
+}
+
 test_query!(
     create_table_with_timestamps,
     "SELECT * FROM timestamps",
@@ -271,4 +347,35 @@ test_query!(
     truncate_missing,
     "TRUNCATE TABLE missing_table",
     snapshot_path = "table"
+);
+
+// Reads from a public S3 testdata bucket; exercises COPY INTO end-to-end against
+// the default memory-backed dev FileCatalog. Ignored by default because it
+// requires network access to AWS S3 — run with `cargo test -- --ignored` against
+// a host with outbound HTTPS to s3.amazonaws.com.
+test_query!(
+    copy_into_without_volume,
+    "SELECT SUM(L_QUANTITY) FROM embucket.public.lineitem;",
+    setup_queries = [
+        "CREATE TABLE embucket.public.lineitem (
+    L_ORDERKEY BIGINT NOT NULL,
+    L_PARTKEY BIGINT NOT NULL,
+    L_SUPPKEY BIGINT NOT NULL,
+    L_LINENUMBER INT NOT NULL,
+    L_QUANTITY DOUBLE NOT NULL,
+    L_EXTENDED_PRICE DOUBLE NOT NULL,
+    L_DISCOUNT DOUBLE NOT NULL,
+    L_TAX DOUBLE NOT NULL,
+    L_RETURNFLAG CHAR NOT NULL,
+    L_LINESTATUS CHAR NOT NULL,
+    L_SHIPDATE DATE NOT NULL,
+    L_COMMITDATE DATE NOT NULL,
+    L_RECEIPTDATE DATE NOT NULL,
+    L_SHIPINSTRUCT VARCHAR NOT NULL,
+    L_SHIPMODE VARCHAR NOT NULL,
+    L_COMMENT VARCHAR NOT NULL );",
+        "COPY INTO embucket.public.lineitem FROM 's3://embucket-testdata/tpch/lineitem.csv' FILE_FORMAT = ( TYPE = CSV );"
+    ],
+    snapshot_path = "table",
+    ignore_reason = "requires network access to s3.amazonaws.com"
 );

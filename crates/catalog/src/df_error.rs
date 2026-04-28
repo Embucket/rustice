@@ -10,7 +10,11 @@ use snafu::prelude::*;
 #[snafu(visibility(pub(crate)))]
 #[error_stack_trace::debug]
 pub enum DFExternalError {
-    #[snafu(display("Object store not found for url {url}"))]
+    #[snafu(display(
+        "Object store not found for url {url}. In dev mode, ensure the \
+         --catalog-url scheme matches the source URL scheme, or pass \
+         CREDENTIALS=(...) on COPY INTO for cross-bucket access."
+    ))]
     ObjectStoreNotFound {
         url: String,
         #[snafu(implicit)]

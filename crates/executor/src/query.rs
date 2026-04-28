@@ -1219,13 +1219,27 @@ impl UserQuery {
 
             let url = ListingTableUrl::parse(&location.value).context(ex_error::DataFusionSnafu)?;
 
-            let object_store = self
-                .get_object_store_from_stage_params(stage_params, &url)
-                .await?;
-
-            self.session
+            let object_store_url = url.object_store();
+            let store_url = object_store_url.as_ref();
+            // If a store is already registered at this scheme://host key (e.g. the
+            // dev FileCatalog's authenticated store registered at startup), keep
+            // it: overwriting with an inline-credential source store would break
+            // the catalog's metadata writes for the same bucket.
+            let already_registered = self
+                .session
                 .ctx
-                .register_object_store(url.object_store().as_ref(), object_store);
+                .runtime_env()
+                .object_store_registry
+                .get_store(store_url)
+                .is_ok();
+            if !already_registered {
+                let object_store = self
+                    .get_object_store_from_stage_params(stage_params, &url)
+                    .await?;
+                self.session
+                    .ctx
+                    .register_object_store(store_url, object_store);
+            }
 
             let config = self
                 .build_listing_table_config(file_format, &into_provider, url)

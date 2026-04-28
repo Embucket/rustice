@@ -456,4 +456,3 @@ async fn load_volume_from_env() -> Result<Option<VolumeEntry>, ConfigError> {
         should_refresh: false,
     }))
 }
-
