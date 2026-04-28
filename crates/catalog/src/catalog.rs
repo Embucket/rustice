@@ -345,6 +345,6 @@ impl CatalogProvider for CachingCatalog {
         Ok(self
             .schemas_cache
             .remove(name)
-            .map(|(_, s)| s as Arc<dyn SchemaProvider>))
+            .map(|(_, s)| -> Arc<dyn SchemaProvider> { s }))
     }
 }

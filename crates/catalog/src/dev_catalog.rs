@@ -54,14 +54,12 @@ pub async fn build_dev_catalog_list(
             // Only register when `catalog_url` is a well-formed URL with a scheme;
             // legacy schemeless paths (used by some tests) are left to fall through
             // to the seed entries on `EmbucketCatalogList`.
-            if let Ok(catalog_url_parsed) = Url::parse(catalog_url) {
-                if let (Ok(bucket), builder) =
+            if let Ok(catalog_url_parsed) = Url::parse(catalog_url)
+                && let (Ok(bucket), builder) =
                     (Bucket::from_path(catalog_url), object_store_builder.clone())
-                {
-                    if let Ok(catalog_object_store) = builder.build(bucket) {
-                        embucket.register_store(&catalog_url_parsed, catalog_object_store);
-                    }
-                }
+                && let Ok(catalog_object_store) = builder.build(bucket)
+            {
+                embucket.register_store(&catalog_url_parsed, catalog_object_store);
             }
             Arc::new(
                 FileCatalogList::new(catalog_url, object_store_builder)

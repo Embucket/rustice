@@ -225,7 +225,7 @@ pub struct FileVolume {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum VolumeType {
-    S3(S3Volume),
+    S3(Box<S3Volume>),
     File(FileVolume),
     Memory,
 }

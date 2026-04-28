@@ -145,23 +145,23 @@ impl MetastoreBootstrapConfig {
             path: path.to_path_buf(),
         })?;
 
-        if let Some(volume) = load_volume_from_env().await? {
+        if let Some(volume) = load_volume_from_env()? {
             config.volumes.push(volume);
         }
         Ok(config)
     }
 
-    pub async fn load_from_json_data(data: &str) -> Result<Self, ConfigError> {
+    pub fn load_from_json_data(data: &str) -> Result<Self, ConfigError> {
         let mut config: Self = serde_json::from_str(data).context(ParseJsonConfigSnafu)?;
-        if let Some(volume) = load_volume_from_env().await? {
+        if let Some(volume) = load_volume_from_env()? {
             config.volumes.push(volume);
         }
         Ok(config)
     }
 
-    pub async fn load_from_env() -> Result<Self, ConfigError> {
+    pub fn load_from_env() -> Result<Self, ConfigError> {
         let mut config = Self::default();
-        if let Some(volume) = load_volume_from_env().await? {
+        if let Some(volume) = load_volume_from_env()? {
             tracing::info!("Loading volume from environment");
             config.volumes.push(volume);
         }
@@ -400,7 +400,7 @@ fn patch_missing_operation(mut value: Value) -> Result<Value, ConfigError> {
     Ok(value)
 }
 
-async fn load_volume_from_env() -> Result<Option<VolumeEntry>, ConfigError> {
+fn load_volume_from_env() -> Result<Option<VolumeEntry>, ConfigError> {
     let volume_type = match env::var("VOLUME_TYPE") {
         Ok(v) if !v.trim().is_empty() => v.to_lowercase(),
         _ => return Ok(None),
@@ -436,7 +436,8 @@ async fn load_volume_from_env() -> Result<Option<VolumeEntry>, ConfigError> {
                     credentials: Some(credentials),
                     client_options: None,
                 }
-                .with_client_options_from_env(),
+                .with_client_options_from_env()
+                .into(),
             )
         }
         "memory" => VolumeType::Memory,

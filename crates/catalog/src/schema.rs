@@ -100,17 +100,11 @@ impl SchemaProvider for CachingSchema {
             ));
         }
 
-        let table_provider: Arc<dyn TableProvider> = if self.iceberg_catalog.is_some() {
+        if self.iceberg_catalog.is_some() || table.table_type() != TableType::View {
             self.schema
                 .register_table(name.clone(), Arc::clone(&table))?;
-            table
-        } else if table.table_type() == TableType::View {
-            table
-        } else {
-            self.schema
-                .register_table(name.clone(), Arc::clone(&table))?;
-            table
-        };
+        }
+        let table_provider: Arc<dyn TableProvider> = table;
 
         let caching_table = Arc::new(CachingTable::new(name.clone(), Arc::clone(&table_provider)));
         self.tables_cache.insert(name, caching_table);
@@ -218,17 +212,11 @@ impl CachingSchema {
                     .await
                     .context(error::IcebergSnafu)?;
             }
-            // Mirror update.
-            let _ = self
-                .schema
-                .deregister_table(name)
-                .context(error::DataFusionSnafu)?;
-        } else {
-            let _ = self
-                .schema
-                .deregister_table(name)
-                .context(error::DataFusionSnafu)?;
         }
+        let _ = self
+            .schema
+            .deregister_table(name)
+            .context(error::DataFusionSnafu)?;
         Ok(removed)
     }
 }

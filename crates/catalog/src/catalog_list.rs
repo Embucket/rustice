@@ -34,6 +34,7 @@ pub struct CatalogListConfig {
 }
 
 impl EmbucketCatalogList {
+    #[must_use]
     pub fn new(config: CatalogListConfig) -> Self {
         let table_object_store: DashMap<String, Arc<dyn ObjectStore>> = DashMap::new();
         table_object_store.insert("file://".to_string(), Arc::new(LocalFileSystem::new()));
@@ -47,7 +48,7 @@ impl EmbucketCatalogList {
     #[tracing::instrument(
         name = "EmbucketCatalogList::drop_catalog",
         level = "debug",
-        skip(self),
+        skip(self, _cascade),
         err
     )]
     pub async fn drop_catalog(&self, name: &str, _cascade: bool) -> Result<()> {
