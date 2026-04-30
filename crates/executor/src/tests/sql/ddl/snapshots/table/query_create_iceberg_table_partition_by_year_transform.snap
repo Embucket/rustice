@@ -1,0 +1,14 @@
+---
+source: crates/executor/src/tests/sql/ddl/table.rs
+description: "\"SELECT count(*) FROM embucket.public.parted_year\""
+info: "Setup queries: CREATE ICEBERG TABLE embucket.public.parted_year (id INT, ts TIMESTAMP)\n            EXTERNAL_VOLUME = 'test_vol'\n            CATALOG = 'SNOWFLAKE'\n            BASE_LOCATION = '/data/parted_year'\n            PARTITION BY (year(ts)); INSERT INTO embucket.public.parted_year VALUES\n            (1, '2024-03-15 10:00:00'::TIMESTAMP),\n            (2, '2025-07-22 14:30:00'::TIMESTAMP)"
+---
+Ok(
+    [
+        "+----------+",
+        "| count(*) |",
+        "+----------+",
+        "| 2        |",
+        "+----------+",
+    ],
+)

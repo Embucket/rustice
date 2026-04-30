@@ -1,0 +1,14 @@
+---
+source: crates/executor/src/tests/sql/ddl/table.rs
+description: "\"SELECT count(*) FROM embucket.public.parted_truncate\""
+info: "Setup queries: CREATE ICEBERG TABLE embucket.public.parted_truncate (id INT, name VARCHAR)\n            EXTERNAL_VOLUME = 'test_vol'\n            CATALOG = 'SNOWFLAKE'\n            BASE_LOCATION = '/data/parted_truncate'\n            PARTITION BY (truncate(100, id)); INSERT INTO embucket.public.parted_truncate VALUES (1, 'alice'), (250, 'bob')"
+---
+Ok(
+    [
+        "+----------+",
+        "| count(*) |",
+        "+----------+",
+        "| 2        |",
+        "+----------+",
+    ],
+)

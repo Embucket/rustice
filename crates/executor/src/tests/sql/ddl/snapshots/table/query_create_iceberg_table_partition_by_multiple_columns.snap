@@ -1,0 +1,15 @@
+---
+source: crates/executor/src/tests/sql/ddl/table.rs
+description: "\"SELECT * FROM embucket.public.parted_multi ORDER BY id\""
+info: "Setup queries: CREATE ICEBERG TABLE embucket.public.parted_multi (id INT, region VARCHAR, name VARCHAR)\n            EXTERNAL_VOLUME = 'test_vol'\n            CATALOG = 'SNOWFLAKE'\n            BASE_LOCATION = '/data/parted_multi'\n            PARTITION BY (region, id); INSERT INTO embucket.public.parted_multi VALUES (1, 'us', 'alice'), (2, 'eu', 'bob')"
+---
+Ok(
+    [
+        "+----+--------+-------+",
+        "| id | region | name  |",
+        "+----+--------+-------+",
+        "| 1  | us     | alice |",
+        "| 2  | eu     | bob   |",
+        "+----+--------+-------+",
+    ],
+)

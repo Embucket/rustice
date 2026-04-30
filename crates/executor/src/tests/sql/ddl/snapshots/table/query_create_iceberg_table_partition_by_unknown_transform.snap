@@ -1,0 +1,7 @@
+---
+source: crates/executor/src/tests/sql/ddl/table.rs
+description: "\"CREATE ICEBERG TABLE embucket.public.parted_bad_xform (id INT)\n        EXTERNAL_VOLUME = 'test_vol'\n        CATALOG = 'SNOWFLAKE'\n        BASE_LOCATION = '/data/parted_bad_xform'\n        PARTITION BY (foo(id))\""
+---
+Err(
+    "Error: Invalid PARTITION BY expression: foo(id)",
+)

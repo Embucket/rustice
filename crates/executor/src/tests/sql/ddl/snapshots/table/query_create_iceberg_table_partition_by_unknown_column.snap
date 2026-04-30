@@ -1,0 +1,7 @@
+---
+source: crates/executor/src/tests/sql/ddl/table.rs
+description: "\"CREATE ICEBERG TABLE embucket.public.parted_bad_col (id INT, name VARCHAR)\n        EXTERNAL_VOLUME = 'test_vol'\n        CATALOG = 'SNOWFLAKE'\n        BASE_LOCATION = '/data/parted_bad_col'\n        PARTITION BY (does_not_exist)\""
+---
+Err(
+    "Error: Partition field 'does_not_exist' not found in table schema",
+)

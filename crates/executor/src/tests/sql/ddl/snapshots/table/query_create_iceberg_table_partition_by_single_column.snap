@@ -1,0 +1,15 @@
+---
+source: crates/executor/src/tests/sql/ddl/table.rs
+description: "\"SELECT * FROM embucket.public.parted_single\""
+info: "Setup queries: CREATE ICEBERG TABLE embucket.public.parted_single (id INT, name VARCHAR)\n            EXTERNAL_VOLUME = 'test_vol'\n            CATALOG = 'SNOWFLAKE'\n            BASE_LOCATION = '/data/parted_single'\n            PARTITION BY (id); INSERT INTO embucket.public.parted_single VALUES (1, 'alice'), (2, 'bob')"
+---
+Ok(
+    [
+        "+----+-------+",
+        "| id | name  |",
+        "+----+-------+",
+        "| 1  | alice |",
+        "| 2  | bob   |",
+        "+----+-------+",
+    ],
+)

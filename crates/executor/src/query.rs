@@ -82,6 +82,7 @@ use iceberg_rust::catalog::create::CreateTableBuilder;
 use iceberg_rust::catalog::tabular::Tabular;
 use iceberg_rust::error::Error as IcebergError;
 use iceberg_rust::spec::arrow::schema::new_fields_with_ids;
+use iceberg_rust::spec::partition::{PartitionField, PartitionSpec, Transform};
 use iceberg_rust::spec::schema::Schema;
 use iceberg_rust::spec::snapshot::Snapshot;
 use iceberg_rust::spec::table_metadata::TableMetadata;
@@ -94,10 +95,11 @@ use snafu::{OptionExt, ResultExt, location};
 use sqlparser::ast::helpers::key_value_options::{KeyValueOptionKind, KeyValueOptions};
 use sqlparser::ast::helpers::stmt_data_loading::StageParamsObject;
 use sqlparser::ast::{
-    AlterTableOperation, AssignmentTarget, MergeAction, MergeClause, MergeClauseKind,
-    MergeInsertKind, ObjectNamePart, ObjectType, PivotValueSource, ShowObjects,
-    ShowStatementFilter, ShowStatementIn, ShowStatementInParentType as ShowType,
-    ShowStatementInParentType, TruncateTableTarget, Use, Value, visit_relations_mut,
+    AlterTableOperation, AssignmentTarget, FunctionArg, FunctionArgExpr, FunctionArguments,
+    MergeAction, MergeClause, MergeClauseKind, MergeInsertKind, ObjectNamePart, ObjectType,
+    PivotValueSource, ShowObjects, ShowStatementFilter, ShowStatementIn,
+    ShowStatementInParentType as ShowType, ShowStatementInParentType, TruncateTableTarget, Use,
+    Value, visit_relations_mut,
 };
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -207,6 +209,16 @@ impl UserQuery {
             statement
         };
         if let DFStatement::Statement(value) = statement {
+            // Detach CREATE TABLE's PARTITION BY clause for validation. Iceberg
+            // partition transforms (e.g. `bucket`, `truncate`) overlap with
+            // Snowflake function names that the unimplemented-functions checker
+            // would otherwise reject.
+            let stashed_partition_by = if let Statement::CreateTable(ct) = value.as_mut() {
+                ct.partition_by.take()
+            } else {
+                None
+            };
+
             rlike_regexp_expr_rewriter::visit(value);
             functions_rewriter::visit(value);
             like_ilike_any::visit(value);
@@ -220,6 +232,10 @@ impl UserQuery {
             timestamp::visit(value);
             table_functions_cte_relation::visit(value);
             visit_all(value);
+
+            if let Statement::CreateTable(ct) = value.as_mut() {
+                ct.partition_by = stashed_partition_by;
+            }
         }
         Ok(())
     }
@@ -865,6 +881,9 @@ impl UserQuery {
         // We don't support transient tables for now
         create_table_statement.transient = false;
         create_table_statement.temporary = false;
+        // Capture PARTITION BY before clearing iceberg-specific params so DataFusion
+        // doesn't see fields it doesn't understand.
+        let partition_by = create_table_statement.partition_by.take();
         // Remove all unsupported iceberg params (we already take them into account)
         create_table_statement.iceberg = false;
         create_table_statement.base_location = None;
@@ -945,7 +964,11 @@ impl UserQuery {
             }
         }
 
-        let builder = self.build_iceberg_create_table_builder(&table_ref, plan.clone())?;
+        let builder = self.build_iceberg_create_table_builder(
+            &table_ref,
+            plan.clone(),
+            partition_by.as_deref(),
+        )?;
         if let Some(c) = caching_schema {
             c.create_iceberg_table_async(table_name, builder)
                 .await
@@ -1016,6 +1039,7 @@ impl UserQuery {
         &self,
         table_ref: &ResolvedTableReference,
         plan: LogicalPlan,
+        partition_by: Option<&Expr>,
     ) -> Result<CreateTableBuilder> {
         let fields_with_ids = StructType::try_from(&new_fields_with_ids(
             &Fields::from(
@@ -1056,8 +1080,14 @@ impl UserQuery {
         let mut builder = CreateTableBuilder::default();
         builder
             .with_name(table_ref.table.to_string())
-            .with_schema(schema)
+            .with_schema(schema.clone())
             .with_stage_create(false);
+
+        if let Some(partition_by) = partition_by {
+            let partition_spec = build_iceberg_partition_spec(partition_by, &schema)?;
+            builder.with_partition_spec(partition_spec);
+        }
+
         Ok(builder)
     }
 
@@ -2919,6 +2949,188 @@ fn build_target_schema(base_schema: &ArrowSchema) -> ArrowSchema {
     builder.push(Field::new(DATA_FILE_PATH_COLUMN, DataType::Utf8, true));
     builder.push(Field::new(MANIFEST_FILE_PATH_COLUMN, DataType::Utf8, true));
     builder.finish()
+}
+
+/// Builds an Iceberg `PartitionSpec` from a SQL `PARTITION BY` expression.
+///
+/// Supported expression forms:
+/// * a single column: `PARTITION BY col`
+/// * a list of columns: `PARTITION BY (col1, col2)`
+/// * transform functions: `year(col)`, `month(col)`, `day(col)`, `hour(col)`,
+///   `bucket(N, col)`, `truncate(N, col)`
+fn build_iceberg_partition_spec(partition_by: &Expr, schema: &Schema) -> Result<PartitionSpec> {
+    let exprs = flatten_partition_exprs(partition_by);
+    let mut spec_builder = PartitionSpec::builder();
+    spec_builder.with_spec_id(0);
+    for (idx, expr) in exprs.iter().enumerate() {
+        let (col_name, transform) = parse_partition_field_expr(expr)?;
+        let source_field = schema
+            .fields()
+            .iter()
+            .find(|f| f.name.eq_ignore_ascii_case(&col_name))
+            .context(ex_error::PartitionFieldNotFoundInSchemaSnafu {
+                name: col_name.clone(),
+            })?;
+        let partition_name = partition_field_name(&col_name, &transform);
+        let field_id = 1000_i32.saturating_add(i32::try_from(idx).unwrap_or(i32::MAX));
+        spec_builder.with_partition_field(PartitionField::new(
+            source_field.id,
+            field_id,
+            &partition_name,
+            transform,
+        ));
+    }
+    spec_builder
+        .build()
+        .map_err(|err| DataFusionError::External(Box::new(err)))
+        .context(ex_error::DataFusionSnafu)
+}
+
+fn flatten_partition_exprs(expr: &Expr) -> Vec<&Expr> {
+    match expr {
+        Expr::Tuple(exprs) => exprs.iter().collect(),
+        Expr::Nested(inner) => flatten_partition_exprs(inner),
+        other => vec![other],
+    }
+}
+
+fn parse_partition_field_expr(expr: &Expr) -> Result<(String, Transform)> {
+    match expr {
+        Expr::Identifier(ident) => Ok((ident.value.clone(), Transform::Identity)),
+        Expr::CompoundIdentifier(idents) => idents
+            .last()
+            .map(|i| (i.value.clone(), Transform::Identity))
+            .context(ex_error::InvalidPartitionByExpressionSnafu {
+                expr: expr.to_string(),
+            }),
+        Expr::Function(func) => {
+            let fn_name = func
+                .name
+                .0
+                .last()
+                .and_then(|p| match p {
+                    ObjectNamePart::Identifier(i) => Some(i.value.to_lowercase()),
+                    ObjectNamePart::Function(_) => None,
+                })
+                .context(ex_error::InvalidPartitionByExpressionSnafu {
+                    expr: expr.to_string(),
+                })?;
+            let args = match &func.args {
+                FunctionArguments::List(list) => list.args.as_slice(),
+                _ => {
+                    return ex_error::InvalidPartitionByExpressionSnafu {
+                        expr: expr.to_string(),
+                    }
+                    .fail();
+                }
+            };
+            match fn_name.as_str() {
+                "year" => Ok((extract_partition_col(args, expr)?, Transform::Year)),
+                "month" => Ok((extract_partition_col(args, expr)?, Transform::Month)),
+                "day" => Ok((extract_partition_col(args, expr)?, Transform::Day)),
+                "hour" => Ok((extract_partition_col(args, expr)?, Transform::Hour)),
+                "bucket" => {
+                    let (n, col) = extract_partition_n_col(args, expr)?;
+                    Ok((col, Transform::Bucket(n)))
+                }
+                "truncate" => {
+                    let (n, col) = extract_partition_n_col(args, expr)?;
+                    Ok((col, Transform::Truncate(n)))
+                }
+                _ => ex_error::InvalidPartitionByExpressionSnafu {
+                    expr: expr.to_string(),
+                }
+                .fail(),
+            }
+        }
+        _ => ex_error::InvalidPartitionByExpressionSnafu {
+            expr: expr.to_string(),
+        }
+        .fail(),
+    }
+}
+
+fn extract_partition_col(args: &[FunctionArg], parent: &Expr) -> Result<String> {
+    if args.len() != 1 {
+        return ex_error::InvalidPartitionByExpressionSnafu {
+            expr: parent.to_string(),
+        }
+        .fail();
+    }
+    column_name_from_arg(&args[0], parent)
+}
+
+fn extract_partition_n_col(args: &[FunctionArg], parent: &Expr) -> Result<(u32, String)> {
+    if args.len() != 2 {
+        return ex_error::InvalidPartitionByExpressionSnafu {
+            expr: parent.to_string(),
+        }
+        .fail();
+    }
+    let n = u32_from_arg(&args[0], parent)?;
+    let col = column_name_from_arg(&args[1], parent)?;
+    Ok((n, col))
+}
+
+fn column_name_from_arg(arg: &FunctionArg, parent: &Expr) -> Result<String> {
+    let FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) = arg else {
+        return ex_error::InvalidPartitionByExpressionSnafu {
+            expr: parent.to_string(),
+        }
+        .fail();
+    };
+    match expr {
+        Expr::Identifier(ident) => Ok(ident.value.clone()),
+        Expr::CompoundIdentifier(idents) => idents
+            .last()
+            .map(|i| i.value.clone())
+            .context(ex_error::InvalidPartitionByExpressionSnafu {
+                expr: parent.to_string(),
+            }),
+        _ => ex_error::InvalidPartitionByExpressionSnafu {
+            expr: parent.to_string(),
+        }
+        .fail(),
+    }
+}
+
+fn u32_from_arg(arg: &FunctionArg, parent: &Expr) -> Result<u32> {
+    let FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) = arg else {
+        return ex_error::InvalidPartitionByExpressionSnafu {
+            expr: parent.to_string(),
+        }
+        .fail();
+    };
+    let Expr::Value(value) = expr else {
+        return ex_error::InvalidPartitionByExpressionSnafu {
+            expr: parent.to_string(),
+        }
+        .fail();
+    };
+    let Value::Number(n, _) = &value.value else {
+        return ex_error::InvalidPartitionByExpressionSnafu {
+            expr: parent.to_string(),
+        }
+        .fail();
+    };
+    n.parse::<u32>()
+        .ok()
+        .context(ex_error::InvalidPartitionByExpressionSnafu {
+            expr: parent.to_string(),
+        })
+}
+
+fn partition_field_name(col_name: &str, transform: &Transform) -> String {
+    match transform {
+        Transform::Identity => col_name.to_string(),
+        Transform::Year => format!("{col_name}_year"),
+        Transform::Month => format!("{col_name}_month"),
+        Transform::Day => format!("{col_name}_day"),
+        Transform::Hour => format!("{col_name}_hour"),
+        Transform::Bucket(n) => format!("{col_name}_bucket_{n}"),
+        Transform::Truncate(n) => format!("{col_name}_trunc_{n}"),
+        Transform::Void => format!("{col_name}_void"),
+    }
 }
 
 /// Converts merge clauses into projection expressions for copy-on-write operations.

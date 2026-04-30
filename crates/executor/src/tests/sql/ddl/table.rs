@@ -349,6 +349,116 @@ test_query!(
     snapshot_path = "table"
 );
 
+// CREATE ICEBERG TABLE with PARTITION BY — Snowflake-style ICEBERG TABLE
+// statements with iceberg partitioning specs.
+test_query!(
+    create_iceberg_table_partition_by_single_column,
+    "SELECT * FROM embucket.public.parted_single ORDER BY id",
+    setup_queries = [
+        "CREATE ICEBERG TABLE embucket.public.parted_single (id INT, name VARCHAR)
+            EXTERNAL_VOLUME = 'test_vol'
+            CATALOG = 'SNOWFLAKE'
+            BASE_LOCATION = '/data/parted_single'
+            PARTITION BY (id)",
+        "INSERT INTO embucket.public.parted_single VALUES (1, 'alice'), (2, 'bob')",
+    ],
+    snapshot_path = "table"
+);
+
+test_query!(
+    create_iceberg_table_partition_by_multiple_columns,
+    "SELECT * FROM embucket.public.parted_multi ORDER BY id",
+    setup_queries = [
+        "CREATE ICEBERG TABLE embucket.public.parted_multi (id INT, region VARCHAR, name VARCHAR)
+            EXTERNAL_VOLUME = 'test_vol'
+            CATALOG = 'SNOWFLAKE'
+            BASE_LOCATION = '/data/parted_multi'
+            PARTITION BY (region, id)",
+        "INSERT INTO embucket.public.parted_multi VALUES (1, 'us', 'alice'), (2, 'eu', 'bob')",
+    ],
+    snapshot_path = "table"
+);
+
+test_query!(
+    create_iceberg_table_partition_by_year_transform,
+    "SELECT count(*) FROM embucket.public.parted_year",
+    setup_queries = [
+        "CREATE ICEBERG TABLE embucket.public.parted_year (id INT, ts TIMESTAMP)
+            EXTERNAL_VOLUME = 'test_vol'
+            CATALOG = 'SNOWFLAKE'
+            BASE_LOCATION = '/data/parted_year'
+            PARTITION BY (year(ts))",
+        "INSERT INTO embucket.public.parted_year VALUES
+            (1, '2024-03-15 10:00:00'::TIMESTAMP),
+            (2, '2025-07-22 14:30:00'::TIMESTAMP)",
+    ],
+    snapshot_path = "table"
+);
+
+test_query!(
+    create_iceberg_table_partition_by_bucket_transform,
+    "SELECT count(*) FROM embucket.public.parted_bucket",
+    setup_queries = [
+        "CREATE ICEBERG TABLE embucket.public.parted_bucket (id INT, name VARCHAR)
+            EXTERNAL_VOLUME = 'test_vol'
+            CATALOG = 'SNOWFLAKE'
+            BASE_LOCATION = '/data/parted_bucket'
+            PARTITION BY (bucket(16, id))",
+        "INSERT INTO embucket.public.parted_bucket VALUES (1, 'alice'), (2, 'bob'), (3, 'carol')",
+    ],
+    snapshot_path = "table"
+);
+
+test_query!(
+    create_iceberg_table_partition_by_truncate_transform,
+    "SELECT count(*) FROM embucket.public.parted_truncate",
+    setup_queries = [
+        "CREATE ICEBERG TABLE embucket.public.parted_truncate (id INT, name VARCHAR)
+            EXTERNAL_VOLUME = 'test_vol'
+            CATALOG = 'SNOWFLAKE'
+            BASE_LOCATION = '/data/parted_truncate'
+            PARTITION BY (truncate(100, id))",
+        "INSERT INTO embucket.public.parted_truncate VALUES (1, 'alice'), (250, 'bob')",
+    ],
+    snapshot_path = "table"
+);
+
+test_query!(
+    create_iceberg_table_partition_by_mixed_transforms,
+    "SELECT count(*) FROM embucket.public.parted_mixed",
+    setup_queries = [
+        "CREATE ICEBERG TABLE embucket.public.parted_mixed (id INT, ts TIMESTAMP, name VARCHAR)
+            EXTERNAL_VOLUME = 'test_vol'
+            CATALOG = 'SNOWFLAKE'
+            BASE_LOCATION = '/data/parted_mixed'
+            PARTITION BY (year(ts), bucket(8, id))",
+        "INSERT INTO embucket.public.parted_mixed VALUES
+            (1, '2024-03-15 10:00:00'::TIMESTAMP, 'alice'),
+            (25, '2025-07-22 14:30:00'::TIMESTAMP, 'bob')",
+    ],
+    snapshot_path = "table"
+);
+
+test_query!(
+    create_iceberg_table_partition_by_unknown_column,
+    "CREATE ICEBERG TABLE embucket.public.parted_bad_col (id INT, name VARCHAR)
+        EXTERNAL_VOLUME = 'test_vol'
+        CATALOG = 'SNOWFLAKE'
+        BASE_LOCATION = '/data/parted_bad_col'
+        PARTITION BY (does_not_exist)",
+    snapshot_path = "table"
+);
+
+test_query!(
+    create_iceberg_table_partition_by_unknown_transform,
+    "CREATE ICEBERG TABLE embucket.public.parted_bad_xform (id INT)
+        EXTERNAL_VOLUME = 'test_vol'
+        CATALOG = 'SNOWFLAKE'
+        BASE_LOCATION = '/data/parted_bad_xform'
+        PARTITION BY (foo(id))",
+    snapshot_path = "table"
+);
+
 // Reads from a public S3 testdata bucket; exercises COPY INTO end-to-end against
 // the default memory-backed dev FileCatalog. Ignored by default because it
 // requires network access to AWS S3 — run with `cargo test -- --ignored` against

@@ -505,6 +505,20 @@ pub enum Error {
         location: Location,
     },
 
+    #[snafu(display("Invalid PARTITION BY expression: {expr}"))]
+    InvalidPartitionByExpression {
+        expr: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Partition field '{name}' not found in table schema"))]
+    PartitionFieldNotFoundInSchema {
+        name: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Field '{field_name}' not found in input schema"))]
     FieldNotFoundInInputSchema {
         field_name: String,
