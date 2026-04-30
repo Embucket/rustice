@@ -8,13 +8,10 @@ use datafusion::common::runtime::set_join_set_tracer;
 use datafusion::datasource::memory::MemTable;
 use datafusion::execution::DiskManager;
 use datafusion::execution::disk_manager::DiskManagerMode;
-use datafusion::execution::memory_pool::{
-    FairSpillPool, GreedyMemoryPool, MemoryPool, TrackConsumersPool,
-};
+use datafusion::execution::memory_pool::{GreedyMemoryPool, MemoryPool};
 use datafusion::execution::runtime_env::{RuntimeEnv, RuntimeEnvBuilder};
 use datafusion_common::TableReference;
 use snafu::ResultExt;
-use std::num::NonZeroUsize;
 use std::sync::atomic::Ordering;
 use std::vec;
 use std::{collections::HashMap, sync::Arc};
@@ -31,9 +28,10 @@ use crate::query_types::QueryId;
 use crate::running_queries::RunningQueryId;
 use crate::session::{SESSION_INACTIVITY_EXPIRATION_SECONDS, to_unix};
 use crate::tracing::SpanTracer;
-use crate::utils::{Config, MemPoolType};
+use crate::utils::Config;
 use catalog::catalog_list::EmbucketCatalogList;
 use catalog_metastore::TableIdent as MetastoreTableIdent;
+use sysinfo::System;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing::Instrument;
@@ -180,53 +178,23 @@ impl CoreExecutionService {
 
     #[allow(clippy::unwrap_used, clippy::as_conversions)]
     pub fn runtime_env(
-        config: &Config,
+        _config: &Config,
         catalog_list: Arc<EmbucketCatalogList>,
     ) -> Result<Arc<RuntimeEnv>> {
         let mut rt_builder = RuntimeEnvBuilder::new().with_object_store_registry(catalog_list);
 
-        if let Some(memory_limit_mb) = config.mem_pool_size_mb {
-            const NUM_TRACKED_CONSUMERS: usize = 5;
+        // Always use a Greedy memory pool sized at 80% of total system memory.
+        let mut sys = System::new();
+        sys.refresh_memory();
+        let total_bytes = sys.total_memory();
+        let memory_limit =
+            usize::try_from((total_bytes / 5).saturating_mul(4)).unwrap_or(usize::MAX);
 
-            // set memory pool type
-            let memory_limit = memory_limit_mb * 1024 * 1024;
-            let enable_track = config.mem_enable_track_consumers_pool.unwrap_or(false);
+        let memory_pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(memory_limit));
+        rt_builder = rt_builder.with_memory_pool(memory_pool);
 
-            let memory_pool: Arc<dyn MemoryPool> = match config.mem_pool_type {
-                MemPoolType::Fair => {
-                    let pool = FairSpillPool::new(memory_limit);
-                    if enable_track {
-                        Arc::new(TrackConsumersPool::new(
-                            pool,
-                            NonZeroUsize::new(NUM_TRACKED_CONSUMERS).unwrap(),
-                        ))
-                    } else {
-                        Arc::new(FairSpillPool::new(memory_limit))
-                    }
-                }
-                MemPoolType::Greedy => {
-                    let pool = GreedyMemoryPool::new(memory_limit);
-                    if enable_track {
-                        Arc::new(TrackConsumersPool::new(
-                            pool,
-                            NonZeroUsize::new(NUM_TRACKED_CONSUMERS).unwrap(),
-                        ))
-                    } else {
-                        Arc::new(GreedyMemoryPool::new(memory_limit))
-                    }
-                }
-            };
-            rt_builder = rt_builder.with_memory_pool(memory_pool);
-        }
-
-        // set disk limit
-        if let Some(disk_limit) = config.disk_pool_size_mb {
-            let disk_limit_bytes = (disk_limit as u64) * 1024 * 1024;
-            let disk_builder = DiskManager::builder()
-                .with_mode(DiskManagerMode::OsTmpDirectory)
-                .with_max_temp_directory_size(disk_limit_bytes);
-            rt_builder = rt_builder.with_disk_manager_builder(disk_builder);
-        }
+        let disk_builder = DiskManager::builder().with_mode(DiskManagerMode::OsTmpDirectory);
+        rt_builder = rt_builder.with_disk_manager_builder(disk_builder);
 
         rt_builder.build_arc().context(ex_error::DataFusionSnafu)
     }

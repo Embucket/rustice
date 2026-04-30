@@ -50,6 +50,7 @@ tracing-attributes = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = "0.1.17"
 tokio-util = { workspace = true }
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 url = { workspace = true }
 uuid = { workspace = true }
