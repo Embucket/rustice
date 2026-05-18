@@ -13,7 +13,7 @@ The deploy script uses `embucket/rustice:latest` by default. Set `RUSTICE_BUILD_
 
 SPCS currently requires `linux/amd64` images, so the script uses that platform when it pulls or builds the image.
 
-After this PR is merged, the normal user path is to use the Docker Hub image published by the repository release workflow. The script still copies that image into a Snowflake image repository, because SPCS services run images from Snowflake's registry:
+The normal user path is to use the Docker Hub image published by the repository release workflow. The script still copies that image into a Snowflake image repository, because SPCS services run images from Snowflake's registry:
 
 ```bash
 SNOW_CONFIG_FILE=/path/to/config.toml \
@@ -24,7 +24,7 @@ RUSTICE_IMAGE_TAG=latest \
 ./deploy/spcs/deploy.sh
 ```
 
-Use `RUSTICE_BUILD_LOCAL=1` only while testing an unmerged local checkout.
+Use `RUSTICE_BUILD_LOCAL=1` only while testing changes from a local checkout.
 
 ## Quick Start
 
