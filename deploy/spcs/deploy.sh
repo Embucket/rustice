@@ -1,0 +1,438 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+SNOW_BIN="${SNOW_BIN:-snow}"
+SNOW_CONNECTION="${SNOW_CONNECTION:-default}"
+SNOWFLAKE_HOME="${SNOWFLAKE_HOME:-${TMPDIR:-/tmp}/rustice-snowflake-home}"
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${SNOWFLAKE_HOME}/xdg}"
+
+RUSTICE_DB="${RUSTICE_DB:-RUSTICE_APP}"
+RUSTICE_SCHEMA="${RUSTICE_SCHEMA:-PUBLIC}"
+RUSTICE_COMPUTE_POOL="${RUSTICE_COMPUTE_POOL:-RUSTICE_POOL}"
+RUSTICE_IMAGE_REPOSITORY="${RUSTICE_IMAGE_REPOSITORY:-RUSTICE_REPO}"
+RUSTICE_SERVICE="${RUSTICE_SERVICE:-RUSTICE_SERVICE}"
+RUSTICE_CONTAINER_NAME="${RUSTICE_CONTAINER_NAME:-rustice}"
+RUSTICE_ENDPOINT_NAME="${RUSTICE_ENDPOINT_NAME:-main}"
+RUSTICE_SERVICE_ROLE="${RUSTICE_SERVICE_ROLE:-rustice_user}"
+RUSTICE_INSTANCE_FAMILY="${RUSTICE_INSTANCE_FAMILY:-CPU_X64_XS}"
+RUSTICE_POOL_MIN_NODES="${RUSTICE_POOL_MIN_NODES:-1}"
+RUSTICE_POOL_MAX_NODES="${RUSTICE_POOL_MAX_NODES:-1}"
+RUSTICE_MIN_INSTANCES="${RUSTICE_MIN_INSTANCES:-1}"
+RUSTICE_MAX_INSTANCES="${RUSTICE_MAX_INSTANCES:-1}"
+RUSTICE_AUTO_SUSPEND_SECS="${RUSTICE_AUTO_SUSPEND_SECS:-}"
+RUSTICE_AUTO_RESUME="${RUSTICE_AUTO_RESUME:-TRUE}"
+RUSTICE_PORT="${RUSTICE_PORT:-3000}"
+RUSTICE_IMAGE_TAG="${RUSTICE_IMAGE_TAG:-latest}"
+RUSTICE_SOURCE_IMAGE="${RUSTICE_SOURCE_IMAGE:-embucket/rustice:${RUSTICE_IMAGE_TAG}}"
+RUSTICE_LOCAL_IMAGE="${RUSTICE_LOCAL_IMAGE:-rustice-spcs:${RUSTICE_IMAGE_TAG}}"
+RUSTICE_BUILD_LOCAL="${RUSTICE_BUILD_LOCAL:-0}"
+RUSTICE_REGISTRY_LOGIN="${RUSTICE_REGISTRY_LOGIN:-1}"
+RUSTICE_ENABLE_EXPERIMENTAL="${RUSTICE_ENABLE_EXPERIMENTAL:-false}"
+RUSTICE_SKIP_IMAGE_PUSH="${RUSTICE_SKIP_IMAGE_PUSH:-0}"
+RUSTICE_REPLACE_SERVICE="${RUSTICE_REPLACE_SERVICE:-1}"
+RUSTICE_DRY_RUN="${RUSTICE_DRY_RUN:-0}"
+
+RUSTICE_HORIZON_AUTH="${RUSTICE_HORIZON_AUTH:-pat}"
+RUSTICE_HORIZON_DATABASE="${RUSTICE_HORIZON_DATABASE:-EMBUCKET}"
+RUSTICE_HORIZON_ROLE="${RUSTICE_HORIZON_ROLE:-}"
+RUSTICE_HORIZON_SERVICE_USER="${RUSTICE_HORIZON_SERVICE_USER:-RUSTICE_HORIZON_SVC}"
+RUSTICE_HORIZON_PAT_NAME="${RUSTICE_HORIZON_PAT_NAME:-RUSTICE_HORIZON_PAT}"
+RUSTICE_HORIZON_PAT_DAYS="${RUSTICE_HORIZON_PAT_DAYS:-15}"
+RUSTICE_HORIZON_SECRET="${RUSTICE_HORIZON_SECRET:-${RUSTICE_DB}.${RUSTICE_SCHEMA}.RUSTICE_HORIZON_PAT}"
+RUSTICE_JWT_SECRET="${RUSTICE_JWT_SECRET:-${RUSTICE_DB}.${RUSTICE_SCHEMA}.RUSTICE_JWT_SECRET}"
+RUSTICE_ROTATE_JWT_SECRET="${RUSTICE_ROTATE_JWT_SECRET:-0}"
+RUSTICE_GRANT_TO_ROLE="${RUSTICE_GRANT_TO_ROLE:-}"
+RUSTICE_EGRESS_RULE="${RUSTICE_EGRESS_RULE:-RUSTICE_HORIZON_EGRESS}"
+RUSTICE_EAI="${RUSTICE_EAI:-RUSTICE_HORIZON_EAI}"
+
+usage() {
+  cat <<'USAGE'
+Deploy rustice/embucketd to Snowpark Container Services.
+
+Required for the default Horizon PAT mode:
+  RUSTICE_HORIZON_DATABASE  Snowflake database that contains Iceberg tables.
+  RUSTICE_HORIZON_ROLE      Role granted access to those Iceberg tables.
+
+Common options:
+  SNOW_CONFIG_FILE          snowflake-cli config.toml path.
+  SNOW_CONNECTION           snowflake-cli connection name. Default: default.
+  RUSTICE_BUILD_LOCAL=1     Build the local Dockerfile instead of pulling embucket/rustice.
+  RUSTICE_IMAGE_TAG=...     Image tag. Default: latest.
+  RUSTICE_REGISTRY_LOGIN=0  Skip snow spcs image-registry login.
+  RUSTICE_SKIP_IMAGE_PUSH=1 Only run SQL; assume image already exists in Snowflake.
+  RUSTICE_HORIZON_AUTH      pat, bearer_token, oauth_token, or none. Default: pat.
+  RUSTICE_GRANT_TO_ROLE     Grant service endpoint access to this Snowflake role.
+  RUSTICE_DRY_RUN=1         Print SQL and docker commands without executing them.
+
+Example:
+  SNOW_CONFIG_FILE=config.toml \
+  RUSTICE_HORIZON_DATABASE=ANALYTICS \
+  RUSTICE_HORIZON_ROLE=DATA_ENGINEER \
+  ./deploy/spcs/deploy.sh
+USAGE
+}
+
+log() {
+  printf '>>> %s\n' "$*"
+}
+
+die() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+require_ident() {
+  local name="$1"
+  local value="$2"
+  [[ "$value" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "${name} must be an unquoted Snowflake identifier, got '${value}'"
+}
+
+sql_quote() {
+  local value="$1"
+  value="${value//\'/\'\'}"
+  printf "'%s'" "$value"
+}
+
+yaml_quote() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+csv_first_value() {
+  awk -F, 'NF && NR > 1 { gsub(/\r/, "", $1); gsub(/^"|"$/, "", $1); print $1; exit }'
+}
+
+csv_second_value() {
+  awk -F, 'NF && NR > 1 { gsub(/\r/, "", $2); gsub(/^"|"$/, "", $2); print $2; exit }'
+}
+
+snow_global_args=()
+if [[ -n "${SNOW_CONFIG_FILE:-}" ]]; then
+  snow_global_args+=(--config-file "$SNOW_CONFIG_FILE")
+fi
+
+snow_sql_args=(--connection "$SNOW_CONNECTION")
+if [[ -n "${SNOW_ROLE:-}" ]]; then
+  snow_sql_args+=(--role "$SNOW_ROLE")
+fi
+if [[ -n "${SNOW_WAREHOUSE:-}" ]]; then
+  snow_sql_args+=(--warehouse "$SNOW_WAREHOUSE")
+fi
+
+run_snow_sql() {
+  local sql="$1"
+  if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
+    printf '%s\n' "$sql"
+    return 0
+  fi
+
+  local sql_file
+  sql_file="$(mktemp "${TMPDIR:-/tmp}/rustice-spcs.XXXXXX.sql")"
+  printf '%s\n' "$sql" > "$sql_file"
+  SNOWFLAKE_HOME="$SNOWFLAKE_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" "$SNOW_BIN" "${snow_global_args[@]}" sql "${snow_sql_args[@]}" --filename "$sql_file"
+  rm -f "$sql_file"
+}
+
+snow_scalar() {
+  local sql="$1"
+  SNOWFLAKE_HOME="$SNOWFLAKE_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" "$SNOW_BIN" "${snow_global_args[@]}" sql "${snow_sql_args[@]}" --format CSV --silent --query "$sql" | csv_first_value
+}
+
+snow_second_scalar() {
+  local sql="$1"
+  SNOWFLAKE_HOME="$SNOWFLAKE_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" "$SNOW_BIN" "${snow_global_args[@]}" sql "${snow_sql_args[@]}" --format CSV --silent --query "$sql" | csv_second_value
+}
+
+docker_cmd() {
+  if [[ -n "${CONTAINER_CLI:-}" ]]; then
+    printf '%s' "$CONTAINER_CLI"
+  elif command -v docker >/dev/null 2>&1; then
+    printf 'docker'
+  elif command -v podman >/dev/null 2>&1; then
+    printf 'podman'
+  else
+    die "docker or podman is required"
+  fi
+}
+
+run_cmd() {
+  if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
+    printf '+'
+    printf ' %q' "$@"
+    printf '\n'
+  else
+    "$@"
+  fi
+}
+
+run_snow_cmd() {
+  if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
+    printf '+ env SNOWFLAKE_HOME=%q XDG_CONFIG_HOME=%q %q' "$SNOWFLAKE_HOME" "$XDG_CONFIG_HOME" "$SNOW_BIN"
+    printf ' %q' "${snow_global_args[@]}" "$@"
+    printf '\n'
+  else
+    SNOWFLAKE_HOME="$SNOWFLAKE_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" "$SNOW_BIN" "${snow_global_args[@]}" "$@"
+  fi
+}
+
+random_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+  else
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+  fi
+}
+
+normalize_lower() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+require_ident RUSTICE_DB "$RUSTICE_DB"
+require_ident RUSTICE_SCHEMA "$RUSTICE_SCHEMA"
+require_ident RUSTICE_COMPUTE_POOL "$RUSTICE_COMPUTE_POOL"
+require_ident RUSTICE_IMAGE_REPOSITORY "$RUSTICE_IMAGE_REPOSITORY"
+require_ident RUSTICE_SERVICE "$RUSTICE_SERVICE"
+require_ident RUSTICE_EGRESS_RULE "$RUSTICE_EGRESS_RULE"
+require_ident RUSTICE_EAI "$RUSTICE_EAI"
+require_ident RUSTICE_HORIZON_DATABASE "$RUSTICE_HORIZON_DATABASE"
+
+case "$RUSTICE_HORIZON_AUTH" in
+  pat)
+    [[ -n "$RUSTICE_HORIZON_ROLE" ]] || die "RUSTICE_HORIZON_ROLE is required when RUSTICE_HORIZON_AUTH=pat"
+    require_ident RUSTICE_HORIZON_ROLE "$RUSTICE_HORIZON_ROLE"
+    require_ident RUSTICE_HORIZON_SERVICE_USER "$RUSTICE_HORIZON_SERVICE_USER"
+    require_ident RUSTICE_HORIZON_PAT_NAME "$RUSTICE_HORIZON_PAT_NAME"
+    ;;
+  bearer_token|oauth_token)
+    [[ -n "$RUSTICE_HORIZON_ROLE" ]] || die "RUSTICE_HORIZON_ROLE is required when RUSTICE_HORIZON_AUTH=${RUSTICE_HORIZON_AUTH}"
+    require_ident RUSTICE_HORIZON_ROLE "$RUSTICE_HORIZON_ROLE"
+    ;;
+  none)
+    ;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  *)
+    die "RUSTICE_HORIZON_AUTH must be pat, bearer_token, oauth_token, or none"
+    ;;
+esac
+
+mkdir -p "$SNOWFLAKE_HOME" "$XDG_CONFIG_HOME"
+
+log "Creating Snowflake SPCS resources"
+run_snow_sql "
+CREATE DATABASE IF NOT EXISTS ${RUSTICE_DB};
+CREATE SCHEMA IF NOT EXISTS ${RUSTICE_DB}.${RUSTICE_SCHEMA};
+CREATE IMAGE REPOSITORY IF NOT EXISTS ${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_IMAGE_REPOSITORY};
+CREATE COMPUTE POOL IF NOT EXISTS ${RUSTICE_COMPUTE_POOL}
+  MIN_NODES = ${RUSTICE_POOL_MIN_NODES}
+  MAX_NODES = ${RUSTICE_POOL_MAX_NODES}
+  INSTANCE_FAMILY = ${RUSTICE_INSTANCE_FAMILY};
+"
+
+if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
+  account_identifier="${RUSTICE_ACCOUNT_IDENTIFIER:-example-org-example-account}"
+else
+  account_identifier="${RUSTICE_ACCOUNT_IDENTIFIER:-$(snow_scalar "SELECT LOWER(REPLACE(CURRENT_ORGANIZATION_NAME() || '-' || CURRENT_ACCOUNT_NAME(), '_', '-'))")}"
+fi
+
+[[ -n "$account_identifier" ]] || die "Could not resolve Snowflake account identifier"
+
+registry_host="${account_identifier}.registry.snowflakecomputing.com"
+repo_url="${registry_host}/$(normalize_lower "$RUSTICE_DB")/$(normalize_lower "$RUSTICE_SCHEMA")/$(normalize_lower "$RUSTICE_IMAGE_REPOSITORY")"
+service_image="${repo_url}/rustice:${RUSTICE_IMAGE_TAG}"
+catalog_url="${RUSTICE_CATALOG_URL:-https://${account_identifier}.snowflakecomputing.com/polaris/api/catalog}"
+
+egress_hosts="${RUSTICE_EGRESS_HOSTS:-${account_identifier}.snowflakecomputing.com}"
+egress_values_sql=""
+IFS=',' read -r -a egress_host_array <<< "$egress_hosts"
+for host in "${egress_host_array[@]}"; do
+  host="${host#"${host%%[![:space:]]*}"}"
+  host="${host%"${host##*[![:space:]]}"}"
+  [[ -n "$host" ]] || continue
+  if [[ -n "$egress_values_sql" ]]; then
+    egress_values_sql+=", "
+  fi
+  egress_values_sql+="$(sql_quote "$host")"
+done
+
+if [[ "$RUSTICE_HORIZON_AUTH" != "none" ]]; then
+  [[ -n "$egress_values_sql" ]] || die "RUSTICE_EGRESS_HOSTS resolved to an empty list"
+  log "Creating External Access Integration for Horizon"
+  run_snow_sql "
+CREATE OR REPLACE NETWORK RULE ${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_EGRESS_RULE}
+  TYPE = HOST_PORT
+  MODE = EGRESS
+  VALUE_LIST = (${egress_values_sql});
+
+CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION ${RUSTICE_EAI}
+  ALLOWED_NETWORK_RULES = (${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_EGRESS_RULE})
+  ENABLED = TRUE;
+"
+fi
+
+if [[ "$RUSTICE_SKIP_IMAGE_PUSH" != "1" ]]; then
+  cli="$(docker_cmd)"
+  log "Publishing image ${service_image}"
+  if [[ -n "${RUSTICE_REGISTRY_USER:-}" && -n "${RUSTICE_REGISTRY_PASSWORD:-}" ]]; then
+    if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
+      printf '+ %s login %q -u %q --password-stdin\n' "$cli" "$registry_host" "$RUSTICE_REGISTRY_USER"
+    else
+      printf '%s' "$RUSTICE_REGISTRY_PASSWORD" | "$cli" login "$registry_host" -u "$RUSTICE_REGISTRY_USER" --password-stdin
+    fi
+  else
+    if [[ "$RUSTICE_REGISTRY_LOGIN" == "1" ]]; then
+      log "Logging in to ${registry_host} through Snowflake CLI"
+      run_snow_cmd spcs image-registry login "${snow_sql_args[@]}"
+    else
+      log "Assuming ${cli} is already logged in to ${registry_host}"
+    fi
+  fi
+
+  if [[ "$RUSTICE_BUILD_LOCAL" == "1" ]]; then
+    run_cmd "$cli" build --platform linux/amd64 --build-arg "ENABLE_EXPERIMENTAL=${RUSTICE_ENABLE_EXPERIMENTAL}" -t "$RUSTICE_LOCAL_IMAGE" "$REPO_ROOT"
+  else
+    run_cmd "$cli" pull --platform linux/amd64 "$RUSTICE_SOURCE_IMAGE"
+    RUSTICE_LOCAL_IMAGE="$RUSTICE_SOURCE_IMAGE"
+  fi
+  run_cmd "$cli" tag "$RUSTICE_LOCAL_IMAGE" "$service_image"
+  run_cmd "$cli" push "$service_image"
+fi
+
+if [[ "$RUSTICE_ROTATE_JWT_SECRET" == "1" ]]; then
+  jwt_sql="CREATE OR REPLACE SECRET ${RUSTICE_JWT_SECRET} TYPE = GENERIC_STRING SECRET_STRING = $(sql_quote "$(random_secret)");"
+else
+  jwt_sql="CREATE SECRET IF NOT EXISTS ${RUSTICE_JWT_SECRET} TYPE = GENERIC_STRING SECRET_STRING = $(sql_quote "$(random_secret)");"
+fi
+
+log "Creating runtime secrets"
+run_snow_sql "$jwt_sql"
+
+horizon_secret_line=""
+horizon_env_lines=""
+if [[ "$RUSTICE_HORIZON_AUTH" != "none" ]]; then
+  horizon_env_lines+="        CATALOG_URL: $(yaml_quote "$catalog_url")
+        ICEBERG_REST_PREFIX: $(yaml_quote "$RUSTICE_HORIZON_DATABASE")
+        ICEBERG_REST_SCOPE: $(yaml_quote "session:role:${RUSTICE_HORIZON_ROLE}")"
+fi
+
+case "$RUSTICE_HORIZON_AUTH" in
+  pat)
+    log "Creating service user PAT and storing it in a Snowflake secret"
+    run_snow_sql "
+CREATE USER IF NOT EXISTS ${RUSTICE_HORIZON_SERVICE_USER}
+  TYPE = SERVICE
+  DEFAULT_ROLE = ${RUSTICE_HORIZON_ROLE}
+  COMMENT = 'Service user used by rustice SPCS to access Horizon Catalog';
+GRANT ROLE ${RUSTICE_HORIZON_ROLE} TO USER ${RUSTICE_HORIZON_SERVICE_USER};
+"
+    run_snow_sql "ALTER USER IF EXISTS ${RUSTICE_HORIZON_SERVICE_USER} REMOVE PROGRAMMATIC ACCESS TOKEN ${RUSTICE_HORIZON_PAT_NAME};" >/dev/null 2>&1 || true
+    if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
+      pat_token="dry-run-token"
+      printf '+ snow sql --query %q\n' "ALTER USER IF EXISTS ${RUSTICE_HORIZON_SERVICE_USER} ADD PROGRAMMATIC ACCESS TOKEN ${RUSTICE_HORIZON_PAT_NAME} ROLE_RESTRICTION = '${RUSTICE_HORIZON_ROLE}' DAYS_TO_EXPIRY = ${RUSTICE_HORIZON_PAT_DAYS}"
+    else
+      pat_token="$(snow_second_scalar "ALTER USER IF EXISTS ${RUSTICE_HORIZON_SERVICE_USER} ADD PROGRAMMATIC ACCESS TOKEN ${RUSTICE_HORIZON_PAT_NAME} ROLE_RESTRICTION = '${RUSTICE_HORIZON_ROLE}' DAYS_TO_EXPIRY = ${RUSTICE_HORIZON_PAT_DAYS}")"
+    fi
+    [[ -n "$pat_token" ]] || die "Could not read token_secret from ALTER USER ADD PROGRAMMATIC ACCESS TOKEN output"
+    run_snow_sql "CREATE OR REPLACE SECRET ${RUSTICE_HORIZON_SECRET} TYPE = GENERIC_STRING SECRET_STRING = $(sql_quote "$pat_token");"
+    horizon_secret_line="        - snowflakeSecret: ${RUSTICE_HORIZON_SECRET}
+          envVarName: ICEBERG_REST_CREDENTIAL
+          secretKeyRef: secret_string"
+    ;;
+  bearer_token)
+    horizon_secret_line="        - snowflakeSecret: ${RUSTICE_HORIZON_SECRET}
+          envVarName: ICEBERG_REST_BEARER_TOKEN
+          secretKeyRef: secret_string"
+    ;;
+  oauth_token)
+    horizon_secret_line="        - snowflakeSecret: ${RUSTICE_HORIZON_SECRET}
+          envVarName: ICEBERG_REST_OAUTH_TOKEN
+          secretKeyRef: secret_string"
+    ;;
+esac
+
+secrets_yaml="      secrets:
+        - snowflakeSecret: ${RUSTICE_JWT_SECRET}
+          envVarName: JWT_SECRET
+          secretKeyRef: secret_string"
+if [[ -n "$horizon_secret_line" ]]; then
+  secrets_yaml+="
+${horizon_secret_line}"
+fi
+
+drop_service_sql=""
+if [[ "$RUSTICE_REPLACE_SERVICE" == "1" ]]; then
+  drop_service_sql="DROP SERVICE IF EXISTS ${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE};"
+fi
+
+service_options=""
+if [[ -n "$RUSTICE_AUTO_SUSPEND_SECS" ]]; then
+  service_options+="
+  AUTO_SUSPEND_SECS = ${RUSTICE_AUTO_SUSPEND_SECS}"
+fi
+if [[ "$RUSTICE_HORIZON_AUTH" != "none" ]]; then
+  service_options+="
+  EXTERNAL_ACCESS_INTEGRATIONS = (${RUSTICE_EAI})"
+fi
+service_options+="
+  AUTO_RESUME = ${RUSTICE_AUTO_RESUME}
+  MIN_INSTANCES = ${RUSTICE_MIN_INSTANCES}
+  MAX_INSTANCES = ${RUSTICE_MAX_INSTANCES}"
+
+grant_sql=""
+if [[ -n "$RUSTICE_GRANT_TO_ROLE" ]]; then
+  require_ident RUSTICE_GRANT_TO_ROLE "$RUSTICE_GRANT_TO_ROLE"
+  grant_sql="GRANT SERVICE ROLE ${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE}!${RUSTICE_SERVICE_ROLE} TO ROLE ${RUSTICE_GRANT_TO_ROLE};"
+fi
+
+log "Creating SPCS service"
+run_snow_sql "
+${drop_service_sql}
+
+CREATE SERVICE ${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE}
+  IN COMPUTE POOL ${RUSTICE_COMPUTE_POOL}
+  FROM SPECIFICATION \$\$
+spec:
+  containers:
+    - name: ${RUSTICE_CONTAINER_NAME}
+      image: ${service_image}
+      env:
+        BUCKET_HOST: \"0.0.0.0\"
+        BUCKET_PORT: $(yaml_quote "$RUSTICE_PORT")
+        RUST_LOG: $(yaml_quote "${RUST_LOG:-info}")
+${horizon_env_lines}
+${secrets_yaml}
+      readinessProbe:
+        port: ${RUSTICE_PORT}
+        path: /health
+  endpoints:
+    - name: ${RUSTICE_ENDPOINT_NAME}
+      port: ${RUSTICE_PORT}
+      public: true
+capabilities:
+  securityContext:
+    executeAsCaller: true
+serviceRoles:
+  - name: ${RUSTICE_SERVICE_ROLE}
+    endpoints:
+      - ${RUSTICE_ENDPOINT_NAME}
+\$\$
+${service_options};
+
+${grant_sql}
+
+SHOW SERVICES IN SCHEMA ${RUSTICE_DB}.${RUSTICE_SCHEMA};
+SELECT SYSTEM\$GET_SERVICE_STATUS('${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE}');
+SHOW ENDPOINTS IN SERVICE ${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE};
+"
+
+log "Done"
+log "Image: ${service_image}"
+log "Catalog URL: ${catalog_url}"
+log "Check logs with: SELECT SYSTEM\$GET_SERVICE_LOGS('${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE}', 0, '${RUSTICE_CONTAINER_NAME}', 100);"
