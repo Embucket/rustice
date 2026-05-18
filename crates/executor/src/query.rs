@@ -3081,12 +3081,11 @@ fn column_name_from_arg(arg: &FunctionArg, parent: &Expr) -> Result<String> {
     };
     match expr {
         Expr::Identifier(ident) => Ok(ident.value.clone()),
-        Expr::CompoundIdentifier(idents) => idents
-            .last()
-            .map(|i| i.value.clone())
-            .context(ex_error::InvalidPartitionByExpressionSnafu {
+        Expr::CompoundIdentifier(idents) => idents.last().map(|i| i.value.clone()).context(
+            ex_error::InvalidPartitionByExpressionSnafu {
                 expr: parent.to_string(),
-            }),
+            },
+        ),
         _ => ex_error::InvalidPartitionByExpressionSnafu {
             expr: parent.to_string(),
         }
