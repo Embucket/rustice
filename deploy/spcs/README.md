@@ -49,6 +49,15 @@ The default mode is `RUSTICE_HORIZON_AUTH=pat`:
 `rustice` exchanges that credential for a Horizon Catalog access token at startup and uses `ICEBERG_REST_PREFIX` as the Horizon database/prefix.
 The SQL catalog name exposed by Rustice remains `embucket`; the Horizon database/prefix is configured separately through `RUSTICE_HORIZON_DATABASE`.
 
+## Deployment Modes
+
+There are two supported ways to create the SPCS resources:
+
+1. Run `deploy.sh`. This is the easiest path because it builds or pulls the image, logs in to the Snowflake image registry, pushes the image into Snowflake, creates the compute pool, secrets, EAI, service, and grants.
+2. Generate SQL with `RUSTICE_DRY_RUN=1` and run that SQL manually in Snowsight or through `snow sql`. This is useful when a user wants to review or adapt the DDL. The image must still exist in a Snowflake image repository before the service can start; use `RUSTICE_SKIP_IMAGE_PUSH=1` only after the image has already been pushed.
+
+After deployment, Snowflake SQL is used to manage and inspect the SPCS service. SQL execution against Embucket/Rustice itself goes through the Snowflake-compatible REST endpoint exposed by the SPCS public ingress.
+
 ## Common Options
 
 ```bash
@@ -91,15 +100,33 @@ SPCS public ingress authenticates programmatic requests with the standard Snowfl
 Authorization: Snowflake Token="<pat-or-oauth-token>"
 ```
 
-Snowflake's ingress proxy consumes that header and does not forward it to the container when it contains a Snowflake token. Rustice therefore accepts its own session token through a separate header when running behind SPCS:
+Snowflake's ingress proxy consumes that header and does not forward it to the container when it contains a Snowflake token. Embucket/Rustice therefore accepts its own session token through a separate header when running behind SPCS:
 
 ```http
-X-Rustice-Authorization: Snowflake Token="<rustice-session-token>"
+X-Embucket-Authorization: Snowflake Token="<embucket-session-token>"
 ```
 
-The login request still goes to `/session/v1/login-request` through the SPCS endpoint with only the Snowflake `Authorization` header. The returned Rustice `data.token` is then sent in `X-Rustice-Authorization` for `/queries/v1/query-request`, while the Snowflake `Authorization` header continues to authorize access through SPCS ingress.
+The login request still goes to `/session/v1/login-request` through the SPCS endpoint with only the Snowflake `Authorization` header. The returned Embucket/Rustice `data.token` is then sent in `X-Embucket-Authorization` for `/queries/v1/query-request`, while the Snowflake `Authorization` header continues to authorize access through SPCS ingress.
+
+`X-Rustice-Authorization` is still accepted as a legacy alias during the rename.
 
 When using PATs for programmatic SPCS ingress access, Snowflake requires the PAT user to have a network policy. Browser/OAuth access can be used instead for interactive checks.
+
+## Query Through the SPCS Endpoint
+
+Embucket/Rustice exposes the same Snowflake-compatible REST flow that the Snowflake CLI/connector uses:
+
+1. `/session/v1/login-request` creates an Embucket/Rustice session and returns `data.token`.
+2. `/queries/v1/query-request` executes SQL with that session token.
+3. `/queries/{query_id}/result` fetches async result chunks when needed.
+
+Behind SPCS public ingress, the client must also authenticate to Snowflake ingress on every request. A Snowflake-compatible CLI or connector can query the SPCS endpoint if it is configured to:
+
+- point the Snowflake host/account URL at the SPCS public endpoint;
+- send `Authorization: Snowflake Token="<pat-or-oauth-token>"` for SPCS ingress;
+- send the Embucket/Rustice session token from `login-request` as `X-Embucket-Authorization: Snowflake Token="<embucket-session-token>"` on query/result requests.
+
+An unmodified Snowflake CLI may work against local Embucket/Rustice, but it is not enough for SPCS public ingress if it can only use the `Authorization` header for the Embucket/Rustice session token. Snowflake ingress consumes that header before the request reaches the container, so the SPCS path needs the extra `X-Embucket-Authorization` header support in the client/connector.
 
 ## Result
 
@@ -249,6 +276,9 @@ RUSTICE_EGRESS_HOSTS=<org>-<account>.snowflakecomputing.com,s3.<region>.amazonaw
 After the service reaches `READY`, run this SQL through the Rustice/Snowflake-compatible endpoint. The SQL catalog name remains `embucket`; `RUSTICE_E2E` is the underlying Horizon prefix:
 
 ```sql
+SHOW DATABASES;
+SHOW SCHEMAS IN DATABASE embucket;
+SHOW TABLES IN SCHEMA embucket.public;
 SELECT * FROM embucket.public.smoke;
 ```
 

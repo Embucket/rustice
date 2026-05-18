@@ -15,6 +15,7 @@ use std::{collections::HashMap, sync::Arc};
 use uuid::Uuid;
 
 pub const SESSION_ID_COOKIE_NAME: &str = "session_id";
+pub const EMBUCKET_AUTHORIZATION_HEADER: &str = "x-embucket-authorization";
 pub const RUSTICE_AUTHORIZATION_HEADER: &str = "x-rustice-authorization";
 
 pub const SESSION_EXPIRATION_SECONDS: u64 = 60;
@@ -164,6 +165,7 @@ impl TokenizedSession {
 pub fn extract_token_from_auth(headers: &HeaderMap) -> Option<String> {
     headers
         .get("authorization")
+        .or_else(|| headers.get(EMBUCKET_AUTHORIZATION_HEADER))
         .or_else(|| headers.get(RUSTICE_AUTHORIZATION_HEADER))
         .and_then(extract_token_from_header_value)
 }
@@ -209,7 +211,10 @@ pub fn cookies_from_header(headers: &HeaderMap, header_name: HeaderName) -> Hash
 
 #[cfg(test)]
 mod tests {
-    use crate::session::{RUSTICE_AUTHORIZATION_HEADER, SessionStore, extract_token_from_auth};
+    use crate::session::{
+        EMBUCKET_AUTHORIZATION_HEADER, RUSTICE_AUTHORIZATION_HEADER, SessionStore,
+        extract_token_from_auth,
+    };
     use executor::models::QueryContext;
     use executor::service::ExecutionService;
     use executor::service::make_test_execution_svc;
@@ -233,7 +238,19 @@ mod tests {
     }
 
     #[test]
-    fn extracts_snowflake_token_from_rustice_authorization_header() {
+    fn extracts_snowflake_token_from_embucket_authorization_header() {
+        let token = "11111111-1111-1111-1111-111111111111";
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            EMBUCKET_AUTHORIZATION_HEADER,
+            HeaderValue::from_static("Snowflake Token=\"11111111-1111-1111-1111-111111111111\""),
+        );
+
+        assert_eq!(extract_token_from_auth(&headers), Some(token.to_string()));
+    }
+
+    #[test]
+    fn extracts_snowflake_token_from_legacy_rustice_authorization_header() {
         let token = "11111111-1111-1111-1111-111111111111";
         let mut headers = HeaderMap::new();
         headers.insert(
