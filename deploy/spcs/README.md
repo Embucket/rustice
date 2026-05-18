@@ -108,8 +108,6 @@ X-Embucket-Authorization: Snowflake Token="<embucket-session-token>"
 
 The login request still goes to `/session/v1/login-request` through the SPCS endpoint with only the Snowflake `Authorization` header. The returned Embucket/Rustice `data.token` is then sent in `X-Embucket-Authorization` for `/queries/v1/query-request`, while the Snowflake `Authorization` header continues to authorize access through SPCS ingress.
 
-`X-Rustice-Authorization` is still accepted as a legacy alias during the rename.
-
 When using PATs for programmatic SPCS ingress access, Snowflake requires the PAT user to have a network policy. Browser/OAuth access can be used instead for interactive checks.
 
 ## Query Through the SPCS Endpoint
