@@ -226,7 +226,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
-            HeaderValue::from_str(&format!("Snowflake Token=\"{token}\"")).unwrap(),
+            HeaderValue::from_static("Snowflake Token=\"11111111-1111-1111-1111-111111111111\""),
         );
 
         assert_eq!(extract_token_from_auth(&headers), Some(token.to_string()));
@@ -238,7 +238,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             RUSTICE_AUTHORIZATION_HEADER,
-            HeaderValue::from_str(&format!("Snowflake Token=\"{token}\"")).unwrap(),
+            HeaderValue::from_static("Snowflake Token=\"11111111-1111-1111-1111-111111111111\""),
         );
 
         assert_eq!(extract_token_from_auth(&headers), Some(token.to_string()));

@@ -13,6 +13,19 @@ The deploy script uses `embucket/rustice:latest` by default. Set `RUSTICE_BUILD_
 
 SPCS currently requires `linux/amd64` images, so the script uses that platform when it pulls or builds the image.
 
+After this PR is merged, the normal user path is to use the Docker Hub image published by the repository release workflow. The script still copies that image into a Snowflake image repository, because SPCS services run images from Snowflake's registry:
+
+```bash
+SNOW_CONFIG_FILE=/path/to/config.toml \
+SNOW_CONNECTION=snowflake \
+RUSTICE_HORIZON_DATABASE=ANALYTICS \
+RUSTICE_HORIZON_ROLE=DATA_ENGINEER \
+RUSTICE_IMAGE_TAG=latest \
+./deploy/spcs/deploy.sh
+```
+
+Use `RUSTICE_BUILD_LOCAL=1` only while testing an unmerged local checkout.
+
 ## Quick Start
 
 Run with a Snowflake CLI connection that can create SPCS resources, external access integrations, service users, and PATs:
@@ -133,6 +146,54 @@ snow spcs service list-containers RUSTICE_SERVICE -c snowflake --database RUSTIC
 snow spcs service list-endpoints RUSTICE_SERVICE -c snowflake --database RUSTICE_APP --schema PUBLIC
 snow spcs service logs RUSTICE_SERVICE --container-name rustice --instance-id 0 -c snowflake --database RUSTICE_APP --schema PUBLIC
 ```
+
+## Monitor Cost and Iceberg Tables
+
+Use the account usage view for SPCS compute-pool credits:
+
+```sql
+SELECT
+  START_TIME,
+  END_TIME,
+  COMPUTE_POOL_NAME,
+  CREDITS_USED
+FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWPARK_CONTAINER_SERVICES_HISTORY
+WHERE COMPUTE_POOL_NAME = 'RUSTICE_POOL'
+  AND START_TIME >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+ORDER BY START_TIME DESC;
+```
+
+For account-level metering, query the general metering view:
+
+```sql
+SELECT
+  START_TIME,
+  END_TIME,
+  SERVICE_TYPE,
+  CREDITS_USED
+FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+WHERE SERVICE_TYPE = 'SNOWPARK_CONTAINER_SERVICES'
+  AND START_TIME >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+ORDER BY START_TIME DESC;
+```
+
+Account usage views can lag by up to a few hours. For current state, use:
+
+```sql
+SHOW COMPUTE POOLS LIKE 'RUSTICE_POOL';
+SHOW SERVICES LIKE 'RUSTICE_SERVICE' IN SCHEMA RUSTICE_APP.PUBLIC;
+SHOW SERVICE CONTAINERS IN SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE;
+```
+
+List Iceberg tables that the current Snowflake role can see:
+
+```sql
+SHOW ICEBERG TABLES IN DATABASE RUSTICE_E2E;
+SHOW ICEBERG TABLES IN SCHEMA RUSTICE_E2E.PUBLIC;
+DESCRIBE ICEBERG TABLE RUSTICE_E2E.PUBLIC.SMOKE;
+```
+
+To run the deployment from Snowsight instead of Snowflake CLI, first push the image into the Snowflake image repository once. Then run the script with `RUSTICE_SKIP_IMAGE_PUSH=1 RUSTICE_DRY_RUN=1` and paste the emitted SQL into a worksheet.
 
 ## Minimal Iceberg Smoke Test
 
