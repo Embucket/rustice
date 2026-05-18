@@ -160,6 +160,17 @@ docker_cmd() {
   fi
 }
 
+validate_container_cli() {
+  local cli="$1"
+  if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
+    return 0
+  fi
+
+  if ! "$cli" version >/dev/null 2>&1; then
+    die "${cli} is present but not usable. Enable Docker Desktop WSL integration, start the container engine, install podman, or set RUSTICE_SKIP_IMAGE_PUSH=1 if the image is already in Snowflake."
+  fi
+}
+
 run_cmd() {
   if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
     printf '+'
@@ -225,6 +236,12 @@ esac
 
 mkdir -p "$SNOWFLAKE_HOME" "$XDG_CONFIG_HOME"
 
+container_cli=""
+if [[ "$RUSTICE_SKIP_IMAGE_PUSH" != "1" ]]; then
+  container_cli="$(docker_cmd)"
+  validate_container_cli "$container_cli"
+fi
+
 log "Creating Snowflake SPCS resources"
 run_snow_sql "
 CREATE DATABASE IF NOT EXISTS ${RUSTICE_DB};
@@ -278,31 +295,30 @@ CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION ${RUSTICE_EAI}
 fi
 
 if [[ "$RUSTICE_SKIP_IMAGE_PUSH" != "1" ]]; then
-  cli="$(docker_cmd)"
   log "Publishing image ${service_image}"
   if [[ -n "${RUSTICE_REGISTRY_USER:-}" && -n "${RUSTICE_REGISTRY_PASSWORD:-}" ]]; then
     if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
-      printf '+ %s login %q -u %q --password-stdin\n' "$cli" "$registry_host" "$RUSTICE_REGISTRY_USER"
+      printf '+ %s login %q -u %q --password-stdin\n' "$container_cli" "$registry_host" "$RUSTICE_REGISTRY_USER"
     else
-      printf '%s' "$RUSTICE_REGISTRY_PASSWORD" | "$cli" login "$registry_host" -u "$RUSTICE_REGISTRY_USER" --password-stdin
+      printf '%s' "$RUSTICE_REGISTRY_PASSWORD" | "$container_cli" login "$registry_host" -u "$RUSTICE_REGISTRY_USER" --password-stdin
     fi
   else
     if [[ "$RUSTICE_REGISTRY_LOGIN" == "1" ]]; then
       log "Logging in to ${registry_host} through Snowflake CLI"
       run_snow_cmd spcs image-registry login "${snow_sql_args[@]}"
     else
-      log "Assuming ${cli} is already logged in to ${registry_host}"
+      log "Assuming ${container_cli} is already logged in to ${registry_host}"
     fi
   fi
 
   if [[ "$RUSTICE_BUILD_LOCAL" == "1" ]]; then
-    run_cmd "$cli" build --platform linux/amd64 --build-arg "ENABLE_EXPERIMENTAL=${RUSTICE_ENABLE_EXPERIMENTAL}" -t "$RUSTICE_LOCAL_IMAGE" "$REPO_ROOT"
+    run_cmd "$container_cli" build --platform linux/amd64 --build-arg "ENABLE_EXPERIMENTAL=${RUSTICE_ENABLE_EXPERIMENTAL}" -t "$RUSTICE_LOCAL_IMAGE" "$REPO_ROOT"
   else
-    run_cmd "$cli" pull --platform linux/amd64 "$RUSTICE_SOURCE_IMAGE"
+    run_cmd "$container_cli" pull --platform linux/amd64 "$RUSTICE_SOURCE_IMAGE"
     RUSTICE_LOCAL_IMAGE="$RUSTICE_SOURCE_IMAGE"
   fi
-  run_cmd "$cli" tag "$RUSTICE_LOCAL_IMAGE" "$service_image"
-  run_cmd "$cli" push "$service_image"
+  run_cmd "$container_cli" tag "$RUSTICE_LOCAL_IMAGE" "$service_image"
+  run_cmd "$container_cli" push "$service_image"
 fi
 
 if [[ "$RUSTICE_ROTATE_JWT_SECRET" == "1" ]]; then

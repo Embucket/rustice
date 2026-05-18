@@ -5,6 +5,7 @@ pub mod dev_catalog;
 pub mod df_error;
 pub mod error;
 pub mod information_schema;
+mod rest_catalog_config;
 pub mod schema;
 pub mod table;
 pub mod utils;
