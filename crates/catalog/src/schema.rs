@@ -19,7 +19,7 @@ use std::sync::Arc;
 pub struct CachingSchema {
     pub schema: Arc<dyn SchemaProvider>,
     pub iceberg_catalog: Option<Arc<dyn Catalog>>,
-    pub iceberg_namespace: Option<String>,
+    pub iceberg_namespace: String,
     pub name: String,
     pub tables_cache: DashMap<String, Arc<CachingTable>>,
     pub config: CatalogConfig,
@@ -169,11 +169,7 @@ impl CachingSchema {
             .clone()
             .ok_or_else(|| iceberg_rust::error::Error::NotFound("iceberg catalog".to_string()))
             .context(error::IcebergSnafu)?;
-        let namespace = vec![
-            self.iceberg_namespace
-                .clone()
-                .unwrap_or_else(|| self.name.clone()),
-        ];
+        let namespace = vec![self.iceberg_namespace.clone()];
         let ident = Identifier::new(&namespace, &name);
         let iceberg_table = builder
             .build(ident.namespace(), catalog)
@@ -209,11 +205,7 @@ impl CachingSchema {
         let removed = self.tables_cache.remove(name).map(|(_, t)| t);
 
         if let Some(catalog) = &self.iceberg_catalog {
-            let namespace = vec![
-                self.iceberg_namespace
-                    .clone()
-                    .unwrap_or_else(|| self.name.clone()),
-            ];
+            let namespace = vec![self.iceberg_namespace.clone()];
             let ident = Identifier::new(&namespace, name);
             // Best-effort: ignore errors when dropping a view through this path —
             // views go through deregister via the catalog provider, not here.

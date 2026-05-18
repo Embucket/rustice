@@ -205,7 +205,7 @@ impl EmbucketCatalogList {
                             tables_cache: DashMap::default(),
                             name: schema.clone(),
                             iceberg_catalog: catalog.iceberg_catalog.clone(),
-                            iceberg_namespace: Some(schema.clone()),
+                            iceberg_namespace: schema.clone(),
                             config: catalog.config.clone(),
                         };
                         let table_providers = fetch_table_providers(
@@ -281,7 +281,7 @@ fn bootstrap_caching_schema(
     let caching_schema = Arc::new(CachingSchema {
         schema: schema_provider,
         iceberg_catalog: catalog.iceberg_catalog.clone(),
-        iceberg_namespace: Some(iceberg_namespace.to_string()),
+        iceberg_namespace: iceberg_namespace.to_string(),
         name: namespace.to_string(),
         tables_cache: DashMap::default(),
         config: catalog.config.clone(),

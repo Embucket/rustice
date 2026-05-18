@@ -179,7 +179,7 @@ impl CachingCatalog {
             schema: schema_provider,
             tables_cache: DashMap::new(),
             iceberg_catalog: self.iceberg_catalog.clone(),
-            iceberg_namespace: Some(name.to_string()),
+            iceberg_namespace: name.to_string(),
             config: self.config.clone(),
         });
         self.schemas_cache
@@ -275,7 +275,7 @@ impl CatalogProvider for CachingCatalog {
                 schema: Arc::clone(&schema),
                 tables_cache: DashMap::new(),
                 iceberg_catalog: self.iceberg_catalog.clone(),
-                iceberg_namespace: Some(name.to_string()),
+                iceberg_namespace: name.to_string(),
                 config: self.config.clone(),
             });
 
@@ -319,7 +319,7 @@ impl CatalogProvider for CachingCatalog {
             schema: schema_provider,
             tables_cache: DashMap::new(),
             iceberg_catalog: self.iceberg_catalog.clone(),
-            iceberg_namespace: Some(name.to_string()),
+            iceberg_namespace: name.to_string(),
             config: self.config.clone(),
         });
         self.schemas_cache
