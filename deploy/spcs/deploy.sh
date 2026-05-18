@@ -22,7 +22,7 @@ RUSTICE_POOL_MIN_NODES="${RUSTICE_POOL_MIN_NODES:-1}"
 RUSTICE_POOL_MAX_NODES="${RUSTICE_POOL_MAX_NODES:-1}"
 RUSTICE_MIN_INSTANCES="${RUSTICE_MIN_INSTANCES:-1}"
 RUSTICE_MAX_INSTANCES="${RUSTICE_MAX_INSTANCES:-1}"
-RUSTICE_AUTO_SUSPEND_SECS="${RUSTICE_AUTO_SUSPEND_SECS:-}"
+RUSTICE_AUTO_SUSPEND_SECS="${RUSTICE_AUTO_SUSPEND_SECS:-0}"
 RUSTICE_AUTO_RESUME="${RUSTICE_AUTO_RESUME:-TRUE}"
 RUSTICE_PORT="${RUSTICE_PORT:-3000}"
 RUSTICE_IMAGE_TAG="${RUSTICE_IMAGE_TAG:-latest}"
@@ -38,9 +38,14 @@ RUSTICE_DRY_RUN="${RUSTICE_DRY_RUN:-0}"
 RUSTICE_HORIZON_AUTH="${RUSTICE_HORIZON_AUTH:-pat}"
 RUSTICE_HORIZON_DATABASE="${RUSTICE_HORIZON_DATABASE:-EMBUCKET}"
 RUSTICE_HORIZON_ROLE="${RUSTICE_HORIZON_ROLE:-}"
+RUSTICE_HORIZON_SCHEMAS="${RUSTICE_HORIZON_SCHEMAS:-PUBLIC,public}"
+RUSTICE_HORIZON_TABLES="${RUSTICE_HORIZON_TABLES:-}"
+RUSTICE_HORIZON_EAGER_LOAD="${RUSTICE_HORIZON_EAGER_LOAD:-0}"
 RUSTICE_HORIZON_SERVICE_USER="${RUSTICE_HORIZON_SERVICE_USER:-RUSTICE_HORIZON_SVC}"
 RUSTICE_HORIZON_PAT_NAME="${RUSTICE_HORIZON_PAT_NAME:-RUSTICE_HORIZON_PAT}"
 RUSTICE_HORIZON_PAT_DAYS="${RUSTICE_HORIZON_PAT_DAYS:-15}"
+RUSTICE_CREATE_PAT_AUTH_POLICY="${RUSTICE_CREATE_PAT_AUTH_POLICY:-1}"
+RUSTICE_HORIZON_PAT_AUTH_POLICY="${RUSTICE_HORIZON_PAT_AUTH_POLICY:-${RUSTICE_DB}.${RUSTICE_SCHEMA}.RUSTICE_HORIZON_PAT_AUTH_POLICY}"
 RUSTICE_HORIZON_SECRET="${RUSTICE_HORIZON_SECRET:-${RUSTICE_DB}.${RUSTICE_SCHEMA}.RUSTICE_HORIZON_PAT}"
 RUSTICE_JWT_SECRET="${RUSTICE_JWT_SECRET:-${RUSTICE_DB}.${RUSTICE_SCHEMA}.RUSTICE_JWT_SECRET}"
 RUSTICE_ROTATE_JWT_SECRET="${RUSTICE_ROTATE_JWT_SECRET:-0}"
@@ -64,6 +69,15 @@ Common options:
   RUSTICE_REGISTRY_LOGIN=0  Skip snow spcs image-registry login.
   RUSTICE_SKIP_IMAGE_PUSH=1 Only run SQL; assume image already exists in Snowflake.
   RUSTICE_HORIZON_AUTH      pat, bearer_token, oauth_token, or none. Default: pat.
+  RUSTICE_HORIZON_SCHEMAS   Comma-separated schemas to bootstrap lazily. Default: PUBLIC,public.
+  RUSTICE_HORIZON_TABLES    Comma-separated schema.table names to bootstrap lazily.
+  RUSTICE_HORIZON_EAGER_LOAD=1
+                            Eagerly list Horizon namespaces/tables at startup.
+  RUSTICE_CREATE_PAT_AUTH_POLICY=0
+                            Skip creating a service-user PAT authentication policy.
+  RUSTICE_AUTO_SUSPEND_SECS Service auto suspend seconds. Must be 0 for public endpoints.
+  RUSTICE_EGRESS_HOSTS      Comma-separated hosts allowed from the container.
+                            Include Snowflake/Horizon and object-store hosts vended by Horizon.
   RUSTICE_GRANT_TO_ROLE     Grant service endpoint access to this Snowflake role.
   RUSTICE_DRY_RUN=1         Print SQL and docker commands without executing them.
 
@@ -135,6 +149,21 @@ run_snow_sql() {
   sql_file="$(mktemp "${TMPDIR:-/tmp}/rustice-spcs.XXXXXX.sql")"
   printf '%s\n' "$sql" > "$sql_file"
   SNOWFLAKE_HOME="$SNOWFLAKE_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" "$SNOW_BIN" "${snow_global_args[@]}" sql "${snow_sql_args[@]}" --filename "$sql_file"
+  rm -f "$sql_file"
+}
+
+run_snow_sql_sensitive() {
+  local sql="$1"
+  local redacted_sql="${2:-<sensitive SQL redacted>}"
+  if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
+    printf '%s\n' "$redacted_sql"
+    return 0
+  fi
+
+  local sql_file
+  sql_file="$(mktemp "${TMPDIR:-/tmp}/rustice-spcs.XXXXXX.sql")"
+  printf '%s\n' "$sql" > "$sql_file"
+  SNOWFLAKE_HOME="$SNOWFLAKE_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" "$SNOW_BIN" "${snow_global_args[@]}" sql "${snow_sql_args[@]}" --silent --filename "$sql_file" >/dev/null
   rm -f "$sql_file"
 }
 
@@ -211,6 +240,11 @@ require_ident RUSTICE_SERVICE "$RUSTICE_SERVICE"
 require_ident RUSTICE_EGRESS_RULE "$RUSTICE_EGRESS_RULE"
 require_ident RUSTICE_EAI "$RUSTICE_EAI"
 require_ident RUSTICE_HORIZON_DATABASE "$RUSTICE_HORIZON_DATABASE"
+
+[[ "$RUSTICE_AUTO_SUSPEND_SECS" =~ ^[0-9]+$ ]] || die "RUSTICE_AUTO_SUSPEND_SECS must be a non-negative integer"
+if (( RUSTICE_AUTO_SUSPEND_SECS != 0 )); then
+  die "SPCS services with public endpoints do not support AUTO_SUSPEND_SECS > 0. Set RUSTICE_AUTO_SUSPEND_SECS=0 or make the endpoint private in the service spec."
+fi
 
 case "$RUSTICE_HORIZON_AUTH" in
   pat)
@@ -328,14 +362,20 @@ else
 fi
 
 log "Creating runtime secrets"
-run_snow_sql "$jwt_sql"
+run_snow_sql_sensitive "$jwt_sql" "CREATE SECRET IF NOT EXISTS ${RUSTICE_JWT_SECRET} TYPE = GENERIC_STRING SECRET_STRING = '<redacted>';"
 
 horizon_secret_line=""
 horizon_env_lines=""
 if [[ "$RUSTICE_HORIZON_AUTH" != "none" ]]; then
   horizon_env_lines+="        CATALOG_URL: $(yaml_quote "$catalog_url")
         ICEBERG_REST_PREFIX: $(yaml_quote "$RUSTICE_HORIZON_DATABASE")
-        ICEBERG_REST_SCOPE: $(yaml_quote "session:role:${RUSTICE_HORIZON_ROLE}")"
+        ICEBERG_REST_SCOPE: $(yaml_quote "session:role:${RUSTICE_HORIZON_ROLE}")
+        ICEBERG_REST_SCHEMAS: $(yaml_quote "$RUSTICE_HORIZON_SCHEMAS")
+        ICEBERG_REST_EAGER_LOAD: $(yaml_quote "$RUSTICE_HORIZON_EAGER_LOAD")"
+  if [[ -n "$RUSTICE_HORIZON_TABLES" ]]; then
+    horizon_env_lines+="
+        ICEBERG_REST_TABLES: $(yaml_quote "$RUSTICE_HORIZON_TABLES")"
+  fi
 fi
 
 case "$RUSTICE_HORIZON_AUTH" in
@@ -348,6 +388,17 @@ CREATE USER IF NOT EXISTS ${RUSTICE_HORIZON_SERVICE_USER}
   COMMENT = 'Service user used by rustice SPCS to access Horizon Catalog';
 GRANT ROLE ${RUSTICE_HORIZON_ROLE} TO USER ${RUSTICE_HORIZON_SERVICE_USER};
 "
+    if [[ "$RUSTICE_CREATE_PAT_AUTH_POLICY" == "1" ]]; then
+      run_snow_sql "
+CREATE AUTHENTICATION POLICY IF NOT EXISTS ${RUSTICE_HORIZON_PAT_AUTH_POLICY}
+  PAT_POLICY = (
+    NETWORK_POLICY_EVALUATION = ENFORCED_NOT_REQUIRED
+    REQUIRE_ROLE_RESTRICTION_FOR_SERVICE_USERS = TRUE
+  );
+ALTER USER IF EXISTS ${RUSTICE_HORIZON_SERVICE_USER}
+  SET AUTHENTICATION POLICY ${RUSTICE_HORIZON_PAT_AUTH_POLICY} FORCE;
+"
+    fi
     run_snow_sql "ALTER USER IF EXISTS ${RUSTICE_HORIZON_SERVICE_USER} REMOVE PROGRAMMATIC ACCESS TOKEN ${RUSTICE_HORIZON_PAT_NAME};" >/dev/null 2>&1 || true
     if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
       pat_token="dry-run-token"
@@ -356,7 +407,9 @@ GRANT ROLE ${RUSTICE_HORIZON_ROLE} TO USER ${RUSTICE_HORIZON_SERVICE_USER};
       pat_token="$(snow_second_scalar "ALTER USER IF EXISTS ${RUSTICE_HORIZON_SERVICE_USER} ADD PROGRAMMATIC ACCESS TOKEN ${RUSTICE_HORIZON_PAT_NAME} ROLE_RESTRICTION = '${RUSTICE_HORIZON_ROLE}' DAYS_TO_EXPIRY = ${RUSTICE_HORIZON_PAT_DAYS}")"
     fi
     [[ -n "$pat_token" ]] || die "Could not read token_secret from ALTER USER ADD PROGRAMMATIC ACCESS TOKEN output"
-    run_snow_sql "CREATE OR REPLACE SECRET ${RUSTICE_HORIZON_SECRET} TYPE = GENERIC_STRING SECRET_STRING = $(sql_quote "$pat_token");"
+    run_snow_sql_sensitive \
+      "CREATE OR REPLACE SECRET ${RUSTICE_HORIZON_SECRET} TYPE = GENERIC_STRING SECRET_STRING = $(sql_quote "$pat_token");" \
+      "CREATE OR REPLACE SECRET ${RUSTICE_HORIZON_SECRET} TYPE = GENERIC_STRING SECRET_STRING = '<redacted>';"
     horizon_secret_line="        - snowflakeSecret: ${RUSTICE_HORIZON_SECRET}
           envVarName: ICEBERG_REST_CREDENTIAL
           secretKeyRef: secret_string"
@@ -388,10 +441,8 @@ if [[ "$RUSTICE_REPLACE_SERVICE" == "1" ]]; then
 fi
 
 service_options=""
-if [[ -n "$RUSTICE_AUTO_SUSPEND_SECS" ]]; then
-  service_options+="
+service_options+="
   AUTO_SUSPEND_SECS = ${RUSTICE_AUTO_SUSPEND_SECS}"
-fi
 if [[ "$RUSTICE_HORIZON_AUTH" != "none" ]]; then
   service_options+="
   EXTERNAL_ACCESS_INTEGRATIONS = (${RUSTICE_EAI})"

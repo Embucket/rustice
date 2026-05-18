@@ -1,6 +1,9 @@
 use crate::catalog_list::{CatalogListConfig, DEFAULT_CATALOG, EmbucketCatalogList};
 use crate::error::{IcebergSnafu, Result};
-use crate::rest_catalog_config::{configure_rest_catalog_auth, rest_catalog_prefix};
+use crate::rest_catalog_config::{
+    configure_rest_catalog_auth, rest_catalog_bootstrap_schemas, rest_catalog_bootstrap_tables,
+    rest_catalog_eager_load, rest_catalog_prefix,
+};
 use datafusion::execution::object_store::ObjectStoreRegistry;
 use iceberg_file_catalog::FileCatalogList;
 use iceberg_rest_catalog::apis::configuration::Configuration;
@@ -42,9 +45,23 @@ pub async fn build_dev_catalog_list(
                 Some(ObjectStoreBuilder::s3()),
                 false,
             ));
-            embucket
-                .register_iceberg_catalog(DEFAULT_CATALOG, catalog, false)
-                .await?;
+            if rest_catalog_eager_load() {
+                embucket
+                    .register_iceberg_catalog(DEFAULT_CATALOG, catalog, false)
+                    .await?;
+            } else {
+                let bootstrap_schemas = rest_catalog_bootstrap_schemas();
+                let bootstrap_tables = rest_catalog_bootstrap_tables();
+                embucket
+                    .register_iceberg_catalog_lazy(
+                        DEFAULT_CATALOG,
+                        catalog,
+                        &bootstrap_schemas,
+                        &bootstrap_tables,
+                        false,
+                    )
+                    .await?;
+            }
             return Ok(embucket);
         } else {
             let object_store_builder = if catalog_url.starts_with("s3:") {

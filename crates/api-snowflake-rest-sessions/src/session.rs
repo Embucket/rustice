@@ -15,6 +15,7 @@ use std::{collections::HashMap, sync::Arc};
 use uuid::Uuid;
 
 pub const SESSION_ID_COOKIE_NAME: &str = "session_id";
+pub const RUSTICE_AUTHORIZATION_HEADER: &str = "x-rustice-authorization";
 
 pub const SESSION_EXPIRATION_SECONDS: u64 = 60;
 
@@ -161,16 +162,21 @@ impl TokenizedSession {
 // Where it's used in the `require_auth` layer as part of the session flow and where it was originally from.
 #[must_use]
 pub fn extract_token_from_auth(headers: &HeaderMap) -> Option<String> {
-    //First we check the header
-    headers.get("authorization").and_then(|value| {
-        value.to_str().ok().and_then(|auth| {
-            #[allow(clippy::unwrap_used)]
-            let re = Regex::new(
-                r#"Snowflake Token="([A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})""#
-            ).unwrap();
-            re.captures(auth)
-                .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
-        })
+    headers
+        .get("authorization")
+        .or_else(|| headers.get(RUSTICE_AUTHORIZATION_HEADER))
+        .and_then(extract_token_from_header_value)
+}
+
+fn extract_token_from_header_value(value: &http::HeaderValue) -> Option<String> {
+    value.to_str().ok().and_then(|auth| {
+        #[allow(clippy::unwrap_used)]
+        let re = Regex::new(
+            r#"Snowflake Token="([A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})""#,
+        )
+        .unwrap();
+        re.captures(auth)
+            .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
     })
 }
 
@@ -203,15 +209,40 @@ pub fn cookies_from_header(headers: &HeaderMap, header_name: HeaderName) -> Hash
 
 #[cfg(test)]
 mod tests {
-    use crate::session::SessionStore;
+    use crate::session::{RUSTICE_AUTHORIZATION_HEADER, SessionStore, extract_token_from_auth};
     use executor::models::QueryContext;
     use executor::service::ExecutionService;
     use executor::service::make_test_execution_svc;
     use executor::session::to_unix;
+    use http::{HeaderMap, HeaderValue, header};
     use std::sync::atomic::Ordering;
     use std::time::Duration;
     use time::OffsetDateTime;
     use tokio::time::sleep;
+
+    #[test]
+    fn extracts_snowflake_token_from_authorization_header() {
+        let token = "11111111-1111-1111-1111-111111111111";
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Snowflake Token=\"{token}\"")).unwrap(),
+        );
+
+        assert_eq!(extract_token_from_auth(&headers), Some(token.to_string()));
+    }
+
+    #[test]
+    fn extracts_snowflake_token_from_rustice_authorization_header() {
+        let token = "11111111-1111-1111-1111-111111111111";
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            RUSTICE_AUTHORIZATION_HEADER,
+            HeaderValue::from_str(&format!("Snowflake Token=\"{token}\"")).unwrap(),
+        );
+
+        assert_eq!(extract_token_from_auth(&headers), Some(token.to_string()));
+    }
 
     #[tokio::test]
     #[allow(clippy::expect_used, clippy::too_many_lines)]

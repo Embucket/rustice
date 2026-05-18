@@ -17,9 +17,49 @@ const ICEBERG_REST_CREDENTIAL_ENV: &str = "ICEBERG_REST_CREDENTIAL";
 const ICEBERG_REST_SCOPE_ENV: &str = "ICEBERG_REST_SCOPE";
 const ICEBERG_REST_ROLE_ENV: &str = "ICEBERG_REST_ROLE";
 const ICEBERG_REST_CLIENT_ID_ENV: &str = "ICEBERG_REST_CLIENT_ID";
+const ICEBERG_REST_EAGER_LOAD_ENV: &str = "ICEBERG_REST_EAGER_LOAD";
+const ICEBERG_REST_SCHEMAS_ENV: &str = "ICEBERG_REST_SCHEMAS";
+const ICEBERG_REST_TABLES_ENV: &str = "ICEBERG_REST_TABLES";
 
 pub(crate) fn rest_catalog_prefix(default_catalog: &str) -> String {
     env_non_empty(ICEBERG_REST_PREFIX_ENV).unwrap_or_else(|| default_catalog.into())
+}
+
+pub(crate) fn rest_catalog_eager_load() -> bool {
+    matches!(
+        env_non_empty(ICEBERG_REST_EAGER_LOAD_ENV)
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
+pub(crate) fn rest_catalog_bootstrap_schemas() -> Vec<String> {
+    env_non_empty(ICEBERG_REST_SCHEMAS_ENV)
+        .map(|schemas| {
+            schemas
+                .split(',')
+                .map(str::trim)
+                .filter(|schema| !schema.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .filter(|schemas: &Vec<String>| !schemas.is_empty())
+        .unwrap_or_else(|| vec!["PUBLIC".to_string(), "public".to_string()])
+}
+
+pub(crate) fn rest_catalog_bootstrap_tables() -> Vec<String> {
+    env_non_empty(ICEBERG_REST_TABLES_ENV)
+        .map(|tables| {
+            tables
+                .split(',')
+                .map(str::trim)
+                .filter(|table| !table.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) async fn configure_rest_catalog_auth(configuration: &mut Configuration) -> Result<()> {
