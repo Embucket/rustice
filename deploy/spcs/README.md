@@ -59,12 +59,40 @@ The SQL catalog name exposed by Rustice remains `embucket`; the Horizon database
 
 ## Deployment Modes
 
-There are two supported ways to create the SPCS resources:
+There are three supported ways to create the SPCS resources:
 
 1. Run `deploy.sh`. This is the easiest path because it builds or pulls the image, logs in to the Snowflake image registry, pushes the image into Snowflake, creates the compute pool, secrets, EAI, service, and grants.
-2. Generate SQL with `RUSTICE_DRY_RUN=1` and run that SQL manually in Snowsight or through `snow sql`. This is useful when a user wants to review or adapt the DDL. The image must still exist in a Snowflake image repository before the service can start; use `RUSTICE_SKIP_IMAGE_PUSH=1` only after the image has already been pushed.
+2. Run [deploy.sql](deploy.sql). This is a pure SQL template with comments for every block and the same default object names as `deploy.sh`. Edit section `0. Parameters`, make sure the image already exists in the Snowflake image repository, then run it in Snowsight or with `snow sql`.
+3. Generate SQL with `RUSTICE_DRY_RUN=1` and run that SQL manually in Snowsight or through `snow sql`. This is useful when a user wants to review or adapt the exact DDL produced by the shell script. The image must still exist in a Snowflake image repository before the service can start; use `RUSTICE_SKIP_IMAGE_PUSH=1` only after the image has already been pushed.
 
 After deployment, Snowflake SQL is used to manage and inspect the SPCS service. SQL execution against Embucket/Rustice itself goes through the Snowflake-compatible REST endpoint exposed by the SPCS public ingress.
+
+## SQL-Only Deployment
+
+Use [deploy.sql](deploy.sql) when you want a worksheet-friendly deployment without running the shell script:
+
+```bash
+snow --config-file /path/to/config.toml \
+  sql -c snowflake \
+  --filename deploy/spcs/deploy.sql
+```
+
+Before running it:
+
+- Set `RUSTICE_HORIZON_DATABASE` to the Snowflake database that contains the Snowflake-managed Iceberg tables.
+- Set `RUSTICE_HORIZON_ROLE` to the role that should access those Iceberg tables through Horizon.
+- Push `embucket/rustice:<tag>` into the Snowflake image repository named by `RUSTICE_DB`, `RUSTICE_SCHEMA`, and `RUSTICE_IMAGE_REPOSITORY`.
+
+Pure SQL cannot pull, tag, or push Docker images and cannot write local client config files. The SQL template creates the image repository, but the image must be pushed separately before `CREATE SERVICE` can start the container.
+
+The final PAT block returns an ingress `token_secret` once. Treat it as a secret, then write it next to the `embucket-snow` config:
+
+```bash
+umask 077
+printf '%s' '<token_secret>' > embucket_spcs_token
+```
+
+Use the `ingress_url` from `SHOW ENDPOINTS IN SERVICE` as the `host` in the `embucket_spcs` connection profile.
 
 ## Common Options
 
@@ -344,7 +372,7 @@ SHOW ICEBERG TABLES IN SCHEMA RUSTICE_E2E.PUBLIC;
 DESCRIBE ICEBERG TABLE RUSTICE_E2E.PUBLIC.SMOKE;
 ```
 
-To run the deployment from Snowsight instead of Snowflake CLI, first push the image into the Snowflake image repository once. Then run the script with `RUSTICE_SKIP_IMAGE_PUSH=1 RUSTICE_DRY_RUN=1` and paste the emitted SQL into a worksheet.
+To run the deployment from Snowsight instead of Snowflake CLI, first push the image into the Snowflake image repository once. Then either run [deploy.sql](deploy.sql) in a worksheet or run the script with `RUSTICE_SKIP_IMAGE_PUSH=1 RUSTICE_DRY_RUN=1` and paste the emitted SQL into a worksheet.
 
 ## End-to-End Smoke Test
 
