@@ -312,6 +312,9 @@ CREATE COMPUTE POOL IF NOT EXISTS ${RUSTICE_COMPUTE_POOL}
 if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
   account_identifier="${RUSTICE_ACCOUNT_IDENTIFIER:-example-org-example-account}"
   current_region="${RUSTICE_CURRENT_REGION:-AWS_US_EAST_2}"
+  if [[ -z "${RUSTICE_ACCOUNT_IDENTIFIER:-}" ]]; then
+    log "Dry run uses placeholder account identifier '${account_identifier}'. Set RUSTICE_ACCOUNT_IDENTIFIER for account-specific SQL."
+  fi
 else
   account_identifier="${RUSTICE_ACCOUNT_IDENTIFIER:-$(snow_scalar "SELECT LOWER(REPLACE(CURRENT_ORGANIZATION_NAME() || '-' || CURRENT_ACCOUNT_NAME(), '_', '-'))")}"
   current_region="${RUSTICE_CURRENT_REGION:-$(snow_scalar "SELECT CURRENT_REGION()")}"

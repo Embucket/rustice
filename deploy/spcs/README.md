@@ -104,6 +104,15 @@ https://<org>-<account>.snowflakecomputing.com/polaris/api/catalog
 
 `RUSTICE_EGRESS_HOSTS` controls the External Access Integration allowlist. By default, the script includes the Horizon catalog host. On AWS accounts it also derives `s3.<region>.amazonaws.com` from `CURRENT_REGION()` for Snowflake-managed Iceberg metadata and Parquet reads. Override `RUSTICE_EGRESS_HOSTS` only when Horizon returns an object-store or redirect host that is not covered by the default allowlist.
 
+In `RUSTICE_DRY_RUN=1` mode, the script does not call Snowflake to resolve account metadata, so it uses placeholder values such as `example-org-example-account.snowflakecomputing.com`. To generate account-specific dry-run SQL, pass the resolved values explicitly:
+
+```bash
+RUSTICE_DRY_RUN=1 \
+RUSTICE_ACCOUNT_IDENTIFIER=<org>-<account> \
+RUSTICE_CURRENT_REGION=AWS_US_EAST_2 \
+./deploy/spcs/deploy.sh
+```
+
 ## Public Endpoint Authentication
 
 SPCS public ingress authenticates programmatic requests with the standard Snowflake token header:
