@@ -67,6 +67,33 @@ impl CachingTable {
     }
 
     #[allow(clippy::as_conversions)]
+    fn project_input_to_table_schema(
+        &self,
+        input: Arc<dyn ExecutionPlan>,
+    ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+        let table_schema = self.schema();
+        let input_schema = input.schema();
+
+        if table_schema.equivalent_names_and_types(&input_schema)
+            || !self
+                .normalized_schema()
+                .equivalent_names_and_types(&input_schema)
+        {
+            return Ok(input);
+        }
+
+        let mut projection_exprs = Vec::with_capacity(input_schema.fields().len());
+        for (idx, field) in input_schema.fields().iter().enumerate() {
+            let target_name = table_schema.field(idx).name().clone();
+            projection_exprs.push((
+                Arc::new(Column::new(field.name(), idx)) as Arc<dyn PhysicalExpr>,
+                target_name,
+            ));
+        }
+        Ok(Arc::new(ProjectionExec::try_new(projection_exprs, input)?))
+    }
+
+    #[allow(clippy::as_conversions)]
     async fn rewrite_case_sensitive_scan(
         &self,
         state: &dyn Session,
@@ -179,6 +206,7 @@ impl TableProvider for CachingTable {
         input: Arc<dyn ExecutionPlan>,
         insert_op: InsertOp,
     ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+        let input = self.project_input_to_table_schema(input)?;
         self.table.insert_into(state, input, insert_op).await
     }
 }
