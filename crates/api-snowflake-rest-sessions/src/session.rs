@@ -342,7 +342,19 @@ fn spcs_caller_audience_matches(claims: &SpcsCallerTokenClaims, headers: &Header
         return true;
     };
 
-    if claims.aud.as_ref().is_some_and(|aud| aud.contains(&host)) {
+    let normalized_host = host
+        .trim_end_matches('.')
+        .split_once(':')
+        .map_or(host.as_str(), |(name, _)| name);
+    let endpoint_id = normalized_host
+        .split_once('.')
+        .map_or(normalized_host, |(name, _)| name);
+
+    if claims
+        .aud
+        .as_ref()
+        .is_some_and(|aud| aud.contains(normalized_host) || aud.contains(endpoint_id))
+    {
         return true;
     }
 
@@ -415,7 +427,10 @@ pub fn cookies_from_header(headers: &HeaderMap, header_name: HeaderName) -> Hash
 
 #[cfg(test)]
 mod tests {
-    use crate::session::{SessionStore, extract_token_from_auth};
+    use crate::session::{
+        JwtAudience, SessionStore, SpcsCallerTokenClaims, extract_token_from_auth,
+        spcs_caller_audience_matches,
+    };
     use executor::models::QueryContext;
     use executor::service::ExecutionService;
     use executor::service::make_test_execution_svc;
@@ -436,6 +451,24 @@ mod tests {
         );
 
         assert_eq!(extract_token_from_auth(&headers), Some(token.to_string()));
+    }
+
+    #[test]
+    fn accepts_spcs_endpoint_id_as_caller_token_audience() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::HOST,
+            HeaderValue::from_static("igxz2e-iwuwgvk-lv71752.snowflakecomputing.app"),
+        );
+        let claims = SpcsCallerTokenClaims {
+            token_type: Some("SCT".to_string()),
+            aud: Some(JwtAudience::One("igxz2e-iwuwgvk-lv71752".to_string())),
+            iss: Some("snowflake-test".to_string()),
+            call_context: Some("CALLER".to_string()),
+            sub: Some("81161852".to_string()),
+        };
+
+        assert!(spcs_caller_audience_matches(&claims, &headers));
     }
 
     #[tokio::test]
