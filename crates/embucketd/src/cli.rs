@@ -137,7 +137,7 @@ pub struct CliOpts {
         long,
         env = "AUTH_TRUST_SPCS_INGRESS",
         default_value = "false",
-        help = "Trust Snowflake SPCS ingress caller context on login instead of checking demo credentials"
+        help = "Trust Snowflake SPCS ingress caller context for Snowflake-compatible REST sessions"
     )]
     pub auth_trust_spcs_ingress: bool,
 

@@ -1,4 +1,4 @@
-use super::handlers::{abort, login, query, session};
+use super::handlers::{abort, heartbeat, login, query, session};
 use super::layer::require_auth;
 use super::state::AppState;
 use api_snowflake_rest_sessions::layer::Host;
@@ -12,6 +12,7 @@ use tower_http::decompression::RequestDecompressionLayer;
 pub fn create_auth_router() -> Router<AppState> {
     Router::new()
         .route("/session/v1/login-request", post(login))
+        .route("/session/heartbeat", post(heartbeat))
         .route("/session", post(session))
 }
 

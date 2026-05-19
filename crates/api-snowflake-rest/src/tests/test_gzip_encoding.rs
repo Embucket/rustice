@@ -10,9 +10,11 @@ mod tests {
     use axum::http;
     use flate2::Compression;
     use flate2::write::GzEncoder;
+    use jsonwebtoken::{EncodingKey, Header, encode};
     use reqwest::Method;
     use reqwest::header::AUTHORIZATION;
     use serde::Serialize;
+    use serde_json::json;
     use std::collections::HashMap;
     use std::io::Write;
     use uuid::Uuid;
@@ -134,7 +136,7 @@ mod tests {
         let rest_cfg = rest_default_cfg("json").with_trust_spcs_ingress(true);
         let addr = run_test_rest_api_server(Some(rest_cfg), None).await;
         let client = reqwest::Client::new();
-        let login_url = format!("http://{addr}/session/v1/login-request");
+        let login_url = format!("http://127.0.0.1:{}/session/v1/login-request", addr.port());
 
         let login_request = LoginRequestBody {
             data: LoginRequestData {
@@ -174,7 +176,9 @@ mod tests {
         let rest_cfg = rest_default_cfg("json").with_trust_spcs_ingress(true);
         let addr = run_test_rest_api_server(Some(rest_cfg), None).await;
         let client = reqwest::Client::new();
-        let query_url = format!("http://{addr}/queries/v1/query-request");
+        let host = format!("127.0.0.1:{}", addr.port());
+        let query_url = format!("http://{host}/queries/v1/query-request");
+        let caller_token = make_spcs_caller_token(&host);
 
         let query_request = QueryRequestBody {
             sql_text: "SELECT 1;".to_string(),
@@ -191,16 +195,35 @@ mod tests {
             .header(AUTHORIZATION, "Snowflake Token=\"snowflake.ingress.token\"")
             .header("Sf-Context-Current-User", "SNOWFLAKE_USER")
             .header("Sf-Context-Current-Account", "SNOWFLAKE_ACCOUNT")
-            .header("Sf-Context-Current-User-Token", "caller-token")
+            .header("Sf-Context-Current-User-Token", caller_token)
             .body(serde_json::to_string(&query_request).unwrap())
             .send()
             .await
             .unwrap();
 
-        assert_eq!(http::StatusCode::OK, res.status());
-        let query_response: JsonResponse = res.json().await.unwrap();
+        let status = res.status();
+        let body = res.text().await.unwrap();
+        assert_eq!(http::StatusCode::OK, status, "{body}");
+        let query_response: JsonResponse = serde_json::from_str(&body).unwrap();
         assert!(query_response.success);
         assert!(query_response.data.is_some());
+    }
+
+    fn make_spcs_caller_token(audience: &str) -> String {
+        let claims = json!({
+            "type": "SCT",
+            "aud": audience,
+            "iss": "snowflake-test",
+            "callContext": "CALLER",
+            "sub": "SNOWFLAKE_USER",
+            "exp": time::OffsetDateTime::now_utc().unix_timestamp() + 120,
+        });
+        encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(b"test"),
+        )
+        .unwrap()
     }
 
     fn make_bytes_body<T: ?Sized + Serialize>(request: &T) -> Bytes {

@@ -124,3 +124,23 @@ pub async fn session(
 
     Ok(Json(serde_json::value::Value::Null))
 }
+
+#[tracing::instrument(
+    name = "api_snowflake_rest::heartbeat",
+    level = "debug",
+    skip(_state),
+    fields(session_id = %tokenized_session.session_id()),
+    err,
+    ret(level = tracing::Level::TRACE)
+)]
+pub async fn heartbeat(
+    tokenized_session: TokenizedSession,
+    State(_state): State<AppState>,
+) -> Result<Json<serde_json::value::Value>> {
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "code": null,
+        "message": null,
+        "data": null,
+    })))
+}

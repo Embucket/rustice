@@ -149,6 +149,8 @@ The deploy script also creates an ingress-only service user/PAT by default with 
 
 `RUSTICE_GENERATE_CLIENT_CONFIG=1` writes `deploy/spcs/generated/config.toml` with an `embucket_spcs` profile that points at the public ingress URL. The patched `embucket-snow` CLI automatically reads `embucket_spcs_token` next to that generated config, so no extra environment variable is needed for the standard smoke command. Set `RUSTICE_GENERATE_CLIENT_CONFIG=0` when client config is managed outside the deploy script.
 
+If your environment uses short-lived OAuth tokens instead of the generated PAT file, set `EMBUCKET_SPCS_TOKEN_COMMAND=/path/to/get-spcs-token` when running `embucket-snow`. The command is executed without a shell and may return either a raw token or a full `Snowflake Token="..."` header value.
+
 The service uses a public SPCS endpoint for the Snowflake-compatible ingress. Snowflake does not support service auto-suspend for public endpoints, so `RUSTICE_AUTO_SUSPEND_SECS` must be `0`.
 
 `RUSTICE_CATALOG_URL` defaults to the Snowflake Horizon Catalog endpoint resolved from the active Snowflake CLI connection:
@@ -182,26 +184,16 @@ SPCS public ingress authenticates programmatic requests with the standard Snowfl
 Authorization: Snowflake Token="<pat-or-oauth-token>"
 ```
 
-Snowflake's ingress proxy consumes that header and does not forward it to the container when it contains a Snowflake token. Embucket/Rustice therefore accepts its own session token through a separate header when running behind SPCS:
+Snowflake's ingress proxy validates that token before the request reaches the container. With the default deploy setting `AUTH_TRUST_SPCS_INGRESS=true`, Rustice treats successful ingress as the client authentication boundary and derives its internal session from Snowflake's caller context headers:
 
-```http
-X-Embucket-Authorization: Snowflake Token="<embucket-session-token>"
-```
+- `Sf-Context-Current-User-Token` when Snowflake provides it. Rustice structurally validates the SCT claims (`type`, `exp`, `aud`, `iss`, `callContext`, `sub`) and uses stable claims from that token for the session identity.
+- `Sf-Context-Current-Account` plus `Sf-Context-Current-User` as the fallback session identity when the SCT header is not present.
 
-The login request still goes to `/session/v1/login-request` through the SPCS endpoint with only the Snowflake `Authorization` header. The returned Embucket/Rustice `data.token` is then sent in `X-Embucket-Authorization` for `/queries/v1/query-request`, while the Snowflake `Authorization` header continues to authorize access through SPCS ingress.
+The Snowflake-compatible `/session/v1/login-request` still returns `data.token`, but in SPCS mode that value is only an opaque server-side session id. Clients keep sending the Snowflake ingress token in the standard `Authorization` header on login, query, and result requests. No `X-Embucket-Authorization` header is required.
 
-With the default SPCS deploy settings, Rustice treats the login request as a session bootstrap after Snowflake ingress authentication has already succeeded. The password field in the Snowflake-compatible login payload is ignored in this mode, and the Snowflake caller user is recorded from `Sf-Context-Current-User`.
+The password field in the Snowflake-compatible login payload is ignored in this mode, and the Snowflake caller user is recorded from `Sf-Context-Current-User`. `AUTH_TRUST_SPCS_INGRESS=true` must only be used behind Snowflake SPCS public ingress; do not expose a service with this setting directly on an untrusted network, because caller context headers can be forged outside Snowflake ingress.
 
-Rustice can also run experimentally without `X-Embucket-Authorization` when `AUTH_TRUST_SPCS_INGRESS=true`. In that path, query requests are accepted if Snowflake ingress has injected `Sf-Context-Current-User`; Rustice derives its internal session id from `Sf-Context-Current-User-Token` when present and falls back to the Snowflake account/user headers otherwise. This keeps the normal Snowflake `Authorization` header dedicated to SPCS ingress, but it means session state is tied to Snowflake ingress identity rather than an explicit Embucket session token. Validate `USE`, `ALTER SESSION`, dbt concurrency, and retry behavior before relying on this mode for production workloads.
-
-With `embucket-snow`, disable the extra Embucket session header for this experiment:
-
-```bash
-EMBUCKET_SPCS_FORWARD_SESSION_TOKEN=0 \
-embucket-snow --config-file deploy/spcs/generated/config.toml \
-  sql -c embucket_spcs \
-  -q "SELECT * FROM embucket.public.smoke"
-```
+Rustice server-side sessions use a 4 hour sliding inactivity window. `/session/heartbeat` refreshes that window, matching the way Snowflake-compatible drivers keep active sessions alive.
 
 When using PATs for programmatic SPCS ingress access, Snowflake requires the PAT user to have a network policy. Browser/OAuth access can be used instead for interactive checks.
 
@@ -222,19 +214,16 @@ The returned token secret is written to the generated token file instead of bein
 
 Embucket/Rustice exposes the same Snowflake-compatible REST flow that the Snowflake CLI/connector uses:
 
-1. `/session/v1/login-request` creates an Embucket/Rustice session and returns `data.token`.
-2. `/queries/v1/query-request` executes SQL with that session token.
+1. `/session/v1/login-request` creates an Embucket/Rustice server-side session and returns `data.token`.
+2. `/queries/v1/query-request` executes SQL in that session.
 3. `/queries/{query_id}/result` fetches async result chunks when needed.
 
-Behind SPCS public ingress, the client must also authenticate to Snowflake ingress on every request. A Snowflake-compatible CLI or connector can query the SPCS endpoint if it is configured to:
+Behind SPCS public ingress, the client must authenticate to Snowflake ingress on every request. A Snowflake-compatible CLI or connector can query the SPCS endpoint if it is configured to:
 
 - point the Snowflake host/account URL at the SPCS public endpoint;
-- send `Authorization: Snowflake Token="<pat-or-oauth-token>"` for SPCS ingress;
-- send the Embucket/Rustice session token from `login-request` as `X-Embucket-Authorization: Snowflake Token="<embucket-session-token>"` on query/result requests.
+- keep `Authorization: Snowflake Token="<pat-or-oauth-token>"` on every request for SPCS ingress.
 
-An unmodified Snowflake CLI may work against local Embucket/Rustice, but it is not enough for SPCS public ingress if it can only use the `Authorization` header for the Embucket/Rustice session token. Snowflake ingress consumes that header before the request reaches the container, so the SPCS path needs the extra `X-Embucket-Authorization` header support in the client/connector.
-
-For normal user workflows we should publish a patched Snowflake-compatible CLI/connector package, likely in a separate repository, that can be installed with `pip` or `pipx`. That package should preserve the usual Snowflake CLI/connector UX while adding SPCS ingress authentication and `X-Embucket-Authorization` forwarding.
+The `embucket-snow` wrapper preserves the normal Snowflake CLI UX while keeping the Snowflake ingress token in `Authorization`. It automatically reads `embucket_spcs_token` next to the generated `config.toml`, which lets the deploy script create a ready-to-run profile without storing the token in the config file.
 
 With the generated deploy output, the user-facing command is:
 

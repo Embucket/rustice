@@ -5,7 +5,7 @@ use api_snowflake_rest_sessions::helpers::{
 };
 use api_snowflake_rest_sessions::layer::Host;
 use api_snowflake_rest_sessions::session::{
-    extract_token_from_auth, extract_token_from_embucket_auth, spcs_ingress_session_from_headers,
+    extract_token_from_auth, spcs_ingress_session_from_headers,
 };
 use axum::extract::{Request, State};
 use axum::middleware::Next;
@@ -32,7 +32,6 @@ pub async fn require_auth(
     }
 
     if state.config.auth.trust_spcs_ingress
-        && extract_token_from_embucket_auth(req.headers()).is_none()
         && let Some(session) = spcs_ingress_session_from_headers(req.headers())
     {
         let session_id = session.session_id().to_string();
@@ -42,9 +41,7 @@ pub async fn require_auth(
         return Ok(next.run(req).await);
     }
 
-    let Some(token) = extract_token_from_embucket_auth(req.headers())
-        .or_else(|| extract_token_from_auth(req.headers()))
-    else {
+    let Some(token) = extract_token_from_auth(req.headers()) else {
         return error::MissingAuthTokenSnafu.fail()?;
     };
 

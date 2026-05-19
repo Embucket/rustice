@@ -8,6 +8,7 @@ use executor::{SessionMetadata, SessionMetadataAttr};
 use http::header::COOKIE;
 use http::request::Parts;
 use http::{HeaderMap, HeaderName};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use snafu::{OptionExt, ResultExt};
@@ -17,12 +18,11 @@ use std::{collections::HashMap, sync::Arc};
 use uuid::Uuid;
 
 pub const SESSION_ID_COOKIE_NAME: &str = "session_id";
-pub const EMBUCKET_AUTHORIZATION_HEADER: &str = "x-embucket-authorization";
 pub const SPCS_CURRENT_USER_HEADER: &str = "sf-context-current-user";
 pub const SPCS_CURRENT_ACCOUNT_HEADER: &str = "sf-context-current-account";
 pub const SPCS_CURRENT_USER_TOKEN_HEADER: &str = "sf-context-current-user-token";
 
-pub const SESSION_EXPIRATION_SECONDS: u64 = 60;
+pub const SESSION_EXPIRATION_SECONDS: u64 = 4 * 60 * 60;
 
 #[derive(Clone)]
 pub struct SessionStore {
@@ -107,42 +107,28 @@ where
         //     .context(session_error::ExtensionRejectionSnafu)?;
         // tracing::info!("Host '{host}' extracted from TokenizedSession");
 
-        let spcs_ingress_session = || spcs_ingress_session_from_headers(&req.headers);
+        let (session, located_at) = if state.trust_spcs_ingress()
+            && let Some(session) = spcs_ingress_session_from_headers(&req.headers)
+        {
+            (session, "spcs ingress headers")
+        } else if let Some(token) = extract_token_from_auth(&req.headers) {
+            // host is require to check token audience claim
+            let host = req.headers.get("host");
+            let host = host.and_then(|host| host.to_str().ok());
+            let host = host.context(session_error::MissingHostSnafu)?;
 
-        let (session, located_at) =
-            if let Some(token) = extract_token_from_embucket_auth(&req.headers) {
-                // host is require to check token audience claim
-                let host = req.headers.get("host");
-                let host = host.and_then(|host| host.to_str().ok());
-                let host = host.context(session_error::MissingHostSnafu)?;
+            let jwt_secret = state.jwt_secret();
+            let jwt_claims = get_claims_validate_jwt_token(&token, host, jwt_secret)
+                .context(BadAuthTokenSnafu)?;
 
-                let jwt_secret = state.jwt_secret();
-                let jwt_claims = get_claims_validate_jwt_token(&token, host, jwt_secret)
-                    .context(BadAuthTokenSnafu)?;
-
-                (jwt_claims.session, "auth header")
-            } else if state.trust_spcs_ingress()
-                && let Some(session) = spcs_ingress_session()
-            {
-                (session, "spcs ingress headers")
-            } else if let Some(token) = extract_token_from_auth(&req.headers) {
-                // host is require to check token audience claim
-                let host = req.headers.get("host");
-                let host = host.and_then(|host| host.to_str().ok());
-                let host = host.context(session_error::MissingHostSnafu)?;
-
-                let jwt_secret = state.jwt_secret();
-                let jwt_claims = get_claims_validate_jwt_token(&token, host, jwt_secret)
-                    .context(BadAuthTokenSnafu)?;
-
-                (jwt_claims.session, "auth header")
-            } else {
-                let session = req
-                    .extensions
-                    .get::<Self>()
-                    .context(session_error::MissingAuthTokenSnafu)?;
-                (session.clone(), "extensions")
-            };
+            (jwt_claims.session, "auth header")
+        } else {
+            let session = req
+                .extensions
+                .get::<Self>()
+                .context(session_error::MissingAuthTokenSnafu)?;
+            (session.clone(), "extensions")
+        };
 
         // Record the result as part of the current span.
         tracing::Span::current()
@@ -194,18 +180,6 @@ pub fn extract_token_from_auth(headers: &HeaderMap) -> Option<String> {
     headers
         .get("authorization")
         .and_then(extract_token_from_header_value)
-        .or_else(|| {
-            headers
-                .get(EMBUCKET_AUTHORIZATION_HEADER)
-                .and_then(extract_token_from_header_value)
-        })
-}
-
-#[must_use]
-pub fn extract_token_from_embucket_auth(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get(EMBUCKET_AUTHORIZATION_HEADER)
-        .and_then(extract_token_from_header_value)
 }
 
 fn extract_token_from_header_value(value: &http::HeaderValue) -> Option<String> {
@@ -224,13 +198,30 @@ fn extract_token_from_header_value(value: &http::HeaderValue) -> Option<String> 
 pub fn spcs_ingress_session_from_headers(headers: &HeaderMap) -> Option<TokenizedSession> {
     let user = header_value(headers, SPCS_CURRENT_USER_HEADER)?;
     let account = header_value(headers, SPCS_CURRENT_ACCOUNT_HEADER).unwrap_or_default();
-
-    let session_identity = header_value(headers, SPCS_CURRENT_USER_TOKEN_HEADER)
-        .map(|token| format!("token:{token}"))
-        .unwrap_or_else(|| format!("user:{account}:{user}"));
+    let user_token = header_value(headers, SPCS_CURRENT_USER_TOKEN_HEADER);
 
     let mut hasher = DefaultHasher::new();
-    session_identity.hash(&mut hasher);
+    if let Some(token) = user_token.as_deref() {
+        let claims = validated_spcs_caller_token_claims(token, &user, headers)?;
+        "sct".hash(&mut hasher);
+        claims.iss.as_deref().unwrap_or_default().hash(&mut hasher);
+        claims
+            .aud
+            .as_ref()
+            .map(JwtAudience::canonical)
+            .unwrap_or_default()
+            .hash(&mut hasher);
+        claims
+            .sub
+            .as_deref()
+            .unwrap_or(user.as_str())
+            .hash(&mut hasher);
+        account.hash(&mut hasher);
+    } else {
+        "user".hash(&mut hasher);
+        account.hash(&mut hasher);
+        user.hash(&mut hasher);
+    }
     let session_id = format!("spcs-{:016x}", hasher.finish());
 
     let mut metadata = SessionMetadata::default();
@@ -240,6 +231,141 @@ pub fn spcs_ingress_session_from_headers(headers: &HeaderMap) -> Option<Tokenize
     }
 
     Some(TokenizedSession::new(session_id).with_metadata(metadata))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SpcsCallerTokenClaims {
+    #[serde(rename = "type")]
+    token_type: Option<String>,
+    aud: Option<JwtAudience>,
+    iss: Option<String>,
+    call_context: Option<String>,
+    sub: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum JwtAudience {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl JwtAudience {
+    fn contains(&self, expected: &str) -> bool {
+        match self {
+            Self::One(aud) => aud == expected,
+            Self::Many(audiences) => audiences.iter().any(|aud| aud == expected),
+        }
+    }
+
+    fn canonical(&self) -> String {
+        match self {
+            Self::One(aud) => aud.clone(),
+            Self::Many(audiences) => {
+                let mut audiences = audiences.clone();
+                audiences.sort_unstable();
+                audiences.join(",")
+            }
+        }
+    }
+}
+
+fn validated_spcs_caller_token_claims(
+    token: &str,
+    user: &str,
+    headers: &HeaderMap,
+) -> Option<SpcsCallerTokenClaims> {
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.insecure_disable_signature_validation();
+    validation.validate_aud = false;
+    validation.set_required_spec_claims(&["exp", "aud", "iss", "sub"]);
+
+    let Ok(decoded) =
+        decode::<SpcsCallerTokenClaims>(token, &DecodingKey::from_secret(&[]), &validation)
+    else {
+        tracing::warn!("Rejecting SPCS caller token with invalid JWT structure or expiry");
+        return None;
+    };
+
+    let claims = decoded.claims;
+    if !spcs_caller_token_claims_match(&claims, user, headers) {
+        return None;
+    }
+
+    Some(claims)
+}
+
+fn spcs_caller_token_claims_match(
+    claims: &SpcsCallerTokenClaims,
+    user: &str,
+    headers: &HeaderMap,
+) -> bool {
+    if claims.token_type.as_deref() != Some("SCT") {
+        tracing::warn!("Rejecting SPCS caller token with non-SCT type");
+        return false;
+    }
+    if claims.call_context.as_deref() != Some("CALLER") {
+        tracing::warn!("Rejecting SPCS caller token with non-CALLER context");
+        return false;
+    }
+
+    spcs_caller_subject_matches(claims, user)
+        && spcs_caller_audience_matches(claims, headers)
+        && spcs_caller_issuer_matches(claims)
+}
+
+fn spcs_caller_subject_matches(claims: &SpcsCallerTokenClaims, user: &str) -> bool {
+    if claims
+        .sub
+        .as_deref()
+        .is_some_and(|sub| sub.eq_ignore_ascii_case(user))
+    {
+        return true;
+    }
+
+    tracing::warn!("Rejecting SPCS caller token with mismatched subject");
+    false
+}
+
+fn spcs_caller_audience_matches(claims: &SpcsCallerTokenClaims, headers: &HeaderMap) -> bool {
+    let Some(host) = header_value(headers, "host") else {
+        return true;
+    };
+
+    if claims.aud.as_ref().is_some_and(|aud| aud.contains(&host)) {
+        return true;
+    }
+
+    tracing::warn!("Rejecting SPCS caller token with mismatched audience");
+    false
+}
+
+fn spcs_caller_issuer_matches(claims: &SpcsCallerTokenClaims) -> bool {
+    let Some(expected_issuer) = std::env::var("SNOWFLAKE_HOST").ok() else {
+        return true;
+    };
+
+    if claims
+        .iss
+        .as_deref()
+        .is_some_and(|iss| issuer_matches(iss, &expected_issuer))
+    {
+        return true;
+    }
+
+    tracing::warn!("Rejecting SPCS caller token with mismatched issuer");
+    false
+}
+
+fn issuer_matches(issuer: &str, expected_host: &str) -> bool {
+    if issuer == expected_host {
+        return true;
+    }
+    let Some(without_scheme) = issuer.strip_prefix("https://") else {
+        return false;
+    };
+    without_scheme == expected_host || without_scheme.strip_suffix('/') == Some(expected_host)
 }
 
 fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -280,7 +406,7 @@ pub fn cookies_from_header(headers: &HeaderMap, header_name: HeaderName) -> Hash
 
 #[cfg(test)]
 mod tests {
-    use crate::session::{EMBUCKET_AUTHORIZATION_HEADER, SessionStore, extract_token_from_auth};
+    use crate::session::{SessionStore, extract_token_from_auth};
     use executor::models::QueryContext;
     use executor::service::ExecutionService;
     use executor::service::make_test_execution_svc;
@@ -297,34 +423,6 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
-            HeaderValue::from_static("Snowflake Token=\"11111111-1111-1111-1111-111111111111\""),
-        );
-
-        assert_eq!(extract_token_from_auth(&headers), Some(token.to_string()));
-    }
-
-    #[test]
-    fn extracts_snowflake_token_from_embucket_authorization_header() {
-        let token = "11111111-1111-1111-1111-111111111111";
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            EMBUCKET_AUTHORIZATION_HEADER,
-            HeaderValue::from_static("Snowflake Token=\"11111111-1111-1111-1111-111111111111\""),
-        );
-
-        assert_eq!(extract_token_from_auth(&headers), Some(token.to_string()));
-    }
-
-    #[test]
-    fn extracts_embucket_authorization_header_when_authorization_does_not_contain_session_token() {
-        let token = "11111111-1111-1111-1111-111111111111";
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer ingress-token"),
-        );
-        headers.insert(
-            EMBUCKET_AUTHORIZATION_HEADER,
             HeaderValue::from_static("Snowflake Token=\"11111111-1111-1111-1111-111111111111\""),
         );
 
