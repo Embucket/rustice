@@ -71,6 +71,9 @@ RUSTICE_CREATE_PAT_AUTH_POLICY=1
 RUSTICE_HORIZON_SCHEMAS=PUBLIC,public
 RUSTICE_HORIZON_TABLES=PUBLIC.SMOKE
 RUSTICE_HORIZON_EAGER_LOAD=0
+RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS=1
+RUSTICE_HORIZON_EXTERNAL_VOLUME=SNOWFLAKE_MANAGED
+RUSTICE_HORIZON_CATALOG=SNOWFLAKE
 RUSTICE_EGRESS_HOSTS=<optional-comma-separated-egress-hosts>
 RUSTICE_GRANT_TO_ROLE=ANALYST
 RUSTICE_AUTO_SUSPEND_SECS=0
@@ -87,6 +90,15 @@ Use `RUSTICE_HORIZON_AUTH=none` to deploy only the service shell without Horizon
 Use `RUSTICE_HORIZON_AUTH=bearer_token` or `oauth_token` if you already manage a Snowflake `SECRET` containing a token. In that case set `RUSTICE_HORIZON_SECRET=<db>.<schema>.<secret>`.
 
 By default, Rustice bootstraps the REST catalog lazily with `RUSTICE_HORIZON_SCHEMAS=PUBLIC,public` and `RUSTICE_HORIZON_EAGER_LOAD=0`. This avoids startup failures in Horizon environments that allow direct table access but restrict broad namespace/table listing. Set `RUSTICE_HORIZON_TABLES` to a comma-separated list such as `PUBLIC.SMOKE,ANALYTICS.ORDERS` when you need existing tables to be visible without eager listing. Set `RUSTICE_HORIZON_EAGER_LOAD=1` when the Horizon role is allowed to list all namespaces and tables during startup.
+
+By default, the script also configures Iceberg defaults for each schema listed in `RUSTICE_HORIZON_SCHEMAS`:
+
+```sql
+ALTER SCHEMA <horizon_database>.<schema> SET EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED';
+ALTER SCHEMA <horizon_database>.<schema> SET CATALOG = 'SNOWFLAKE';
+```
+
+This is needed for plain `CREATE TABLE` statements sent through Rustice to Horizon REST Catalog, because the REST create request does not carry Snowflake SQL clauses such as `EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED'`. Set `RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS=0` if those schema defaults are managed separately. For a custom external volume, set `RUSTICE_HORIZON_EXTERNAL_VOLUME=<volume_name>` and grant `USAGE` on that external volume to `RUSTICE_HORIZON_ROLE`.
 
 Snowflake requires service users to satisfy programmatic access token policy requirements before a PAT can be generated. The default `RUSTICE_CREATE_PAT_AUTH_POLICY=1` creates a user-scoped authentication policy with `NETWORK_POLICY_EVALUATION = ENFORCED_NOT_REQUIRED`. Set `RUSTICE_CREATE_PAT_AUTH_POLICY=0` if your account already enforces a suitable network or authentication policy for the service user.
 
@@ -299,6 +311,8 @@ First create a Snowflake-managed Iceberg table in the Horizon database that Rust
 ```sql
 CREATE DATABASE IF NOT EXISTS RUSTICE_E2E;
 CREATE SCHEMA IF NOT EXISTS RUSTICE_E2E.PUBLIC;
+ALTER SCHEMA RUSTICE_E2E.PUBLIC SET EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED';
+ALTER SCHEMA RUSTICE_E2E.PUBLIC SET CATALOG = 'SNOWFLAKE';
 
 CREATE OR REPLACE ICEBERG TABLE RUSTICE_E2E.PUBLIC.SMOKE (
   ID INT,
@@ -398,6 +412,13 @@ CREATE TABLE embucket.public.rustice_write_smoke (
 INSERT INTO embucket.public.rustice_write_smoke VALUES (2, 'written by rustice');
 SELECT * FROM embucket.public.rustice_write_smoke;
 DROP TABLE embucket.public.rustice_write_smoke;
+```
+
+To inspect a table created through Rustice from regular Snowflake SQL or Snowsight, query the underlying Horizon database and schema. Current Rustice REST create behavior preserves the lower-case table name, so quote the table identifier in Snowflake SQL:
+
+```sql
+SHOW ICEBERG TABLES LIKE 'rustice_write_smoke' IN SCHEMA RUSTICE_E2E.PUBLIC;
+SELECT * FROM RUSTICE_E2E.PUBLIC."rustice_write_smoke";
 ```
 
 Snowflake SQL can manage and inspect the SPCS service directly, but it does not speak the Snowflake REST session protocol that Rustice exposes. For SQL execution against Rustice itself, use the modified Snowflake-compatible client or connector pointed at the SPCS ingress endpoint.

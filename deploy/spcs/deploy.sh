@@ -41,6 +41,9 @@ RUSTICE_HORIZON_ROLE="${RUSTICE_HORIZON_ROLE:-}"
 RUSTICE_HORIZON_SCHEMAS="${RUSTICE_HORIZON_SCHEMAS:-PUBLIC,public}"
 RUSTICE_HORIZON_TABLES="${RUSTICE_HORIZON_TABLES:-}"
 RUSTICE_HORIZON_EAGER_LOAD="${RUSTICE_HORIZON_EAGER_LOAD:-0}"
+RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS="${RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS:-1}"
+RUSTICE_HORIZON_EXTERNAL_VOLUME="${RUSTICE_HORIZON_EXTERNAL_VOLUME:-SNOWFLAKE_MANAGED}"
+RUSTICE_HORIZON_CATALOG="${RUSTICE_HORIZON_CATALOG:-SNOWFLAKE}"
 RUSTICE_HORIZON_SERVICE_USER="${RUSTICE_HORIZON_SERVICE_USER:-RUSTICE_HORIZON_SVC}"
 RUSTICE_HORIZON_PAT_NAME="${RUSTICE_HORIZON_PAT_NAME:-RUSTICE_HORIZON_PAT}"
 RUSTICE_HORIZON_PAT_DAYS="${RUSTICE_HORIZON_PAT_DAYS:-15}"
@@ -73,6 +76,11 @@ Common options:
   RUSTICE_HORIZON_TABLES    Comma-separated schema.table names to bootstrap lazily.
   RUSTICE_HORIZON_EAGER_LOAD=1
                             Eagerly list Horizon namespaces/tables at startup.
+  RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS=0
+                            Skip setting Horizon schema EXTERNAL_VOLUME/CATALOG defaults.
+  RUSTICE_HORIZON_EXTERNAL_VOLUME
+                            Horizon CREATE TABLE external volume default. Default: SNOWFLAKE_MANAGED.
+  RUSTICE_HORIZON_CATALOG   Horizon CREATE TABLE catalog default. Default: SNOWFLAKE.
   RUSTICE_CREATE_PAT_AUTH_POLICY=0
                             Skip creating a service-user PAT authentication policy.
   RUSTICE_AUTO_SUSPEND_SECS Service auto suspend seconds. Must be 0 for public endpoints.
@@ -232,6 +240,13 @@ normalize_lower() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
 url_host() {
   local url="$1"
   url="${url#*://}"
@@ -262,6 +277,18 @@ require_ident RUSTICE_SERVICE "$RUSTICE_SERVICE"
 require_ident RUSTICE_EGRESS_RULE "$RUSTICE_EGRESS_RULE"
 require_ident RUSTICE_EAI "$RUSTICE_EAI"
 require_ident RUSTICE_HORIZON_DATABASE "$RUSTICE_HORIZON_DATABASE"
+
+case "$RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS" in
+  0|1)
+    ;;
+  *)
+    die "RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS must be 0 or 1"
+    ;;
+esac
+if [[ "$RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS" == "1" ]]; then
+  require_ident RUSTICE_HORIZON_EXTERNAL_VOLUME "$RUSTICE_HORIZON_EXTERNAL_VOLUME"
+  require_ident RUSTICE_HORIZON_CATALOG "$RUSTICE_HORIZON_CATALOG"
+fi
 
 [[ "$RUSTICE_AUTO_SUSPEND_SECS" =~ ^[0-9]+$ ]] || die "RUSTICE_AUTO_SUSPEND_SECS must be a non-negative integer"
 if (( RUSTICE_AUTO_SUSPEND_SECS != 0 )); then
@@ -332,8 +359,7 @@ egress_hosts="${RUSTICE_EGRESS_HOSTS:-$(default_egress_hosts "$catalog_host" "$c
 egress_values_sql=""
 IFS=',' read -r -a egress_host_array <<< "$egress_hosts"
 for host in "${egress_host_array[@]}"; do
-  host="${host#"${host%%[![:space:]]*}"}"
-  host="${host%"${host##*[![:space:]]}"}"
+  host="$(trim "$host")"
   [[ -n "$host" ]] || continue
   if [[ -n "$egress_values_sql" ]]; then
     egress_values_sql+=", "
@@ -356,6 +382,32 @@ CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION ${RUSTICE_EAI}
   ALLOWED_NETWORK_RULES = (${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_EGRESS_RULE})
   ENABLED = TRUE;
 "
+fi
+
+if [[ "$RUSTICE_HORIZON_AUTH" != "none" && "$RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS" == "1" ]]; then
+  horizon_schema_defaults_sql=""
+  seen_horizon_schema_defaults="|"
+  IFS=',' read -r -a horizon_schema_array <<< "$RUSTICE_HORIZON_SCHEMAS"
+  for schema in "${horizon_schema_array[@]}"; do
+    schema="$(trim "$schema")"
+    [[ -n "$schema" ]] || continue
+    require_ident RUSTICE_HORIZON_SCHEMAS "$schema"
+    schema_key="$(normalize_lower "$schema")"
+    if [[ "$seen_horizon_schema_defaults" == *"|${schema_key}|"* ]]; then
+      continue
+    fi
+    seen_horizon_schema_defaults+="${schema_key}|"
+    horizon_schema_defaults_sql+="
+ALTER SCHEMA IF EXISTS ${RUSTICE_HORIZON_DATABASE}.${schema}
+  SET EXTERNAL_VOLUME = $(sql_quote "$RUSTICE_HORIZON_EXTERNAL_VOLUME");
+ALTER SCHEMA IF EXISTS ${RUSTICE_HORIZON_DATABASE}.${schema}
+  SET CATALOG = $(sql_quote "$RUSTICE_HORIZON_CATALOG");
+"
+  done
+  if [[ -n "$horizon_schema_defaults_sql" ]]; then
+    log "Configuring Horizon schema Iceberg defaults"
+    run_snow_sql "$horizon_schema_defaults_sql"
+  fi
 fi
 
 if [[ "$RUSTICE_SKIP_IMAGE_PUSH" != "1" ]]; then
