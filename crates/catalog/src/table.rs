@@ -8,7 +8,7 @@ use datafusion::execution::SessionState;
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_expr::expressions::Column;
 use datafusion_common::tree_node::{Transformed, TreeNode};
-use datafusion_common::{Statistics, plan_err, project_schema};
+use datafusion_common::{SchemaExt, Statistics, plan_err, project_schema};
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::{Expr, LogicalPlan, TableProviderFilterPushDown, TableScan, TableType};
 use datafusion_physical_plan::ExecutionPlan;
