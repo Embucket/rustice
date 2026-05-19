@@ -71,7 +71,7 @@ RUSTICE_CREATE_PAT_AUTH_POLICY=1
 RUSTICE_HORIZON_SCHEMAS=PUBLIC,public
 RUSTICE_HORIZON_TABLES=PUBLIC.SMOKE
 RUSTICE_HORIZON_EAGER_LOAD=0
-RUSTICE_EGRESS_HOSTS=<org>-<account>.snowflakecomputing.com,s3.<region>.amazonaws.com
+RUSTICE_EGRESS_HOSTS=<optional-comma-separated-egress-hosts>
 RUSTICE_GRANT_TO_ROLE=ANALYST
 RUSTICE_AUTO_SUSPEND_SECS=0
 RUSTICE_BUILD_LOCAL=1
@@ -90,7 +90,19 @@ Snowflake requires service users to satisfy programmatic access token policy req
 
 The service uses a public SPCS endpoint for the Snowflake-compatible ingress. Snowflake does not support service auto-suspend for public endpoints, so `RUSTICE_AUTO_SUSPEND_SECS` must be `0`.
 
-`RUSTICE_EGRESS_HOSTS` controls the External Access Integration allowlist. Include the Snowflake/Horizon host and any object-store host vended by Horizon for table metadata and Parquet reads. For example, AWS-backed Snowflake-managed Iceberg tables may require `<org>-<account>.snowflakecomputing.com,s3.<region>.amazonaws.com`; if Snowflake redirects to an account-locator host, include that host too.
+`RUSTICE_CATALOG_URL` defaults to the Snowflake Horizon Catalog endpoint resolved from the active Snowflake CLI connection:
+
+```sql
+SELECT LOWER(REPLACE(CURRENT_ORGANIZATION_NAME() || '-' || CURRENT_ACCOUNT_NAME(), '_', '-'));
+```
+
+The default URL is:
+
+```text
+https://<org>-<account>.snowflakecomputing.com/polaris/api/catalog
+```
+
+`RUSTICE_EGRESS_HOSTS` controls the External Access Integration allowlist. By default, the script includes the Horizon catalog host. On AWS accounts it also derives `s3.<region>.amazonaws.com` from `CURRENT_REGION()` for Snowflake-managed Iceberg metadata and Parquet reads. Override `RUSTICE_EGRESS_HOSTS` only when Horizon returns an object-store or redirect host that is not covered by the default allowlist.
 
 ## Public Endpoint Authentication
 
@@ -125,6 +137,8 @@ Behind SPCS public ingress, the client must also authenticate to Snowflake ingre
 - send the Embucket/Rustice session token from `login-request` as `X-Embucket-Authorization: Snowflake Token="<embucket-session-token>"` on query/result requests.
 
 An unmodified Snowflake CLI may work against local Embucket/Rustice, but it is not enough for SPCS public ingress if it can only use the `Authorization` header for the Embucket/Rustice session token. Snowflake ingress consumes that header before the request reaches the container, so the SPCS path needs the extra `X-Embucket-Authorization` header support in the client/connector.
+
+For normal user workflows we should publish a patched Snowflake-compatible CLI/connector package, likely in a separate repository, that can be installed with `pip` or `pipx`. That package should preserve the usual Snowflake CLI/connector UX while adding SPCS ingress authentication and `X-Embucket-Authorization` forwarding.
 
 ## Result
 
@@ -220,7 +234,7 @@ DESCRIBE ICEBERG TABLE RUSTICE_E2E.PUBLIC.SMOKE;
 
 To run the deployment from Snowsight instead of Snowflake CLI, first push the image into the Snowflake image repository once. Then run the script with `RUSTICE_SKIP_IMAGE_PUSH=1 RUSTICE_DRY_RUN=1` and paste the emitted SQL into a worksheet.
 
-## Minimal Iceberg Smoke Test
+## End-to-End Smoke Test
 
 First create a Snowflake-managed Iceberg table in the Horizon database that Rustice will use as `ICEBERG_REST_PREFIX`:
 
@@ -267,11 +281,46 @@ RUSTICE_MAX_INSTANCES=1 \
 RUSTICE_AUTO_SUSPEND_SECS=0 \
 RUSTICE_HORIZON_SCHEMAS=PUBLIC,public \
 RUSTICE_HORIZON_TABLES=PUBLIC.SMOKE \
-RUSTICE_EGRESS_HOSTS=<org>-<account>.snowflakecomputing.com,s3.<region>.amazonaws.com \
 ./deploy/spcs/deploy.sh
 ```
 
-After the service reaches `READY`, run this SQL through the Rustice/Snowflake-compatible endpoint. The SQL catalog name remains `embucket`; `RUSTICE_E2E` is the underlying Horizon prefix:
+If your Horizon/object-store host is not covered by the automatically generated EAI allowlist, rerun with an explicit override:
+
+```bash
+RUSTICE_EGRESS_HOSTS=<catalog-host>,<object-store-host> ./deploy/spcs/deploy.sh
+```
+
+Verify the baseline Snowflake-managed Iceberg table through regular Snowflake SQL. This query uses Snowflake compute and validates that the source table exists and is readable by the active Snowflake role:
+
+```bash
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SELECT * FROM RUSTICE_E2E.PUBLIC.SMOKE"
+```
+
+Expected result:
+
+```text
++----------+
+| ID | MSG |
+|----+-----|
+| 1  | ok  |
++----------+
+```
+
+Verify that the SPCS service is running:
+
+```bash
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SHOW SERVICES LIKE 'RUSTICE_SERVICE' IN SCHEMA RUSTICE_APP.PUBLIC"
+
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SHOW SERVICE CONTAINERS IN SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE"
+
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SHOW ENDPOINTS IN SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE"
+```
+
+After the service reaches `READY`, run this SQL through the Embucket/Rustice Snowflake-compatible endpoint with the patched client/connector. The SQL catalog name remains `embucket`; `RUSTICE_E2E` is the underlying Horizon prefix:
 
 ```sql
 SHOW DATABASES;

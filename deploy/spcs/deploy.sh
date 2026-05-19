@@ -232,6 +232,28 @@ normalize_lower() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
+url_host() {
+  local url="$1"
+  url="${url#*://}"
+  url="${url%%/*}"
+  url="${url%%:*}"
+  printf '%s' "$url"
+}
+
+default_egress_hosts() {
+  local catalog_host="$1"
+  local current_region="$2"
+  local hosts="$catalog_host"
+
+  if [[ "$current_region" == AWS_* ]]; then
+    local aws_region
+    aws_region="$(printf '%s' "${current_region#AWS_}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+    hosts+=",s3.${aws_region}.amazonaws.com"
+  fi
+
+  printf '%s' "$hosts"
+}
+
 require_ident RUSTICE_DB "$RUSTICE_DB"
 require_ident RUSTICE_SCHEMA "$RUSTICE_SCHEMA"
 require_ident RUSTICE_COMPUTE_POOL "$RUSTICE_COMPUTE_POOL"
@@ -289,8 +311,10 @@ CREATE COMPUTE POOL IF NOT EXISTS ${RUSTICE_COMPUTE_POOL}
 
 if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
   account_identifier="${RUSTICE_ACCOUNT_IDENTIFIER:-example-org-example-account}"
+  current_region="${RUSTICE_CURRENT_REGION:-AWS_US_EAST_2}"
 else
   account_identifier="${RUSTICE_ACCOUNT_IDENTIFIER:-$(snow_scalar "SELECT LOWER(REPLACE(CURRENT_ORGANIZATION_NAME() || '-' || CURRENT_ACCOUNT_NAME(), '_', '-'))")}"
+  current_region="${RUSTICE_CURRENT_REGION:-$(snow_scalar "SELECT CURRENT_REGION()")}"
 fi
 
 [[ -n "$account_identifier" ]] || die "Could not resolve Snowflake account identifier"
@@ -299,8 +323,9 @@ registry_host="${account_identifier}.registry.snowflakecomputing.com"
 repo_url="${registry_host}/$(normalize_lower "$RUSTICE_DB")/$(normalize_lower "$RUSTICE_SCHEMA")/$(normalize_lower "$RUSTICE_IMAGE_REPOSITORY")"
 service_image="${repo_url}/rustice:${RUSTICE_IMAGE_TAG}"
 catalog_url="${RUSTICE_CATALOG_URL:-https://${account_identifier}.snowflakecomputing.com/polaris/api/catalog}"
+catalog_host="$(url_host "$catalog_url")"
 
-egress_hosts="${RUSTICE_EGRESS_HOSTS:-${account_identifier}.snowflakecomputing.com}"
+egress_hosts="${RUSTICE_EGRESS_HOSTS:-$(default_egress_hosts "$catalog_host" "$current_region")}"
 egress_values_sql=""
 IFS=',' read -r -a egress_host_array <<< "$egress_hosts"
 for host in "${egress_host_array[@]}"; do
@@ -315,6 +340,8 @@ done
 
 if [[ "$RUSTICE_HORIZON_AUTH" != "none" ]]; then
   [[ -n "$egress_values_sql" ]] || die "RUSTICE_EGRESS_HOSTS resolved to an empty list"
+  log "Horizon catalog URL: ${catalog_url}"
+  log "External access hosts: ${egress_hosts}"
   log "Creating External Access Integration for Horizon"
   run_snow_sql "
 CREATE OR REPLACE NETWORK RULE ${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_EGRESS_RULE}
