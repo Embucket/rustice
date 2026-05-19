@@ -6,7 +6,8 @@ use iceberg_rest_catalog::apis::{
 use iceberg_rust::error::Error as IcebergError;
 use snafu::ResultExt;
 use std::env;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 const ICEBERG_REST_PREFIX_ENV: &str = "ICEBERG_REST_PREFIX";
 const ICEBERG_REST_BEARER_TOKEN_ENV: &str = "ICEBERG_REST_BEARER_TOKEN";
@@ -18,6 +19,14 @@ const ICEBERG_REST_CLIENT_ID_ENV: &str = "ICEBERG_REST_CLIENT_ID";
 const ICEBERG_REST_EAGER_LOAD_ENV: &str = "ICEBERG_REST_EAGER_LOAD";
 const ICEBERG_REST_SCHEMAS_ENV: &str = "ICEBERG_REST_SCHEMAS";
 const ICEBERG_REST_TABLES_ENV: &str = "ICEBERG_REST_TABLES";
+const DEFAULT_TOKEN_TTL_SECS: u64 = 300;
+const TOKEN_REFRESH_PERCENT: u64 = 70;
+
+#[derive(Clone)]
+struct CachedOAuthToken {
+    token: String,
+    refresh_before: SystemTime,
+}
 
 pub fn rest_catalog_prefix(default_catalog: &str) -> String {
     env_non_empty(ICEBERG_REST_PREFIX_ENV).unwrap_or_else(|| default_catalog.into())
@@ -87,23 +96,11 @@ pub async fn configure_rest_catalog_auth(configuration: &mut Configuration) -> R
         .context(IcebergSnafu)?;
 
     let client_id = env_non_empty(ICEBERG_REST_CLIENT_ID_ENV);
-    let token = o_auth2_api_api::get_token(
-        configuration,
-        Some("client_credentials"),
-        Some(&scope),
-        client_id.as_deref(),
-        Some(&credential),
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .map_err(|error| IcebergError::External(Box::new(error)))
-    .context(IcebergSnafu)?;
-
-    configuration.bearer_access_token = Some(token.access_token);
+    configuration.oauth_access_token = Some(
+        refreshing_oauth_token_provider(configuration, credential, scope, client_id)
+            .await
+            .context(IcebergSnafu)?,
+    );
     Ok(())
 }
 
@@ -116,5 +113,106 @@ fn static_oauth_token_provider(token: String) -> OAuthAccessTokenProvider {
     Arc::new(move || {
         let token = Arc::clone(&token);
         Box::pin(async move { Ok((*token).clone()) })
+    })
+}
+
+async fn refreshing_oauth_token_provider(
+    configuration: &Configuration,
+    credential: String,
+    scope: String,
+    client_id: Option<String>,
+) -> std::result::Result<OAuthAccessTokenProvider, IcebergError> {
+    let mut token_configuration = configuration.clone();
+    token_configuration.bearer_access_token = None;
+    token_configuration.oauth_access_token = None;
+
+    let initial_token = fetch_oauth_token(
+        &token_configuration,
+        &credential,
+        &scope,
+        client_id.as_deref(),
+    )
+    .await?;
+    let cached_token = Arc::new(Mutex::new(Some(initial_token)));
+    let token_configuration = Arc::new(token_configuration);
+    let credential = Arc::new(credential);
+    let scope = Arc::new(scope);
+    let client_id = Arc::new(client_id);
+
+    Ok(Arc::new(move || {
+        let cached_token = Arc::clone(&cached_token);
+        let token_configuration = Arc::clone(&token_configuration);
+        let credential = Arc::clone(&credential);
+        let scope = Arc::clone(&scope);
+        let client_id = Arc::clone(&client_id);
+
+        Box::pin(async move {
+            {
+                let cached = cached_token.lock().map_err(|error| {
+                    IcebergError::InvalidFormat(format!(
+                        "Horizon token cache lock poisoned: {error}"
+                    ))
+                })?;
+                if let Some(token) = cached.as_ref()
+                    && token.refresh_before > SystemTime::now()
+                {
+                    return Ok(token.token.clone());
+                }
+            }
+
+            let fresh_token = fetch_oauth_token(
+                &token_configuration,
+                &credential,
+                &scope,
+                client_id.as_ref().as_deref(),
+            )
+            .await?;
+            let token = fresh_token.token.clone();
+            let mut cached = cached_token.lock().map_err(|error| {
+                IcebergError::InvalidFormat(format!("Horizon token cache lock poisoned: {error}"))
+            })?;
+            *cached = Some(fresh_token);
+            Ok(token)
+        })
+    }))
+}
+
+async fn fetch_oauth_token(
+    configuration: &Configuration,
+    credential: &str,
+    scope: &str,
+    client_id: Option<&str>,
+) -> std::result::Result<CachedOAuthToken, IcebergError> {
+    let token = o_auth2_api_api::get_token(
+        configuration,
+        Some("client_credentials"),
+        Some(scope),
+        client_id,
+        Some(credential),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .map_err(|error| IcebergError::External(Box::new(error)))?;
+
+    let ttl_secs = token
+        .expires_in
+        .and_then(|expires_in| u64::try_from(expires_in).ok())
+        .filter(|expires_in| *expires_in > 0)
+        .unwrap_or(DEFAULT_TOKEN_TTL_SECS);
+    let refresh_after_secs = ttl_secs
+        .saturating_mul(TOKEN_REFRESH_PERCENT)
+        .saturating_div(100)
+        .max(1);
+    let refresh_before = SystemTime::now()
+        .checked_add(Duration::from_secs(refresh_after_secs))
+        .unwrap_or_else(SystemTime::now);
+
+    Ok(CachedOAuthToken {
+        token: token.access_token,
+        refresh_before,
     })
 }

@@ -301,10 +301,7 @@ Snowflake SQL can manage and inspect the SPCS service directly, but it does not 
 - The PAT is role-restricted and stored as a Snowflake `SECRET`; it is not written to the repo or printed by the deploy script.
 - The SPCS service is created with `executeAsCaller: true`, so Snowflake ingress passes caller context headers to the container.
 - Horizon Catalog calls are still made with the service user's role. Grant that role only the Iceberg table privileges this service is allowed to exercise.
-
-## Current Limitation
-
-The current Rustice Horizon integration performs credential exchange at service startup. For long-running production services, add token refresh or restart/rotate the service before the exchanged Horizon token expires.
+- Horizon access tokens exchanged from the service-user credential are cached and refreshed automatically before expiration.
 
 References:
 
