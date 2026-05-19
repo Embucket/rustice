@@ -316,16 +316,25 @@ fn spcs_caller_token_claims_match(
 }
 
 fn spcs_caller_subject_matches(claims: &SpcsCallerTokenClaims, user: &str) -> bool {
-    if claims
+    let Some(sub) = claims
         .sub
         .as_deref()
-        .is_some_and(|sub| sub.eq_ignore_ascii_case(user))
-    {
-        return true;
+        .map(str::trim)
+        .filter(|sub| !sub.is_empty())
+    else {
+        tracing::warn!("Rejecting SPCS caller token without subject");
+        return false;
+    };
+
+    if !sub.eq_ignore_ascii_case(user) {
+        tracing::debug!(
+            sub,
+            user,
+            "SPCS caller token subject differs from current user header; treating subject as Snowflake principal id"
+        );
     }
 
-    tracing::warn!("Rejecting SPCS caller token with mismatched subject");
-    false
+    true
 }
 
 fn spcs_caller_audience_matches(claims: &SpcsCallerTokenClaims, headers: &HeaderMap) -> bool {

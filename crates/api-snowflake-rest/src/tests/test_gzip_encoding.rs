@@ -215,7 +215,7 @@ mod tests {
             "aud": audience,
             "iss": "snowflake-test",
             "callContext": "CALLER",
-            "sub": "SNOWFLAKE_USER",
+            "sub": "20777405349",
             "exp": time::OffsetDateTime::now_utc().unix_timestamp() + 120,
         });
         encode(
