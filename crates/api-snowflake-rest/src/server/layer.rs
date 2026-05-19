@@ -4,7 +4,9 @@ use api_snowflake_rest_sessions::helpers::{
     ensure_jwt_secret_is_valid, get_claims_validate_jwt_token,
 };
 use api_snowflake_rest_sessions::layer::Host;
-use api_snowflake_rest_sessions::session::extract_token_from_auth;
+use api_snowflake_rest_sessions::session::{
+    extract_token_from_auth, extract_token_from_embucket_auth, spcs_ingress_session_from_headers,
+};
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
@@ -29,7 +31,20 @@ pub async fn require_auth(
         return Ok(next.run(req).await);
     }
 
-    let Some(token) = extract_token_from_auth(req.headers()) else {
+    if state.config.auth.trust_spcs_ingress
+        && extract_token_from_embucket_auth(req.headers()).is_none()
+        && let Some(session) = spcs_ingress_session_from_headers(req.headers())
+    {
+        let session_id = session.session_id().to_string();
+        let mut req = req;
+        req.extensions_mut().insert(session);
+        tracing::Span::current().record("session_id", session_id.as_str());
+        return Ok(next.run(req).await);
+    }
+
+    let Some(token) = extract_token_from_embucket_auth(req.headers())
+        .or_else(|| extract_token_from_auth(req.headers()))
+    else {
         return error::MissingAuthTokenSnafu.fail()?;
     };
 

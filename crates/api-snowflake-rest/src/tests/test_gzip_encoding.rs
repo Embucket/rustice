@@ -169,6 +169,40 @@ mod tests {
         assert!(!login_response.data.unwrap().token.is_empty());
     }
 
+    #[tokio::test]
+    async fn test_spcs_trusted_ingress_query_uses_ingress_session_without_embucket_token() {
+        let rest_cfg = rest_default_cfg("json").with_trust_spcs_ingress(true);
+        let addr = run_test_rest_api_server(Some(rest_cfg), None).await;
+        let client = reqwest::Client::new();
+        let query_url = format!("http://{addr}/queries/v1/query-request");
+
+        let query_request = QueryRequestBody {
+            sql_text: "SELECT 1;".to_string(),
+            async_exec: Some(false),
+            query_submission_time: Some(1_764_161_275_445),
+        };
+
+        let res = client
+            .request(
+                Method::POST,
+                format!("{query_url}?requestId={}", Uuid::new_v4()),
+            )
+            .header("Content-Type", "application/json")
+            .header(AUTHORIZATION, "Snowflake Token=\"snowflake.ingress.token\"")
+            .header("Sf-Context-Current-User", "SNOWFLAKE_USER")
+            .header("Sf-Context-Current-Account", "SNOWFLAKE_ACCOUNT")
+            .header("Sf-Context-Current-User-Token", "caller-token")
+            .body(serde_json::to_string(&query_request).unwrap())
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(http::StatusCode::OK, res.status());
+        let query_response: JsonResponse = res.json().await.unwrap();
+        assert!(query_response.success);
+        assert!(query_response.data.is_some());
+    }
+
     fn make_bytes_body<T: ?Sized + Serialize>(request: &T) -> Bytes {
         let json = serde_json::to_string(request).expect("Failed to serialize JSON");
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());

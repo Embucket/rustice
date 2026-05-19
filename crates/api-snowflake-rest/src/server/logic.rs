@@ -9,6 +9,9 @@ use crate::server::error::{
 use crate::server::helpers::handle_query_ok_result;
 use api_snowflake_rest_sessions::TokenizedSession;
 use api_snowflake_rest_sessions::helpers::{create_jwt, ensure_jwt_secret_is_valid, jwt_claims};
+use api_snowflake_rest_sessions::session::{
+    SPCS_CURRENT_ACCOUNT_HEADER, SPCS_CURRENT_USER_HEADER, spcs_ingress_session_from_headers,
+};
 use axum::http::HeaderMap;
 use executor::RunningQueryId;
 use executor::models::{QueryContext, SessionMetadata, SessionMetadataAttr};
@@ -16,9 +19,6 @@ use snafu::{OptionExt, ResultExt};
 use time::Duration;
 
 pub const JWT_TOKEN_EXPIRATION_SECONDS: u32 = 3 * 24 * 60 * 60;
-const SPCS_CURRENT_USER_HEADER: &str = "sf-context-current-user";
-const SPCS_CURRENT_ACCOUNT_HEADER: &str = "sf-context-current-account";
-
 fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get(name)
@@ -89,7 +89,12 @@ pub async fn handle_login_request(
 
     tracing::Span::current().record("session_metadata", format!("{session_metadata:?}"));
 
-    let tokenized_session = TokenizedSession::default().with_metadata(session_metadata);
+    let tokenized_session = if state.config.auth.trust_spcs_ingress {
+        spcs_ingress_session_from_headers(headers).unwrap_or_default()
+    } else {
+        TokenizedSession::default()
+    }
+    .with_metadata(session_metadata);
 
     let jwt_claims = jwt_claims(
         &login_name,

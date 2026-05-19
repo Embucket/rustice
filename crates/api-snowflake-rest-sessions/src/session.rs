@@ -3,19 +3,24 @@ use crate::error::BadAuthTokenSnafu;
 use crate::helpers::get_claims_validate_jwt_token;
 use axum::extract::FromRequestParts;
 use executor::ExecutionAppState;
-use executor::SessionMetadata;
 use executor::service::ExecutionService;
+use executor::{SessionMetadata, SessionMetadataAttr};
 use http::header::COOKIE;
 use http::request::Parts;
 use http::{HeaderMap, HeaderName};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use snafu::{OptionExt, ResultExt};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::{collections::HashMap, sync::Arc};
 use uuid::Uuid;
 
 pub const SESSION_ID_COOKIE_NAME: &str = "session_id";
 pub const EMBUCKET_AUTHORIZATION_HEADER: &str = "x-embucket-authorization";
+pub const SPCS_CURRENT_USER_HEADER: &str = "sf-context-current-user";
+pub const SPCS_CURRENT_ACCOUNT_HEADER: &str = "sf-context-current-account";
+pub const SPCS_CURRENT_USER_TOKEN_HEADER: &str = "sf-context-current-user-token";
 
 pub const SESSION_EXPIRATION_SECONDS: u64 = 60;
 
@@ -40,6 +45,10 @@ impl SessionStore {
 
 pub trait JwtSecret {
     fn jwt_secret(&self) -> &str;
+}
+
+pub trait TrustedSpcsIngress {
+    fn trust_spcs_ingress(&self) -> bool;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,7 +85,7 @@ impl TokenizedSession {
 
 impl<S> FromRequestParts<S> for TokenizedSession
 where
-    S: Send + Sync + ExecutionAppState + JwtSecret,
+    S: Send + Sync + ExecutionAppState + JwtSecret + TrustedSpcsIngress,
 {
     type Rejection = session_error::Error;
 
@@ -98,22 +107,42 @@ where
         //     .context(session_error::ExtensionRejectionSnafu)?;
         // tracing::info!("Host '{host}' extracted from TokenizedSession");
 
-        let (session, located_at) = if let Some(token) = extract_token_from_auth(&req.headers) {
-            // host is require to check token audience claim
-            let host = req.headers.get("host");
-            let host = host.and_then(|host| host.to_str().ok());
-            let host = host.context(session_error::MissingHostSnafu)?;
+        let spcs_ingress_session = || spcs_ingress_session_from_headers(&req.headers);
 
-            let jwt_secret = state.jwt_secret();
-            let jwt_claims = get_claims_validate_jwt_token(&token, host, jwt_secret)
-                .context(BadAuthTokenSnafu)?;
+        let (session, located_at) =
+            if let Some(token) = extract_token_from_embucket_auth(&req.headers) {
+                // host is require to check token audience claim
+                let host = req.headers.get("host");
+                let host = host.and_then(|host| host.to_str().ok());
+                let host = host.context(session_error::MissingHostSnafu)?;
 
-            (jwt_claims.session, "auth header")
-        } else {
-            //This is guaranteed by the `propagate_session_cookie`, so we can unwrap
-            let session = req.extensions.get::<Self>().unwrap();
-            (session.clone(), "extensions")
-        };
+                let jwt_secret = state.jwt_secret();
+                let jwt_claims = get_claims_validate_jwt_token(&token, host, jwt_secret)
+                    .context(BadAuthTokenSnafu)?;
+
+                (jwt_claims.session, "auth header")
+            } else if state.trust_spcs_ingress()
+                && let Some(session) = spcs_ingress_session()
+            {
+                (session, "spcs ingress headers")
+            } else if let Some(token) = extract_token_from_auth(&req.headers) {
+                // host is require to check token audience claim
+                let host = req.headers.get("host");
+                let host = host.and_then(|host| host.to_str().ok());
+                let host = host.context(session_error::MissingHostSnafu)?;
+
+                let jwt_secret = state.jwt_secret();
+                let jwt_claims = get_claims_validate_jwt_token(&token, host, jwt_secret)
+                    .context(BadAuthTokenSnafu)?;
+
+                (jwt_claims.session, "auth header")
+            } else {
+                let session = req
+                    .extensions
+                    .get::<Self>()
+                    .context(session_error::MissingAuthTokenSnafu)?;
+                (session.clone(), "extensions")
+            };
 
         // Record the result as part of the current span.
         tracing::Span::current()
@@ -172,6 +201,13 @@ pub fn extract_token_from_auth(headers: &HeaderMap) -> Option<String> {
         })
 }
 
+#[must_use]
+pub fn extract_token_from_embucket_auth(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(EMBUCKET_AUTHORIZATION_HEADER)
+        .and_then(extract_token_from_header_value)
+}
+
 fn extract_token_from_header_value(value: &http::HeaderValue) -> Option<String> {
     value.to_str().ok().and_then(|auth| {
         #[allow(clippy::unwrap_used)]
@@ -182,6 +218,37 @@ fn extract_token_from_header_value(value: &http::HeaderValue) -> Option<String> 
         re.captures(auth)
             .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
     })
+}
+
+#[must_use]
+pub fn spcs_ingress_session_from_headers(headers: &HeaderMap) -> Option<TokenizedSession> {
+    let user = header_value(headers, SPCS_CURRENT_USER_HEADER)?;
+    let account = header_value(headers, SPCS_CURRENT_ACCOUNT_HEADER).unwrap_or_default();
+
+    let session_identity = header_value(headers, SPCS_CURRENT_USER_TOKEN_HEADER)
+        .map(|token| format!("token:{token}"))
+        .unwrap_or_else(|| format!("user:{account}:{user}"));
+
+    let mut hasher = DefaultHasher::new();
+    session_identity.hash(&mut hasher);
+    let session_id = format!("spcs-{:016x}", hasher.finish());
+
+    let mut metadata = SessionMetadata::default();
+    metadata.set_attr(SessionMetadataAttr::UserName, user);
+    if !account.is_empty() {
+        metadata.set_attr(SessionMetadataAttr::AccountName, account);
+    }
+
+    Some(TokenizedSession::new(session_id).with_metadata(metadata))
+}
+
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 #[must_use]

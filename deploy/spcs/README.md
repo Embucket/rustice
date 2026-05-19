@@ -192,6 +192,17 @@ The login request still goes to `/session/v1/login-request` through the SPCS end
 
 With the default SPCS deploy settings, Rustice treats the login request as a session bootstrap after Snowflake ingress authentication has already succeeded. The password field in the Snowflake-compatible login payload is ignored in this mode, and the Snowflake caller user is recorded from `Sf-Context-Current-User`.
 
+Rustice can also run experimentally without `X-Embucket-Authorization` when `AUTH_TRUST_SPCS_INGRESS=true`. In that path, query requests are accepted if Snowflake ingress has injected `Sf-Context-Current-User`; Rustice derives its internal session id from `Sf-Context-Current-User-Token` when present and falls back to the Snowflake account/user headers otherwise. This keeps the normal Snowflake `Authorization` header dedicated to SPCS ingress, but it means session state is tied to Snowflake ingress identity rather than an explicit Embucket session token. Validate `USE`, `ALTER SESSION`, dbt concurrency, and retry behavior before relying on this mode for production workloads.
+
+With `embucket-snow`, disable the extra Embucket session header for this experiment:
+
+```bash
+EMBUCKET_SPCS_FORWARD_SESSION_TOKEN=0 \
+embucket-snow --config-file deploy/spcs/generated/config.toml \
+  sql -c embucket_spcs \
+  -q "SELECT * FROM embucket.public.smoke"
+```
+
 When using PATs for programmatic SPCS ingress access, Snowflake requires the PAT user to have a network policy. Browser/OAuth access can be used instead for interactive checks.
 
 By default the deploy script creates this PAT automatically:
