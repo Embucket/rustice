@@ -23,8 +23,8 @@ mod tests {
     async fn test_login() {
         let addr = run_test_rest_api_server(None, None).await;
         let client = reqwest::Client::new();
-        let login_url = format!("http://{addr}/session/v1/login-request");
-        let query_url = format!("http://{addr}/queries/v1/query-request");
+        let login_url = format!("http://127.0.0.1:{}/session/v1/login-request", addr.port());
+        let query_url = format!("http://127.0.0.1:{}/queries/v1/query-request", addr.port());
 
         let query_request = QueryRequestBody {
             sql_text: "SELECT 1;".to_string(),

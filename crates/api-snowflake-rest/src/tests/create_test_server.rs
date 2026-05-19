@@ -3,6 +3,8 @@ use crate::server::core_state::CoreState;
 use crate::server::make_snowflake_router;
 use crate::server::server_models::RestApiConfig;
 use crate::server::state::AppState;
+use executor::models::QueryContext;
+use executor::service::ExecutionService;
 use executor::utils::Config as UtilsConfig;
 use std::net::SocketAddr;
 use std::net::TcpListener;
@@ -156,9 +158,23 @@ pub async fn run_test_rest_api_server_with_config(
     setup_tracing();
     tracing::info!("Starting server at {addr}");
 
-    let core_state = CoreState::new(execution_cfg, snowflake_rest_cfg)
+    let core_state = CoreState::new_dev(execution_cfg, snowflake_rest_cfg, "/dev".to_string())
         .await
         .expect("Core state creation error");
+    core_state
+        .executor
+        .create_session("test-bootstrap")
+        .await
+        .expect("Failed to create REST test bootstrap session");
+    core_state
+        .executor
+        .query(
+            "test-bootstrap",
+            "CREATE SCHEMA IF NOT EXISTS embucket.public",
+            QueryContext::default(),
+        )
+        .await
+        .expect("Failed to bootstrap REST test schema");
 
     let app = make_snowflake_router(AppState::from(&core_state))
         .into_make_service_with_connect_info::<SocketAddr>();

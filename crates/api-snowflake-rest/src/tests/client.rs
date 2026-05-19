@@ -14,6 +14,10 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use uuid::Uuid;
 
+fn local_url(addr: &SocketAddr, path: &str) -> String {
+    format!("http://127.0.0.1:{}{path}", addr.port())
+}
+
 #[derive(Debug)]
 pub struct TestHttpError {
     pub method: Method,
@@ -101,7 +105,10 @@ pub fn login_url(
     database: Option<&String>,
     schema: Option<&String>,
 ) -> String {
-    let mut url = format!("http://{addr}/session/v1/login-request?request_id={request_id}");
+    let mut url = local_url(
+        addr,
+        &format!("/session/v1/login-request?request_id={request_id}"),
+    );
     if let Some(database) = database {
         url.push_str("&databaseName=");
         url.push_str(database);
@@ -116,19 +123,23 @@ pub fn login_url(
 
 #[must_use]
 pub fn query_url(addr: &SocketAddr, request_id: Uuid, retry_count: u16) -> String {
-    format!(
-        "http://{addr}/queries/v1/query-request?requestId={request_id}&retryCount={retry_count}"
+    local_url(
+        addr,
+        &format!("/queries/v1/query-request?requestId={request_id}&retryCount={retry_count}"),
     )
 }
 
 #[must_use]
 pub fn abort_url(addr: &SocketAddr, request_id: Uuid) -> String {
-    format!("http://{addr}/queries/v1/abort-request?requestId={request_id}")
+    local_url(
+        addr,
+        &format!("/queries/v1/abort-request?requestId={request_id}"),
+    )
 }
 
 #[must_use]
 pub fn get_query_result_url(addr: &SocketAddr, query_id: &str) -> String {
-    format!("http://{addr}/queries/{query_id}/result")
+    local_url(addr, &format!("/queries/{query_id}/result"))
 }
 
 fn login_data(login: &str, passw: &str) -> LoginRequestBody {
