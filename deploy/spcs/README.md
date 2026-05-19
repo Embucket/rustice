@@ -195,6 +195,53 @@ snow spcs service list-endpoints RUSTICE_SERVICE -c snowflake --database RUSTICE
 snow spcs service logs RUSTICE_SERVICE --container-name rustice --instance-id 0 -c snowflake --database RUSTICE_APP --schema PUBLIC
 ```
 
+## Stop Service and Compute
+
+Suspend the SPCS service and compute pool when you finish testing. This stops the running container instances and avoids leaving the `CPU_X64_XS` pool active:
+
+```sql
+ALTER SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE SUSPEND;
+ALTER COMPUTE POOL RUSTICE_POOL SUSPEND;
+```
+
+The same commands through Snowflake CLI:
+
+```bash
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "ALTER SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE SUSPEND"
+
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "ALTER COMPUTE POOL RUSTICE_POOL SUSPEND"
+```
+
+Check that nothing is running:
+
+```sql
+SHOW COMPUTE POOLS LIKE 'RUSTICE_POOL';
+SHOW SERVICES LIKE 'RUSTICE_SERVICE' IN SCHEMA RUSTICE_APP.PUBLIC;
+SHOW SERVICE CONTAINERS IN SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE;
+```
+
+Resume for another test run:
+
+```sql
+ALTER COMPUTE POOL RUSTICE_POOL RESUME;
+ALTER SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE RESUME;
+```
+
+Optional full cleanup for disposable test environments:
+
+```sql
+DROP SERVICE IF EXISTS RUSTICE_APP.PUBLIC.RUSTICE_SERVICE;
+DROP COMPUTE POOL IF EXISTS RUSTICE_POOL;
+DROP EXTERNAL ACCESS INTEGRATION IF EXISTS RUSTICE_HORIZON_EAI;
+DROP NETWORK RULE IF EXISTS RUSTICE_APP.PUBLIC.RUSTICE_HORIZON_EGRESS;
+DROP SECRET IF EXISTS RUSTICE_APP.PUBLIC.RUSTICE_HORIZON_PAT;
+DROP SECRET IF EXISTS RUSTICE_APP.PUBLIC.RUSTICE_JWT_SECRET;
+DROP AUTHENTICATION POLICY IF EXISTS RUSTICE_APP.PUBLIC.RUSTICE_HORIZON_PAT_AUTH_POLICY;
+DROP USER IF EXISTS RUSTICE_HORIZON_SVC;
+```
+
 ## Monitor Cost and Iceberg Tables
 
 Use the account usage view for SPCS compute-pool credits:
