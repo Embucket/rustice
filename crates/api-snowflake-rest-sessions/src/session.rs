@@ -164,8 +164,12 @@ impl TokenizedSession {
 pub fn extract_token_from_auth(headers: &HeaderMap) -> Option<String> {
     headers
         .get("authorization")
-        .or_else(|| headers.get(EMBUCKET_AUTHORIZATION_HEADER))
         .and_then(extract_token_from_header_value)
+        .or_else(|| {
+            headers
+                .get(EMBUCKET_AUTHORIZATION_HEADER)
+                .and_then(extract_token_from_header_value)
+        })
 }
 
 fn extract_token_from_header_value(value: &http::HeaderValue) -> Option<String> {
@@ -236,6 +240,22 @@ mod tests {
     fn extracts_snowflake_token_from_embucket_authorization_header() {
         let token = "11111111-1111-1111-1111-111111111111";
         let mut headers = HeaderMap::new();
+        headers.insert(
+            EMBUCKET_AUTHORIZATION_HEADER,
+            HeaderValue::from_static("Snowflake Token=\"11111111-1111-1111-1111-111111111111\""),
+        );
+
+        assert_eq!(extract_token_from_auth(&headers), Some(token.to_string()));
+    }
+
+    #[test]
+    fn extracts_embucket_authorization_header_when_authorization_does_not_contain_session_token() {
+        let token = "11111111-1111-1111-1111-111111111111";
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer ingress-token"),
+        );
         headers.insert(
             EMBUCKET_AUTHORIZATION_HEADER,
             HeaderValue::from_static("Snowflake Token=\"11111111-1111-1111-1111-111111111111\""),
