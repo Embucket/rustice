@@ -76,12 +76,23 @@ SET RUSTICE_INGRESS_PAT_DAYS = 1;
 SET RUSTICE_ACCOUNT_IDENTIFIER = (
   SELECT LOWER(REPLACE(CURRENT_ORGANIZATION_NAME() || '-' || CURRENT_ACCOUNT_NAME(), '_', '-'))
 );
+SET RUSTICE_ACCOUNT_LOCATOR = (SELECT LOWER(CURRENT_ACCOUNT()));
 SET RUSTICE_CURRENT_REGION = (SELECT CURRENT_REGION());
+SET RUSTICE_CLOUD = (SELECT LOWER(SPLIT_PART($RUSTICE_CURRENT_REGION, '_', 1)));
+SET RUSTICE_REGION_NAME = (
+  SELECT LOWER(REPLACE(REGEXP_REPLACE($RUSTICE_CURRENT_REGION, '^[^_]+_', ''), '_', '-'))
+);
 SET RUSTICE_AWS_REGION = (
   SELECT LOWER(REPLACE(REGEXP_REPLACE($RUSTICE_CURRENT_REGION, '^AWS_', ''), '_', '-'))
 );
 SET RUSTICE_CATALOG_HOST = (SELECT $RUSTICE_ACCOUNT_IDENTIFIER || '.snowflakecomputing.com');
 SET RUSTICE_CATALOG_URL = (SELECT 'https://' || $RUSTICE_CATALOG_HOST || '/polaris/api/catalog');
+SET RUSTICE_SNOWFLAKE_ISSUER_HOST = (
+  SELECT $RUSTICE_ACCOUNT_LOCATOR || '.' ||
+    $RUSTICE_REGION_NAME || '.' ||
+    $RUSTICE_CLOUD ||
+    '.snowflakecomputing.com'
+);
 SET RUSTICE_S3_HOST = (SELECT 's3.' || $RUSTICE_AWS_REGION || '.amazonaws.com');
 SET RUSTICE_REGISTRY_HOST = (
   SELECT $RUSTICE_ACCOUNT_IDENTIFIER || '.registry.snowflakecomputing.com'
@@ -120,6 +131,7 @@ SET RUSTICE_JWT_SECRET_VALUE = (SELECT UUID_STRING() || UUID_STRING());
 SELECT
   $RUSTICE_SERVICE_IMAGE AS service_image,
   $RUSTICE_CATALOG_URL AS catalog_url,
+  $RUSTICE_SNOWFLAKE_ISSUER_HOST AS snowflake_issuer_host,
   $RUSTICE_CATALOG_HOST || ',' || $RUSTICE_S3_HOST AS egress_hosts;
 
 -- ---------------------------------------------------------------------------
@@ -269,6 +281,7 @@ $$;
 --   - public HTTP endpoint on port 3000
 --   - executeAsCaller enabled
 --   - AUTH_TRUST_SPCS_INGRESS=true
+--   - SNOWFLAKE_ISSUER_HOST for SPCS caller token structural validation
 --   - Horizon REST env vars and Snowflake SECRET mounts
 --
 -- If this fails with "image not found", push the image shown by
@@ -290,6 +303,7 @@ BEGIN
         BUCKET_PORT: "3000"
         RUST_LOG: "info"
         AUTH_TRUST_SPCS_INGRESS: "true"
+        SNOWFLAKE_ISSUER_HOST: "' || $RUSTICE_SNOWFLAKE_ISSUER_HOST || '"
         CATALOG_URL: "' || $RUSTICE_CATALOG_URL || '"
         ICEBERG_REST_PREFIX: "' || $RUSTICE_HORIZON_DATABASE || '"
         ICEBERG_REST_SCOPE: "session:role:' || $RUSTICE_HORIZON_ROLE || '"
@@ -431,9 +445,13 @@ SHOW SERVICE CONTAINERS IN SERVICE IDENTIFIER($RUSTICE_SERVICE_FQN);
 -- database = "embucket"
 -- schema = "public"
 -- warehouse = "embucket"
+-- spcs_token_connection = "<regular Snowflake CLI profile>"
+-- spcs_token_config_file = "/path/to/config.toml"
 --
--- Put the token_secret returned in section 8 into a local file next to this
--- config:
+-- The spcs_token_connection profile issues short-lived SPCS ingress tokens in
+-- memory. The role used by that profile must be granted the service role above.
+-- As a fallback, put the token_secret returned in section 8 into a local file
+-- next to this config:
 --   umask 077
 --   printf '%s' '<token_secret>' > embucket_spcs_token
 --

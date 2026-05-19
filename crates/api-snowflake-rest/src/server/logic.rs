@@ -10,7 +10,7 @@ use crate::server::helpers::handle_query_ok_result;
 use api_snowflake_rest_sessions::TokenizedSession;
 use api_snowflake_rest_sessions::helpers::{create_jwt, ensure_jwt_secret_is_valid, jwt_claims};
 use api_snowflake_rest_sessions::session::{
-    SPCS_CURRENT_ACCOUNT_HEADER, spcs_ingress_session_from_headers,
+    SPCS_CURRENT_ACCOUNT_HEADER, redacted_headers, spcs_ingress_session_from_headers,
 };
 use axum::http::HeaderMap;
 use executor::RunningQueryId;
@@ -31,8 +31,8 @@ fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
 #[tracing::instrument(
     name = "api_snowflake_rest::handle_login_request",
     level = "debug",
-    skip(state, credentials),
-    fields(session_metadata),
+    skip(state, credentials, headers),
+    fields(session_metadata, request_headers = %redacted_headers(headers)),
     err,
     ret(level = tracing::Level::TRACE)
 )]

@@ -13,8 +13,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use snafu::{OptionExt, ResultExt};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub const SESSION_ID_COOKIE_NAME: &str = "session_id";
@@ -23,6 +24,7 @@ pub const SPCS_CURRENT_ACCOUNT_HEADER: &str = "sf-context-current-account";
 pub const SPCS_CURRENT_USER_TOKEN_HEADER: &str = "sf-context-current-user-token";
 
 pub const SESSION_EXPIRATION_SECONDS: u64 = 4 * 60 * 60;
+const REDACTED_HEADER_VALUE: &str = "<redacted>";
 
 #[derive(Clone)]
 pub struct SessionStore {
@@ -180,6 +182,33 @@ pub fn extract_token_from_auth(headers: &HeaderMap) -> Option<String> {
     headers
         .get("authorization")
         .and_then(extract_token_from_header_value)
+}
+
+#[must_use]
+pub fn redacted_headers(headers: &HeaderMap) -> String {
+    let mut redacted = BTreeMap::<String, Vec<String>>::new();
+    for (name, value) in headers {
+        let name = name.as_str();
+        let value = if is_sensitive_header(name) {
+            REDACTED_HEADER_VALUE.to_string()
+        } else {
+            value
+                .to_str()
+                .map_or_else(|_| "<non-utf8>".to_string(), ToOwned::to_owned)
+        };
+        redacted.entry(name.to_string()).or_default().push(value);
+    }
+
+    format!("{redacted:#?}")
+}
+
+fn is_sensitive_header(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name == "authorization"
+        || name == "proxy-authorization"
+        || name == "cookie"
+        || name == "set-cookie"
+        || name.contains("token")
 }
 
 fn extract_token_from_header_value(value: &http::HeaderValue) -> Option<String> {
@@ -446,13 +475,13 @@ pub fn cookies_from_header(headers: &HeaderMap, header_name: HeaderName) -> Hash
 mod tests {
     use crate::session::{
         JwtAudience, SessionStore, SpcsCallerTokenClaims, extract_token_from_auth, issuer_matches,
-        spcs_caller_audience_matches,
+        redacted_headers, spcs_caller_audience_matches,
     };
     use executor::models::QueryContext;
     use executor::service::ExecutionService;
     use executor::service::make_test_execution_svc;
     use executor::session::to_unix;
-    use http::{HeaderMap, HeaderValue, header};
+    use http::{HeaderMap, HeaderName, HeaderValue, header};
     use std::sync::atomic::Ordering;
     use std::time::Duration;
     use time::OffsetDateTime;
@@ -468,6 +497,30 @@ mod tests {
         );
 
         assert_eq!(extract_token_from_auth(&headers), Some(token.to_string()));
+    }
+
+    #[test]
+    fn redacts_sensitive_headers_for_tracing() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Snowflake Token=\"secret\""),
+        );
+        headers.insert(
+            HeaderName::from_static("sf-context-current-user-token"),
+            HeaderValue::from_static("sct-secret"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-request-id"),
+            HeaderValue::from_static("request-1"),
+        );
+
+        let formatted = redacted_headers(&headers);
+
+        assert!(!formatted.contains("Snowflake Token"));
+        assert!(!formatted.contains("sct-secret"));
+        assert!(formatted.contains("<redacted>"));
+        assert!(formatted.contains("request-1"));
     }
 
     #[test]

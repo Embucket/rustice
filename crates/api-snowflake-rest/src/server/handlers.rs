@@ -7,6 +7,7 @@ use crate::server::error::Result;
 use crate::server::logic::{handle_login_request, handle_query_request};
 use api_snowflake_rest_sessions::TokenizedSession;
 use api_snowflake_rest_sessions::layer::Host;
+use api_snowflake_rest_sessions::session::redacted_headers;
 use axum::Json;
 use axum::extract::{ConnectInfo, Query, State};
 use axum::http::HeaderMap;
@@ -24,7 +25,14 @@ pub struct SessionQueryParams {
     request_guid: Option<String>,
 }
 
-#[tracing::instrument(name = "api_snowflake_rest::login", level = "debug", skip(state), err, ret(level = tracing::Level::TRACE))]
+#[tracing::instrument(
+    name = "api_snowflake_rest::login",
+    level = "debug",
+    skip(state, headers, login_request),
+    fields(request_headers = %redacted_headers(&headers)),
+    err,
+    ret(level = tracing::Level::TRACE)
+)]
 pub async fn login(
     Host(host): Host,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,

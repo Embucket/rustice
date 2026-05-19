@@ -20,6 +20,7 @@ SNOW_CONFIG_FILE=/path/to/config.toml \
 SNOW_CONNECTION=snowflake \
 RUSTICE_HORIZON_DATABASE=ANALYTICS \
 RUSTICE_HORIZON_ROLE=DATA_ENGINEER \
+RUSTICE_GRANT_TO_ROLE=DATA_ENGINEER \
 RUSTICE_IMAGE_TAG=latest \
 ./deploy/spcs/deploy.sh
 ```
@@ -35,6 +36,7 @@ SNOW_CONFIG_FILE=/path/to/config.toml \
 SNOW_CONNECTION=snowflake \
 RUSTICE_HORIZON_DATABASE=ANALYTICS \
 RUSTICE_HORIZON_ROLE=DATA_ENGINEER \
+RUSTICE_GRANT_TO_ROLE=DATA_ENGINEER \
 ./deploy/spcs/deploy.sh
 ```
 
@@ -83,7 +85,7 @@ Before running it:
 - Set `RUSTICE_HORIZON_ROLE` to the role that should access those Iceberg tables through Horizon.
 - Push `embucket/rustice:<tag>` into the Snowflake image repository named by `RUSTICE_DB`, `RUSTICE_SCHEMA`, and `RUSTICE_IMAGE_REPOSITORY`.
 
-Pure SQL cannot pull, tag, or push Docker images and cannot write local client config files. The SQL template creates the image repository, but the image must be pushed separately before `CREATE SERVICE` can start the container.
+Pure SQL cannot pull, tag, or push Docker images and cannot write local client config files. The SQL template creates the image repository, but the image must be pushed separately before `CREATE SERVICE` can start the container. When creating the `embucket_snow` config manually, prefer `spcs_token_connection = "<regular Snowflake CLI profile>"` so `embucket-snow` can issue short-lived ingress tokens in memory; the role used by that profile must have the service role grant.
 
 The final PAT block returns an ingress `token_secret` once. Treat it as a secret, then write it next to the `embucket-snow` config:
 
@@ -147,7 +149,7 @@ This is needed for plain `CREATE TABLE` statements sent through Rustice to Horiz
 
 Snowflake requires service users to satisfy programmatic access token policy requirements before a PAT can be generated. The default `RUSTICE_CREATE_PAT_AUTH_POLICY=1` creates a user-scoped authentication policy with `NETWORK_POLICY_EVALUATION = ENFORCED_NOT_REQUIRED`. Set `RUSTICE_CREATE_PAT_AUTH_POLICY=0` if your account already enforces a suitable network or authentication policy for the service user.
 
-The deploy script also creates an ingress-only service user/PAT by default with `RUSTICE_CREATE_INGRESS_PAT=1`. That PAT is written to `deploy/spcs/generated/embucket_spcs_token` with local user-only permissions as a fallback for non-interactive environments. The normal `embucket-snow` path does not need that file: it uses the regular Snowflake CLI profile named by `RUSTICE_CLIENT_TOKEN_CONNECTION` to issue a short-lived SPCS ingress token in memory for each CLI process.
+The deploy script also creates an ingress-only service user/PAT by default with `RUSTICE_CREATE_INGRESS_PAT=1`. That PAT is written to `deploy/spcs/generated/embucket_spcs_token` with local user-only permissions as a fallback for non-interactive environments. The normal `embucket-snow` path does not need that file: it uses the regular Snowflake CLI profile named by `RUSTICE_CLIENT_TOKEN_CONNECTION` to issue a short-lived SPCS ingress token in memory for each CLI process. The role used by that Snowflake profile must be granted the SPCS service role; set `RUSTICE_GRANT_TO_ROLE=<profile-role>` during deploy to make the generated config work without a separate token file.
 
 `RUSTICE_GENERATE_CLIENT_CONFIG=1` writes `deploy/spcs/generated/config.toml` with an `embucket_spcs` profile that points at the public ingress URL and includes `spcs_token_connection = "<SNOW_CONNECTION>"`. When `SNOW_CONFIG_FILE` is provided, the generated profile also includes `spcs_token_config_file = "<SNOW_CONFIG_FILE>"`. This lets the standard smoke command work without extra environment variables or token-file rotation. Set `RUSTICE_GENERATE_CLIENT_CONFIG=0` when client config is managed outside the deploy script.
 
@@ -168,6 +170,8 @@ https://<org>-<account>.snowflakecomputing.com/polaris/api/catalog
 ```
 
 `RUSTICE_EGRESS_HOSTS` controls the External Access Integration allowlist. By default, the script includes the Horizon catalog host. On AWS accounts it also derives `s3.<region>.amazonaws.com` from `CURRENT_REGION()` for Snowflake-managed Iceberg metadata and Parquet reads. Override `RUSTICE_EGRESS_HOSTS` only when Horizon returns an object-store or redirect host that is not covered by the default allowlist.
+
+`SNOWFLAKE_ISSUER_HOST` is passed into the container automatically from the active account locator and region, for example `aa06228.us-east-2.aws.snowflakecomputing.com`. Rustice uses it to structurally validate the SPCS caller token `iss` claim. Override `RUSTICE_SNOWFLAKE_ISSUER_HOST` only when the account uses a non-standard issuer host.
 
 In `RUSTICE_DRY_RUN=1` mode, the script does not call Snowflake to resolve account metadata, so it uses placeholder values such as `example-org-example-account.snowflakecomputing.com`. To generate account-specific dry-run SQL, pass the resolved values explicitly:
 
@@ -196,6 +200,8 @@ The Snowflake-compatible `/session/v1/login-request` still returns `data.token`,
 The password field in the Snowflake-compatible login payload is ignored in this mode, and the Snowflake caller user is recorded from `Sf-Context-Current-User`. `AUTH_TRUST_SPCS_INGRESS=true` must only be used behind Snowflake SPCS public ingress; do not expose a service with this setting directly on an untrusted network, because caller context headers can be forged outside Snowflake ingress.
 
 Rustice server-side sessions use a 4 hour sliding inactivity window. `/session/heartbeat` refreshes that window, matching the way Snowflake-compatible drivers keep active sessions alive.
+
+Rustice redacts sensitive request and response headers in tracing output, including `Authorization`, cookies, and Snowflake caller token headers such as `Sf-Context-Current-User-Token`.
 
 When using PATs for programmatic SPCS ingress access, Snowflake requires the PAT user to have a network policy. Browser/OAuth access can be used instead for interactive checks.
 

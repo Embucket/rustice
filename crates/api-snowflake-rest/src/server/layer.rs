@@ -5,7 +5,7 @@ use api_snowflake_rest_sessions::helpers::{
 };
 use api_snowflake_rest_sessions::layer::Host;
 use api_snowflake_rest_sessions::session::{
-    extract_token_from_auth, spcs_ingress_session_from_headers,
+    extract_token_from_auth, redacted_headers, spcs_ingress_session_from_headers,
 };
 use axum::extract::{Request, State};
 use axum::middleware::Next;
@@ -17,7 +17,7 @@ use snafu::{OptionExt, ResultExt};
     name = "api_snowflake_rest::layer::require_auth",
     level = "trace",
     skip(state, req, next),
-    fields(request_headers = format!("{:#?}", req.headers()), response_headers, session_id),
+    fields(request_headers = %redacted_headers(req.headers()), response_headers, session_id),
     err,
 )]
 pub async fn require_auth(
@@ -57,7 +57,7 @@ pub async fn require_auth(
     let response = next.run(req).await;
 
     // Record the result as part of the current span.
-    tracing::Span::current().record("response_headers", format!("{:#?}", response.headers()));
+    tracing::Span::current().record("response_headers", redacted_headers(response.headers()));
 
     Ok(response)
 }
