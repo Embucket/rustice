@@ -120,7 +120,6 @@ current_schemas
 current_session
 current_time
 current_timestamp
-current_user
 current_version
 current_warehouse
 date

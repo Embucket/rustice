@@ -2,7 +2,7 @@
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 mod tests {
     use crate::models::{
-        JsonResponse, LoginRequestBody, LoginRequestData, LoginResponse, QueryRequestBody, RowSet,
+        JsonResponse, LoginRequestBody, LoginRequestData, LoginResponse, QueryRequestBody,
     };
     use crate::tests::create_test_server::run_test_rest_api_server;
     use crate::tests::rest_default_cfg;
@@ -130,12 +130,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_spcs_trusted_ingress_login_uses_snowflake_user() {
+    async fn test_spcs_trusted_ingress_login_skips_demo_password() {
         let rest_cfg = rest_default_cfg("json").with_trust_spcs_ingress(true);
         let addr = run_test_rest_api_server(Some(rest_cfg), None).await;
         let client = reqwest::Client::new();
         let login_url = format!("http://{addr}/session/v1/login-request");
-        let query_url = format!("http://{addr}/queries/v1/query-request");
 
         let login_request = LoginRequestBody {
             data: LoginRequestData {
@@ -165,34 +164,9 @@ mod tests {
             .unwrap();
         assert_eq!(http::StatusCode::OK, res.status());
         let login_response: LoginResponse = res.json().await.unwrap();
-        let token = login_response.data.unwrap().token;
-
-        let query_request = QueryRequestBody {
-            sql_text: "SELECT CURRENT_USER();".to_string(),
-            async_exec: Some(false),
-            query_submission_time: Some(1_764_161_275_445),
-        };
-        let res = client
-            .request(
-                Method::POST,
-                format!("{query_url}?requestId={}", Uuid::new_v4()),
-            )
-            .header(AUTHORIZATION, format!("Snowflake Token=\"{token}\""))
-            .header("Content-Type", "application/json")
-            .body(serde_json::to_string(&query_request).unwrap())
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(http::StatusCode::OK, res.status());
-        let query_response: JsonResponse = res.json().await.unwrap();
-        let row_set = query_response
-            .data
-            .and_then(|data| data.row_set)
-            .expect("rowset should be present");
-        let RowSet::Parsed(rows) = row_set else {
-            panic!("expected parsed rowset");
-        };
-        assert_eq!(rows[0][0], serde_json::json!("SNOWFLAKE_USER"));
+        assert!(login_response.success);
+        assert!(login_response.data.is_some());
+        assert!(!login_response.data.unwrap().token.is_empty());
     }
 
     fn make_bytes_body<T: ?Sized + Serialize>(request: &T) -> Bytes {

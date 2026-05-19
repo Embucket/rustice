@@ -17,7 +17,6 @@ use time::Duration;
 
 pub const JWT_TOKEN_EXPIRATION_SECONDS: u32 = 3 * 24 * 60 * 60;
 const SPCS_CURRENT_USER_HEADER: &str = "sf-context-current-user";
-const SPCS_CURRENT_ROLE_HEADER: &str = "sf-context-current-role";
 const SPCS_CURRENT_ACCOUNT_HEADER: &str = "sf-context-current-account";
 
 fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -77,9 +76,6 @@ pub async fn handle_login_request(
     session_metadata.set_attr(SessionMetadataAttr::AccountName, account_name);
     session_metadata.set_attr(SessionMetadataAttr::ClientAppId, client_app_id);
     session_metadata.set_attr(SessionMetadataAttr::ClientAppVersion, client_app_version);
-    if let Some(role) = header_value(headers, SPCS_CURRENT_ROLE_HEADER) {
-        session_metadata.set_attr(SessionMetadataAttr::Role, role);
-    }
     // set database, schema when provided
     if let Some(db) = params.database_name {
         session_metadata.set_attr(SessionMetadataAttr::Database, db);

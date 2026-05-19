@@ -417,6 +417,12 @@ pub const CONTEXT_FUNCTIONS: &[(&str, FunctionInfo)] = &[
     )
     .with_docs("https://docs.snowflake.com/en/sql-reference/functions/current_transaction")
     ),
+    ("CURRENT_USER", FunctionInfo::new(
+        "CURRENT_USER",
+        "Returns the name of the user currently logged into the system."
+    )
+    .with_docs("https://docs.snowflake.com/en/sql-reference/functions/current_user")
+    ),
     ("GETDATE", FunctionInfo::new(
         "GETDATE",
         "Returns the current timestamp for the system in the local time zone."
