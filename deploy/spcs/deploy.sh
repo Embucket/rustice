@@ -56,6 +56,30 @@ RUSTICE_ROTATE_JWT_SECRET="${RUSTICE_ROTATE_JWT_SECRET:-0}"
 RUSTICE_GRANT_TO_ROLE="${RUSTICE_GRANT_TO_ROLE:-}"
 RUSTICE_EGRESS_RULE="${RUSTICE_EGRESS_RULE:-RUSTICE_HORIZON_EGRESS}"
 RUSTICE_EAI="${RUSTICE_EAI:-RUSTICE_HORIZON_EAI}"
+RUSTICE_WAIT_FOR_READY="${RUSTICE_WAIT_FOR_READY:-1}"
+RUSTICE_READY_TIMEOUT_SECS="${RUSTICE_READY_TIMEOUT_SECS:-600}"
+RUSTICE_READY_POLL_SECS="${RUSTICE_READY_POLL_SECS:-10}"
+
+RUSTICE_CREATE_INGRESS_PAT="${RUSTICE_CREATE_INGRESS_PAT:-1}"
+RUSTICE_INGRESS_ROLE="${RUSTICE_INGRESS_ROLE:-RUSTICE_INGRESS_ROLE}"
+RUSTICE_INGRESS_SERVICE_USER="${RUSTICE_INGRESS_SERVICE_USER:-RUSTICE_INGRESS_SVC}"
+RUSTICE_INGRESS_PAT_NAME="${RUSTICE_INGRESS_PAT_NAME:-RUSTICE_INGRESS_PAT}"
+RUSTICE_INGRESS_PAT_DAYS="${RUSTICE_INGRESS_PAT_DAYS:-1}"
+RUSTICE_CREATE_INGRESS_PAT_AUTH_POLICY="${RUSTICE_CREATE_INGRESS_PAT_AUTH_POLICY:-1}"
+RUSTICE_INGRESS_PAT_AUTH_POLICY="${RUSTICE_INGRESS_PAT_AUTH_POLICY:-${RUSTICE_DB}.${RUSTICE_SCHEMA}.RUSTICE_INGRESS_PAT_AUTH_POLICY}"
+
+RUSTICE_GENERATE_CLIENT_CONFIG="${RUSTICE_GENERATE_CLIENT_CONFIG:-1}"
+RUSTICE_CLIENT_OUTPUT_DIR="${RUSTICE_CLIENT_OUTPUT_DIR:-${SCRIPT_DIR}/generated}"
+RUSTICE_CLIENT_CONNECTION="${RUSTICE_CLIENT_CONNECTION:-embucket_spcs}"
+RUSTICE_CLIENT_CONFIG="${RUSTICE_CLIENT_CONFIG:-${RUSTICE_CLIENT_OUTPUT_DIR}/config.toml}"
+RUSTICE_CLIENT_TOKEN_FILE="${RUSTICE_CLIENT_TOKEN_FILE:-${RUSTICE_CLIENT_OUTPUT_DIR}/embucket_spcs_token}"
+RUSTICE_CLIENT_ENV_FILE="${RUSTICE_CLIENT_ENV_FILE:-${RUSTICE_CLIENT_OUTPUT_DIR}/embucket_spcs.env}"
+RUSTICE_CLIENT_ACCOUNT="${RUSTICE_CLIENT_ACCOUNT:-embucket}"
+RUSTICE_CLIENT_USER="${RUSTICE_CLIENT_USER:-embucket}"
+RUSTICE_CLIENT_PASSWORD="${RUSTICE_CLIENT_PASSWORD:-embucket}"
+RUSTICE_CLIENT_DATABASE="${RUSTICE_CLIENT_DATABASE:-embucket}"
+RUSTICE_CLIENT_SCHEMA="${RUSTICE_CLIENT_SCHEMA:-public}"
+RUSTICE_CLIENT_WAREHOUSE="${RUSTICE_CLIENT_WAREHOUSE:-embucket}"
 
 usage() {
   cat <<'USAGE'
@@ -86,6 +110,11 @@ Common options:
   RUSTICE_HORIZON_CATALOG   Horizon CREATE TABLE catalog default. Default: SNOWFLAKE.
   RUSTICE_CREATE_PAT_AUTH_POLICY=0
                             Skip creating a service-user PAT authentication policy.
+  RUSTICE_CREATE_INGRESS_PAT=0
+                            Skip creating a service-user PAT for SPCS public ingress.
+  RUSTICE_GENERATE_CLIENT_CONFIG=0
+                            Skip writing deploy/spcs/generated client files for embucket-snow.
+  RUSTICE_WAIT_FOR_READY=0   Do not wait for service READY/ingress URL before exiting.
   RUSTICE_AUTO_SUSPEND_SECS Service auto suspend seconds. Must be 0 for public endpoints.
   RUSTICE_EGRESS_HOSTS      Comma-separated hosts allowed from the container.
                             Include Snowflake/Horizon and object-store hosts vended by Horizon.
@@ -126,6 +155,17 @@ yaml_quote() {
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
   printf '"%s"' "$value"
+}
+
+toml_quote() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+shell_quote() {
+  printf '%q' "$1"
 }
 
 csv_first_value() {
@@ -188,6 +228,25 @@ snow_second_scalar() {
   SNOWFLAKE_HOME="$SNOWFLAKE_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" "$SNOW_BIN" "${snow_global_args[@]}" sql "${snow_sql_args[@]}" --format CSV --silent --query "$sql" | csv_second_value
 }
 
+snow_endpoint_url() {
+  local endpoint_name="$1"
+  local endpoint_name_lower
+  endpoint_name_lower="$(normalize_lower "$endpoint_name")"
+  SNOWFLAKE_HOME="$SNOWFLAKE_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" "$SNOW_BIN" "${snow_global_args[@]}" sql "${snow_sql_args[@]}" --format CSV --silent --query "SHOW ENDPOINTS IN SERVICE ${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE}" \
+    | awk -F, -v endpoint="$endpoint_name_lower" '
+        NF && NR > 1 {
+          gsub(/\r/, "", $1);
+          gsub(/\r/, "", $6);
+          gsub(/^"|"$/, "", $1);
+          gsub(/^"|"$/, "", $6);
+          name = tolower($1);
+          if (name == endpoint) {
+            print $6;
+            exit;
+          }
+        }'
+}
+
 docker_cmd() {
   if [[ -n "${CONTAINER_CLI:-}" ]]; then
     printf '%s' "$CONTAINER_CLI"
@@ -219,6 +278,103 @@ run_cmd() {
   else
     "$@"
   fi
+}
+
+wait_for_service_ready() {
+  if [[ "$RUSTICE_DRY_RUN" == "1" || "$RUSTICE_WAIT_FOR_READY" != "1" ]]; then
+    return 0
+  fi
+
+  log "Waiting for SPCS service READY and public ingress URL"
+  local waited=0
+  local status_json=""
+  local ingress_url=""
+  while (( waited <= RUSTICE_READY_TIMEOUT_SECS )); do
+    status_json="$(snow_scalar "SELECT SYSTEM\$GET_SERVICE_STATUS('${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE}')")"
+    ingress_url="$(snow_endpoint_url "$RUSTICE_ENDPOINT_NAME")"
+    if [[ "$status_json" == *READY* && "$ingress_url" == *.snowflakecomputing.app ]]; then
+      RUSTICE_RESOLVED_INGRESS_URL="$ingress_url"
+      return 0
+    fi
+    sleep "$RUSTICE_READY_POLL_SECS"
+    waited=$((waited + RUSTICE_READY_POLL_SECS))
+  done
+
+  die "SPCS service did not become READY within ${RUSTICE_READY_TIMEOUT_SECS}s. Check with SELECT SYSTEM\$GET_SERVICE_STATUS('${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE}')"
+}
+
+create_ingress_pat() {
+  if [[ "$RUSTICE_CREATE_INGRESS_PAT" != "1" ]]; then
+    return 0
+  fi
+
+  log "Creating SPCS ingress service user PAT"
+  run_snow_sql "
+CREATE ROLE IF NOT EXISTS ${RUSTICE_INGRESS_ROLE};
+CREATE USER IF NOT EXISTS ${RUSTICE_INGRESS_SERVICE_USER}
+  TYPE = SERVICE
+  DEFAULT_ROLE = ${RUSTICE_INGRESS_ROLE}
+  COMMENT = 'Service user used by embucket-snow to access Rustice SPCS ingress';
+GRANT ROLE ${RUSTICE_INGRESS_ROLE} TO USER ${RUSTICE_INGRESS_SERVICE_USER};
+GRANT USAGE ON DATABASE ${RUSTICE_DB} TO ROLE ${RUSTICE_INGRESS_ROLE};
+GRANT USAGE ON SCHEMA ${RUSTICE_DB}.${RUSTICE_SCHEMA} TO ROLE ${RUSTICE_INGRESS_ROLE};
+GRANT SERVICE ROLE ${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE}!${RUSTICE_SERVICE_ROLE} TO ROLE ${RUSTICE_INGRESS_ROLE};
+"
+  if [[ "$RUSTICE_CREATE_INGRESS_PAT_AUTH_POLICY" == "1" ]]; then
+    run_snow_sql "
+CREATE AUTHENTICATION POLICY IF NOT EXISTS ${RUSTICE_INGRESS_PAT_AUTH_POLICY}
+  PAT_POLICY = (
+    NETWORK_POLICY_EVALUATION = ENFORCED_NOT_REQUIRED
+    REQUIRE_ROLE_RESTRICTION_FOR_SERVICE_USERS = TRUE
+  );
+ALTER USER IF EXISTS ${RUSTICE_INGRESS_SERVICE_USER}
+  SET AUTHENTICATION POLICY ${RUSTICE_INGRESS_PAT_AUTH_POLICY} FORCE;
+"
+  fi
+
+  run_snow_sql "ALTER USER IF EXISTS ${RUSTICE_INGRESS_SERVICE_USER} REMOVE PROGRAMMATIC ACCESS TOKEN ${RUSTICE_INGRESS_PAT_NAME};" >/dev/null 2>&1 || true
+  if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
+    printf '+ snow sql --query %q\n' "ALTER USER IF EXISTS ${RUSTICE_INGRESS_SERVICE_USER} ADD PROGRAMMATIC ACCESS TOKEN ${RUSTICE_INGRESS_PAT_NAME} ROLE_RESTRICTION = '${RUSTICE_INGRESS_ROLE}' DAYS_TO_EXPIRY = ${RUSTICE_INGRESS_PAT_DAYS}"
+    RUSTICE_RESOLVED_INGRESS_PAT="dry-run-ingress-token"
+  else
+    RUSTICE_RESOLVED_INGRESS_PAT="$(snow_second_scalar "ALTER USER IF EXISTS ${RUSTICE_INGRESS_SERVICE_USER} ADD PROGRAMMATIC ACCESS TOKEN ${RUSTICE_INGRESS_PAT_NAME} ROLE_RESTRICTION = '${RUSTICE_INGRESS_ROLE}' DAYS_TO_EXPIRY = ${RUSTICE_INGRESS_PAT_DAYS}")"
+  fi
+}
+
+write_client_files() {
+  local ingress_url="$1"
+  local ingress_pat="$2"
+
+  if [[ "$RUSTICE_DRY_RUN" == "1" || "$RUSTICE_GENERATE_CLIENT_CONFIG" != "1" ]]; then
+    return 0
+  fi
+
+  [[ -n "$ingress_url" && "$ingress_url" == *.snowflakecomputing.app ]] || die "Cannot generate client config without a public ingress URL"
+
+  umask 077
+  mkdir -p "$RUSTICE_CLIENT_OUTPUT_DIR"
+  cat > "$RUSTICE_CLIENT_CONFIG" <<EOF
+default_connection_name = $(toml_quote "$RUSTICE_CLIENT_CONNECTION")
+
+[connections.${RUSTICE_CLIENT_CONNECTION}]
+host = $(toml_quote "$ingress_url")
+protocol = "https"
+port = 443
+account = $(toml_quote "$RUSTICE_CLIENT_ACCOUNT")
+user = $(toml_quote "$RUSTICE_CLIENT_USER")
+password = $(toml_quote "$RUSTICE_CLIENT_PASSWORD")
+database = $(toml_quote "$RUSTICE_CLIENT_DATABASE")
+schema = $(toml_quote "$RUSTICE_CLIENT_SCHEMA")
+warehouse = $(toml_quote "$RUSTICE_CLIENT_WAREHOUSE")
+EOF
+
+  if [[ -n "$ingress_pat" ]]; then
+    printf '%s' "$ingress_pat" > "$RUSTICE_CLIENT_TOKEN_FILE"
+  fi
+
+  cat > "$RUSTICE_CLIENT_ENV_FILE" <<EOF
+export EMBUCKET_SPCS_TOKEN_FILE=$(shell_quote "$RUSTICE_CLIENT_TOKEN_FILE")
+EOF
 }
 
 run_snow_cmd() {
@@ -277,9 +433,11 @@ require_ident RUSTICE_SCHEMA "$RUSTICE_SCHEMA"
 require_ident RUSTICE_COMPUTE_POOL "$RUSTICE_COMPUTE_POOL"
 require_ident RUSTICE_IMAGE_REPOSITORY "$RUSTICE_IMAGE_REPOSITORY"
 require_ident RUSTICE_SERVICE "$RUSTICE_SERVICE"
+require_ident RUSTICE_ENDPOINT_NAME "$RUSTICE_ENDPOINT_NAME"
 require_ident RUSTICE_EGRESS_RULE "$RUSTICE_EGRESS_RULE"
 require_ident RUSTICE_EAI "$RUSTICE_EAI"
 require_ident RUSTICE_HORIZON_DATABASE "$RUSTICE_HORIZON_DATABASE"
+require_ident RUSTICE_CLIENT_CONNECTION "$RUSTICE_CLIENT_CONNECTION"
 
 case "$RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS" in
   0|1)
@@ -295,6 +453,37 @@ case "$RUSTICE_TRUST_SPCS_INGRESS" in
     die "RUSTICE_TRUST_SPCS_INGRESS must be 0 or 1"
     ;;
 esac
+case "$RUSTICE_WAIT_FOR_READY" in
+  0|1)
+    ;;
+  *)
+    die "RUSTICE_WAIT_FOR_READY must be 0 or 1"
+    ;;
+esac
+case "$RUSTICE_CREATE_INGRESS_PAT" in
+  0|1)
+    ;;
+  *)
+    die "RUSTICE_CREATE_INGRESS_PAT must be 0 or 1"
+    ;;
+esac
+case "$RUSTICE_CREATE_INGRESS_PAT_AUTH_POLICY" in
+  0|1)
+    ;;
+  *)
+    die "RUSTICE_CREATE_INGRESS_PAT_AUTH_POLICY must be 0 or 1"
+    ;;
+esac
+case "$RUSTICE_GENERATE_CLIENT_CONFIG" in
+  0|1)
+    ;;
+  *)
+    die "RUSTICE_GENERATE_CLIENT_CONFIG must be 0 or 1"
+    ;;
+esac
+[[ "$RUSTICE_READY_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || die "RUSTICE_READY_TIMEOUT_SECS must be a non-negative integer"
+[[ "$RUSTICE_READY_POLL_SECS" =~ ^[0-9]+$ ]] || die "RUSTICE_READY_POLL_SECS must be a non-negative integer"
+(( RUSTICE_READY_POLL_SECS > 0 )) || die "RUSTICE_READY_POLL_SECS must be greater than zero"
 if [[ "$RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS" == "1" ]]; then
   require_ident RUSTICE_HORIZON_EXTERNAL_VOLUME "$RUSTICE_HORIZON_EXTERNAL_VOLUME"
   require_ident RUSTICE_HORIZON_CATALOG "$RUSTICE_HORIZON_CATALOG"
@@ -307,6 +496,14 @@ fi
 [[ "$RUSTICE_AUTO_SUSPEND_SECS" =~ ^[0-9]+$ ]] || die "RUSTICE_AUTO_SUSPEND_SECS must be a non-negative integer"
 if (( RUSTICE_AUTO_SUSPEND_SECS != 0 )); then
   die "SPCS services with public endpoints do not support AUTO_SUSPEND_SECS > 0. Set RUSTICE_AUTO_SUSPEND_SECS=0 or make the endpoint private in the service spec."
+fi
+
+if [[ "$RUSTICE_CREATE_INGRESS_PAT" == "1" ]]; then
+  require_ident RUSTICE_INGRESS_ROLE "$RUSTICE_INGRESS_ROLE"
+  require_ident RUSTICE_INGRESS_SERVICE_USER "$RUSTICE_INGRESS_SERVICE_USER"
+  require_ident RUSTICE_INGRESS_PAT_NAME "$RUSTICE_INGRESS_PAT_NAME"
+  [[ "$RUSTICE_INGRESS_PAT_DAYS" =~ ^[0-9]+$ ]] || die "RUSTICE_INGRESS_PAT_DAYS must be a positive integer"
+  (( RUSTICE_INGRESS_PAT_DAYS > 0 )) || die "RUSTICE_INGRESS_PAT_DAYS must be a positive integer"
 fi
 
 case "$RUSTICE_HORIZON_AUTH" in
@@ -598,7 +795,38 @@ SELECT SYSTEM\$GET_SERVICE_STATUS('${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SER
 SHOW ENDPOINTS IN SERVICE ${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE};
 "
 
+RUSTICE_RESOLVED_INGRESS_URL=""
+if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
+  RUSTICE_RESOLVED_INGRESS_URL="${RUSTICE_INGRESS_URL:-<ingress-url>}"
+elif [[ "$RUSTICE_WAIT_FOR_READY" == "1" ]]; then
+  wait_for_service_ready
+else
+  RUSTICE_RESOLVED_INGRESS_URL="$(snow_endpoint_url "$RUSTICE_ENDPOINT_NAME")"
+fi
+
+RUSTICE_RESOLVED_INGRESS_PAT=""
+create_ingress_pat
+
+if [[ "$RUSTICE_CREATE_INGRESS_PAT" == "1" && "$RUSTICE_DRY_RUN" != "1" && -z "$RUSTICE_RESOLVED_INGRESS_PAT" ]]; then
+  die "Could not read token_secret from ALTER USER ADD PROGRAMMATIC ACCESS TOKEN output"
+fi
+
+write_client_files "$RUSTICE_RESOLVED_INGRESS_URL" "$RUSTICE_RESOLVED_INGRESS_PAT"
+
 log "Done"
 log "Image: ${service_image}"
 log "Catalog URL: ${catalog_url}"
+if [[ -n "$RUSTICE_RESOLVED_INGRESS_URL" ]]; then
+  log "Ingress URL: ${RUSTICE_RESOLVED_INGRESS_URL}"
+fi
+if [[ "$RUSTICE_GENERATE_CLIENT_CONFIG" == "1" && "$RUSTICE_DRY_RUN" != "1" ]]; then
+  log "embucket-snow config: ${RUSTICE_CLIENT_CONFIG}"
+  log "embucket-snow token file: ${RUSTICE_CLIENT_TOKEN_FILE}"
+  cat <<EOF
+
+Run a smoke query:
+  embucket-snow --config-file $(shell_quote "$RUSTICE_CLIENT_CONFIG") sql -c ${RUSTICE_CLIENT_CONNECTION} -q "SELECT * FROM embucket.public.smoke"
+
+EOF
+fi
 log "Check logs with: SELECT SYSTEM\$GET_SERVICE_LOGS('${RUSTICE_DB}.${RUSTICE_SCHEMA}.${RUSTICE_SERVICE}', 0, '${RUSTICE_CONTAINER_NAME}', 100);"

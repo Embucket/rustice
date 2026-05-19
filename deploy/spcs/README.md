@@ -38,6 +38,14 @@ RUSTICE_HORIZON_ROLE=DATA_ENGINEER \
 ./deploy/spcs/deploy.sh
 ```
 
+After the service is ready, the script creates `deploy/spcs/generated/config.toml` and `deploy/spcs/generated/embucket_spcs_token` for the patched `embucket-snow` CLI. The smoke command printed by the script can be run directly:
+
+```bash
+embucket-snow --config-file deploy/spcs/generated/config.toml \
+  sql -c embucket_spcs \
+  -q "SELECT * FROM embucket.public.smoke"
+```
+
 The default mode is `RUSTICE_HORIZON_AUTH=pat`:
 
 1. Creates a `TYPE = SERVICE` user.
@@ -75,6 +83,10 @@ RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS=1
 RUSTICE_HORIZON_EXTERNAL_VOLUME=SNOWFLAKE_MANAGED
 RUSTICE_HORIZON_CATALOG=SNOWFLAKE
 RUSTICE_TRUST_SPCS_INGRESS=1
+RUSTICE_CREATE_INGRESS_PAT=1
+RUSTICE_GENERATE_CLIENT_CONFIG=1
+RUSTICE_CLIENT_OUTPUT_DIR=deploy/spcs/generated
+RUSTICE_WAIT_FOR_READY=1
 RUSTICE_EGRESS_HOSTS=<optional-comma-separated-egress-hosts>
 RUSTICE_GRANT_TO_ROLE=ANALYST
 RUSTICE_AUTO_SUSPEND_SECS=0
@@ -104,6 +116,10 @@ ALTER SCHEMA <horizon_database>.<schema> SET CATALOG = 'SNOWFLAKE';
 This is needed for plain `CREATE TABLE` statements sent through Rustice to Horizon REST Catalog, because the REST create request does not carry Snowflake SQL clauses such as `EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED'`. Set `RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS=0` if those schema defaults are managed separately. For a custom external volume, set `RUSTICE_HORIZON_EXTERNAL_VOLUME=<volume_name>` and grant `USAGE` on that external volume to `RUSTICE_HORIZON_ROLE`.
 
 Snowflake requires service users to satisfy programmatic access token policy requirements before a PAT can be generated. The default `RUSTICE_CREATE_PAT_AUTH_POLICY=1` creates a user-scoped authentication policy with `NETWORK_POLICY_EVALUATION = ENFORCED_NOT_REQUIRED`. Set `RUSTICE_CREATE_PAT_AUTH_POLICY=0` if your account already enforces a suitable network or authentication policy for the service user.
+
+The deploy script also creates an ingress-only service user/PAT by default with `RUSTICE_CREATE_INGRESS_PAT=1`. That PAT is used by `embucket-snow` to pass Snowflake SPCS public ingress. It is written to `deploy/spcs/generated/embucket_spcs_token` with local user-only permissions and is not stored in the main Snowflake CLI config. Set `RUSTICE_CREATE_INGRESS_PAT=0` if your orchestrator provides its own OAuth or PAT token.
+
+`RUSTICE_GENERATE_CLIENT_CONFIG=1` writes `deploy/spcs/generated/config.toml` with an `embucket_spcs` profile that points at the public ingress URL. The patched `embucket-snow` CLI automatically reads `embucket_spcs_token` next to that generated config, so no extra environment variable is needed for the standard smoke command. Set `RUSTICE_GENERATE_CLIENT_CONFIG=0` when client config is managed outside the deploy script.
 
 The service uses a public SPCS endpoint for the Snowflake-compatible ingress. Snowflake does not support service auto-suspend for public endpoints, so `RUSTICE_AUTO_SUSPEND_SECS` must be `0`.
 
@@ -150,6 +166,19 @@ With the default SPCS deploy settings, Rustice treats the login request as a ses
 
 When using PATs for programmatic SPCS ingress access, Snowflake requires the PAT user to have a network policy. Browser/OAuth access can be used instead for interactive checks.
 
+By default the deploy script creates this PAT automatically:
+
+```sql
+CREATE ROLE RUSTICE_INGRESS_ROLE;
+CREATE USER RUSTICE_INGRESS_SVC TYPE = SERVICE DEFAULT_ROLE = RUSTICE_INGRESS_ROLE;
+GRANT SERVICE ROLE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE!RUSTICE_USER TO ROLE RUSTICE_INGRESS_ROLE;
+ALTER USER RUSTICE_INGRESS_SVC ADD PROGRAMMATIC ACCESS TOKEN RUSTICE_INGRESS_PAT
+  ROLE_RESTRICTION = 'RUSTICE_INGRESS_ROLE'
+  DAYS_TO_EXPIRY = 1;
+```
+
+The returned token secret is written to the generated token file instead of being printed in logs.
+
 ## Query Through the SPCS Endpoint
 
 Embucket/Rustice exposes the same Snowflake-compatible REST flow that the Snowflake CLI/connector uses:
@@ -167,6 +196,14 @@ Behind SPCS public ingress, the client must also authenticate to Snowflake ingre
 An unmodified Snowflake CLI may work against local Embucket/Rustice, but it is not enough for SPCS public ingress if it can only use the `Authorization` header for the Embucket/Rustice session token. Snowflake ingress consumes that header before the request reaches the container, so the SPCS path needs the extra `X-Embucket-Authorization` header support in the client/connector.
 
 For normal user workflows we should publish a patched Snowflake-compatible CLI/connector package, likely in a separate repository, that can be installed with `pip` or `pipx`. That package should preserve the usual Snowflake CLI/connector UX while adding SPCS ingress authentication and `X-Embucket-Authorization` forwarding.
+
+With the generated deploy output, the user-facing command is:
+
+```bash
+embucket-snow --config-file deploy/spcs/generated/config.toml \
+  sql -c embucket_spcs \
+  -q "SELECT * FROM embucket.public.smoke"
+```
 
 ## Result
 
