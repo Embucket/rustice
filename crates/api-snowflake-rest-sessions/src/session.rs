@@ -363,7 +363,10 @@ fn spcs_caller_audience_matches(claims: &SpcsCallerTokenClaims, headers: &Header
 }
 
 fn spcs_caller_issuer_matches(claims: &SpcsCallerTokenClaims) -> bool {
-    let Some(expected_issuer) = std::env::var("SNOWFLAKE_HOST").ok() else {
+    let Some(expected_issuer) = std::env::var("SNOWFLAKE_ISSUER_HOST")
+        .ok()
+        .or_else(|| std::env::var("SNOWFLAKE_HOST").ok())
+    else {
         return true;
     };
 
@@ -380,13 +383,27 @@ fn spcs_caller_issuer_matches(claims: &SpcsCallerTokenClaims) -> bool {
 }
 
 fn issuer_matches(issuer: &str, expected_host: &str) -> bool {
-    if issuer == expected_host {
-        return true;
-    }
-    let Some(without_scheme) = issuer.strip_prefix("https://") else {
+    let Some(issuer_host) = normalized_url_host(issuer) else {
         return false;
     };
-    without_scheme == expected_host || without_scheme.strip_suffix('/') == Some(expected_host)
+    let Some(expected_host) = normalized_url_host(expected_host) else {
+        return false;
+    };
+
+    issuer_host.eq_ignore_ascii_case(expected_host)
+}
+
+fn normalized_url_host(value: &str) -> Option<&str> {
+    let value = value.trim();
+    let value = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+        .unwrap_or(value);
+    let value = value.split_once('/').map_or(value, |(host, _)| host);
+    let value = value.trim_end_matches('.');
+    let value = value.split_once(':').map_or(value, |(host, _)| host);
+
+    (!value.is_empty()).then_some(value)
 }
 
 fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -428,7 +445,7 @@ pub fn cookies_from_header(headers: &HeaderMap, header_name: HeaderName) -> Hash
 #[cfg(test)]
 mod tests {
     use crate::session::{
-        JwtAudience, SessionStore, SpcsCallerTokenClaims, extract_token_from_auth,
+        JwtAudience, SessionStore, SpcsCallerTokenClaims, extract_token_from_auth, issuer_matches,
         spcs_caller_audience_matches,
     };
     use executor::models::QueryContext;
@@ -469,6 +486,22 @@ mod tests {
         };
 
         assert!(spcs_caller_audience_matches(&claims, &headers));
+    }
+
+    #[test]
+    fn accepts_spcs_issuer_host_with_scheme_and_case_differences() {
+        assert!(issuer_matches(
+            "https://AA06228.us-east-2.aws.snowflakecomputing.com/",
+            "aa06228.us-east-2.aws.snowflakecomputing.com",
+        ));
+        assert!(issuer_matches(
+            "https://AA06228.us-east-2.aws.snowflakecomputing.com",
+            "AA06228.us-east-2.aws.snowflakecomputing.com:443",
+        ));
+        assert!(!issuer_matches(
+            "https://OTHER.us-east-2.aws.snowflakecomputing.com",
+            "AA06228.us-east-2.aws.snowflakecomputing.com",
+        ));
     }
 
     #[tokio::test]

@@ -427,6 +427,23 @@ url_host() {
   printf '%s' "$url"
 }
 
+snowflake_issuer_host() {
+  local account_locator="$1"
+  local current_region="$2"
+  local account_lower
+  account_lower="$(normalize_lower "$account_locator")"
+
+  if [[ "$current_region" == *_* ]]; then
+    local cloud
+    local region
+    cloud="$(normalize_lower "${current_region%%_*}")"
+    region="$(printf '%s' "${current_region#*_}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+    printf '%s.%s.%s.snowflakecomputing.com' "$account_lower" "$region" "$cloud"
+  else
+    printf '%s.snowflakecomputing.com' "$account_lower"
+  fi
+}
+
 default_egress_hosts() {
   local catalog_host="$1"
   local current_region="$2"
@@ -562,22 +579,26 @@ CREATE COMPUTE POOL IF NOT EXISTS ${RUSTICE_COMPUTE_POOL}
 
 if [[ "$RUSTICE_DRY_RUN" == "1" ]]; then
   account_identifier="${RUSTICE_ACCOUNT_IDENTIFIER:-example-org-example-account}"
+  account_locator="${RUSTICE_ACCOUNT_LOCATOR:-example-account}"
   current_region="${RUSTICE_CURRENT_REGION:-AWS_US_EAST_2}"
   if [[ -z "${RUSTICE_ACCOUNT_IDENTIFIER:-}" ]]; then
     log "Dry run uses placeholder account identifier '${account_identifier}'. Set RUSTICE_ACCOUNT_IDENTIFIER for account-specific SQL."
   fi
 else
   account_identifier="${RUSTICE_ACCOUNT_IDENTIFIER:-$(snow_scalar "SELECT LOWER(REPLACE(CURRENT_ORGANIZATION_NAME() || '-' || CURRENT_ACCOUNT_NAME(), '_', '-'))")}"
+  account_locator="${RUSTICE_ACCOUNT_LOCATOR:-$(snow_scalar "SELECT CURRENT_ACCOUNT()")}"
   current_region="${RUSTICE_CURRENT_REGION:-$(snow_scalar "SELECT CURRENT_REGION()")}"
 fi
 
 [[ -n "$account_identifier" ]] || die "Could not resolve Snowflake account identifier"
+[[ -n "$account_locator" ]] || die "Could not resolve Snowflake account locator"
 
 registry_host="${account_identifier}.registry.snowflakecomputing.com"
 repo_url="${registry_host}/$(normalize_lower "$RUSTICE_DB")/$(normalize_lower "$RUSTICE_SCHEMA")/$(normalize_lower "$RUSTICE_IMAGE_REPOSITORY")"
 service_image="${repo_url}/rustice:${RUSTICE_IMAGE_TAG}"
 catalog_url="${RUSTICE_CATALOG_URL:-https://${account_identifier}.snowflakecomputing.com/polaris/api/catalog}"
 catalog_host="$(url_host "$catalog_url")"
+snowflake_issuer="${RUSTICE_SNOWFLAKE_ISSUER_HOST:-$(snowflake_issuer_host "$account_locator" "$current_region")}"
 
 egress_hosts="${RUSTICE_EGRESS_HOSTS:-$(default_egress_hosts "$catalog_host" "$current_region")}"
 egress_values_sql=""
@@ -782,6 +803,7 @@ spec:
         BUCKET_PORT: $(yaml_quote "$RUSTICE_PORT")
         RUST_LOG: $(yaml_quote "${RUST_LOG:-info}")
         AUTH_TRUST_SPCS_INGRESS: $(yaml_quote "$auth_trust_spcs_ingress_value")
+        SNOWFLAKE_ISSUER_HOST: $(yaml_quote "$snowflake_issuer")
 ${horizon_env_lines}
 ${secrets_yaml}
       readinessProbe:
