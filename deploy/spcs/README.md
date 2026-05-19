@@ -78,6 +78,8 @@ RUSTICE_BUILD_LOCAL=1
 RUSTICE_DRY_RUN=1
 ```
 
+When `RUSTICE_GRANT_TO_ROLE` is set, the script grants that role `USAGE` on the service database/schema and grants the service role for the public endpoint.
+
 The script uses `snow spcs image-registry login` by default before pushing the image. Docker or Podman must be available and running locally; in WSL, Docker Desktop WSL integration must be enabled. Set `RUSTICE_REGISTRY_LOGIN=0` only if the container CLI is already logged in to the Snowflake registry.
 
 Use `RUSTICE_HORIZON_AUTH=none` to deploy only the service shell without Horizon credentials.
