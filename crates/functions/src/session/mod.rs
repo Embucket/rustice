@@ -76,6 +76,11 @@ fn current_role_udf() -> ScalarUDF {
     create_session_context_udf!("current_role", "default")
 }
 
+/// Returns the name of the user currently logged into the system.
+fn current_user_udf() -> ScalarUDF {
+    create_session_context_udf!("current_user", "default")
+}
+
 /// Returns a unique system identifier for the Embucket session corresponding to the present connection.
 fn current_session_udf() -> ScalarUDF {
     create_session_context_udf!("current_session", "default")
@@ -97,6 +102,7 @@ pub fn register_session_context_udfs(registry: &mut dyn FunctionRegistry) -> Res
         current_schemas_udf(),
         current_session_udf(),
         current_version_udf(),
+        current_user_udf(),
         current_warehouse_udf(),
     ];
 

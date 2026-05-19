@@ -23,4 +23,10 @@ impl RestApiConfig {
         };
         self
     }
+
+    #[must_use]
+    pub const fn with_trust_spcs_ingress(mut self, trust_spcs_ingress: bool) -> Self {
+        self.auth.trust_spcs_ingress = trust_spcs_ingress;
+        self
+    }
 }

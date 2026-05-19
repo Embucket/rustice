@@ -31,6 +31,7 @@ RUSTICE_LOCAL_IMAGE="${RUSTICE_LOCAL_IMAGE:-rustice-spcs:${RUSTICE_IMAGE_TAG}}"
 RUSTICE_BUILD_LOCAL="${RUSTICE_BUILD_LOCAL:-0}"
 RUSTICE_REGISTRY_LOGIN="${RUSTICE_REGISTRY_LOGIN:-1}"
 RUSTICE_ENABLE_EXPERIMENTAL="${RUSTICE_ENABLE_EXPERIMENTAL:-false}"
+RUSTICE_TRUST_SPCS_INGRESS="${RUSTICE_TRUST_SPCS_INGRESS:-1}"
 RUSTICE_SKIP_IMAGE_PUSH="${RUSTICE_SKIP_IMAGE_PUSH:-0}"
 RUSTICE_REPLACE_SERVICE="${RUSTICE_REPLACE_SERVICE:-1}"
 RUSTICE_DRY_RUN="${RUSTICE_DRY_RUN:-0}"
@@ -71,6 +72,8 @@ Common options:
   RUSTICE_IMAGE_TAG=...     Image tag. Default: latest.
   RUSTICE_REGISTRY_LOGIN=0  Skip snow spcs image-registry login.
   RUSTICE_SKIP_IMAGE_PUSH=1 Only run SQL; assume image already exists in Snowflake.
+  RUSTICE_TRUST_SPCS_INGRESS=0
+                            Require Embucket demo credentials on login instead of trusting SPCS ingress.
   RUSTICE_HORIZON_AUTH      pat, bearer_token, oauth_token, or none. Default: pat.
   RUSTICE_HORIZON_SCHEMAS   Comma-separated schemas to bootstrap lazily. Default: PUBLIC,public.
   RUSTICE_HORIZON_TABLES    Comma-separated schema.table names to bootstrap lazily.
@@ -285,9 +288,20 @@ case "$RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS" in
     die "RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS must be 0 or 1"
     ;;
 esac
+case "$RUSTICE_TRUST_SPCS_INGRESS" in
+  0|1)
+    ;;
+  *)
+    die "RUSTICE_TRUST_SPCS_INGRESS must be 0 or 1"
+    ;;
+esac
 if [[ "$RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS" == "1" ]]; then
   require_ident RUSTICE_HORIZON_EXTERNAL_VOLUME "$RUSTICE_HORIZON_EXTERNAL_VOLUME"
   require_ident RUSTICE_HORIZON_CATALOG "$RUSTICE_HORIZON_CATALOG"
+fi
+auth_trust_spcs_ingress_value="false"
+if [[ "$RUSTICE_TRUST_SPCS_INGRESS" == "1" ]]; then
+  auth_trust_spcs_ingress_value="true"
 fi
 
 [[ "$RUSTICE_AUTO_SUSPEND_SECS" =~ ^[0-9]+$ ]] || die "RUSTICE_AUTO_SUSPEND_SECS must be a non-negative integer"
@@ -557,6 +571,7 @@ spec:
         BUCKET_HOST: \"0.0.0.0\"
         BUCKET_PORT: $(yaml_quote "$RUSTICE_PORT")
         RUST_LOG: $(yaml_quote "${RUST_LOG:-info}")
+        AUTH_TRUST_SPCS_INGRESS: $(yaml_quote "$auth_trust_spcs_ingress_value")
 ${horizon_env_lines}
 ${secrets_yaml}
       readinessProbe:

@@ -9,6 +9,7 @@ use api_snowflake_rest_sessions::TokenizedSession;
 use api_snowflake_rest_sessions::layer::Host;
 use axum::Json;
 use axum::extract::{ConnectInfo, Query, State};
+use axum::http::HeaderMap;
 use executor::RunningQueryId;
 use serde::Deserialize;
 use std::net::SocketAddr;
@@ -29,6 +30,7 @@ pub async fn login(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
     Query(params): Query<LoginRequestQueryParams>,
+    headers: HeaderMap,
     Json(login_request): Json<LoginRequestBody>,
 ) -> Result<Json<LoginResponse>> {
     let response = handle_login_request(
@@ -37,6 +39,7 @@ pub async fn login(
         login_request.data,
         params,
         Option::from(addr.ip().to_string()),
+        &headers,
     )
     .await?;
     Ok(Json(response))

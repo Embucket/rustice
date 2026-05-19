@@ -166,6 +166,7 @@ pub struct Auth {
     pub demo_user: String,
     pub demo_password: String,
     pub jwt_secret: String,
+    pub trust_spcs_ingress: bool,
 }
 
 impl Auth {

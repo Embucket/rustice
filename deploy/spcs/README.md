@@ -74,6 +74,7 @@ RUSTICE_HORIZON_EAGER_LOAD=0
 RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS=1
 RUSTICE_HORIZON_EXTERNAL_VOLUME=SNOWFLAKE_MANAGED
 RUSTICE_HORIZON_CATALOG=SNOWFLAKE
+RUSTICE_TRUST_SPCS_INGRESS=1
 RUSTICE_EGRESS_HOSTS=<optional-comma-separated-egress-hosts>
 RUSTICE_GRANT_TO_ROLE=ANALYST
 RUSTICE_AUTO_SUSPEND_SECS=0
@@ -88,6 +89,8 @@ The script uses `snow spcs image-registry login` by default before pushing the i
 Use `RUSTICE_HORIZON_AUTH=none` to deploy only the service shell without Horizon credentials.
 
 Use `RUSTICE_HORIZON_AUTH=bearer_token` or `oauth_token` if you already manage a Snowflake `SECRET` containing a token. In that case set `RUSTICE_HORIZON_SECRET=<db>.<schema>.<secret>`.
+
+The deploy script enables `RUSTICE_TRUST_SPCS_INGRESS=1` by default. In that mode, `/session/v1/login-request` trusts Snowflake SPCS public ingress authentication and does not require the demo Embucket password. Snowflake injects `Sf-Context-Current-User` into the request after ingress authentication, and Rustice stores that value in the SQL session metadata so `CURRENT_USER()` returns the Snowflake user name. Set `RUSTICE_TRUST_SPCS_INGRESS=0` only for compatibility testing where you still want `AUTH_DEMO_USER`/`AUTH_DEMO_PASSWORD` login checks.
 
 By default, Rustice bootstraps the REST catalog lazily with `RUSTICE_HORIZON_SCHEMAS=PUBLIC,public` and `RUSTICE_HORIZON_EAGER_LOAD=0`. This avoids startup failures in Horizon environments that allow direct table access but restrict broad namespace/table listing. Set `RUSTICE_HORIZON_TABLES` to a comma-separated list such as `PUBLIC.SMOKE,ANALYTICS.ORDERS` when you need existing tables to be visible without eager listing. Set `RUSTICE_HORIZON_EAGER_LOAD=1` when the Horizon role is allowed to list all namespaces and tables during startup.
 
@@ -142,6 +145,8 @@ X-Embucket-Authorization: Snowflake Token="<embucket-session-token>"
 ```
 
 The login request still goes to `/session/v1/login-request` through the SPCS endpoint with only the Snowflake `Authorization` header. The returned Embucket/Rustice `data.token` is then sent in `X-Embucket-Authorization` for `/queries/v1/query-request`, while the Snowflake `Authorization` header continues to authorize access through SPCS ingress.
+
+With the default SPCS deploy settings, Rustice treats the login request as a session bootstrap after Snowflake ingress authentication has already succeeded. The password field in the Snowflake-compatible login payload is ignored in this mode, and the SQL session user is taken from `Sf-Context-Current-User`.
 
 When using PATs for programmatic SPCS ingress access, Snowflake requires the PAT user to have a network policy. Browser/OAuth access can be used instead for interactive checks.
 
@@ -428,6 +433,7 @@ Snowflake SQL can manage and inspect the SPCS service directly, but it does not 
 - No local RSA keypair is required for the default path.
 - The PAT is role-restricted and stored as a Snowflake `SECRET`; it is not written to the repo or printed by the deploy script.
 - The SPCS service is created with `executeAsCaller: true`, so Snowflake ingress passes caller context headers to the container.
+- `AUTH_TRUST_SPCS_INGRESS=true` must only be used behind Snowflake SPCS public ingress. Do not expose a service with this setting directly on an untrusted network, because caller context headers can be forged outside Snowflake ingress.
 - Horizon Catalog calls are still made with the service user's role. Grant that role only the Iceberg table privileges this service is allowed to exercise.
 - Horizon access tokens exchanged from the service-user credential are cached and refreshed automatically before expiration.
 

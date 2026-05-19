@@ -1,4 +1,4 @@
-use crate::models::QueryContext;
+use crate::models::{QueryContext, SessionMetadataAttr};
 use crate::query_types::QueryId;
 use crate::running_queries::RunningQueries;
 use datafusion::arrow::array::{ListArray, ListBuilder, StringBuilder};
@@ -93,7 +93,22 @@ impl TreeNodeRewriter for ExprRewriter<'_> {
                 "current_schema" => Some(utf8_val(&self.rewriter.schema)),
                 "current_warehouse" => Some(utf8_val(&self.rewriter.warehouse)),
                 "current_role_type" => Some(utf8_val("ROLE")),
-                "current_role" => Some(utf8_val("default")),
+                "current_role" => Some(utf8_val(
+                    self.rewriter
+                        .query_context
+                        .session_metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.attr(SessionMetadataAttr::Role))
+                        .unwrap_or_else(|| "default".to_string()),
+                )),
+                "current_user" => Some(utf8_val(
+                    self.rewriter
+                        .query_context
+                        .session_metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.attr(SessionMetadataAttr::UserName))
+                        .unwrap_or_else(|| "default".to_string()),
+                )),
                 "current_version" => Some(utf8_val(&self.rewriter.version)),
                 "current_client" => Some(utf8_val(format!("Embucket {}", &self.rewriter.version))),
                 "current_session" => Some(utf8_val(&self.rewriter.session_id)),

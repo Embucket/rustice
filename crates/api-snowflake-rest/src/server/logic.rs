@@ -9,12 +9,25 @@ use crate::server::error::{
 use crate::server::helpers::handle_query_ok_result;
 use api_snowflake_rest_sessions::TokenizedSession;
 use api_snowflake_rest_sessions::helpers::{create_jwt, ensure_jwt_secret_is_valid, jwt_claims};
+use axum::http::HeaderMap;
 use executor::RunningQueryId;
 use executor::models::{QueryContext, SessionMetadata, SessionMetadataAttr};
 use snafu::{OptionExt, ResultExt};
 use time::Duration;
 
 pub const JWT_TOKEN_EXPIRATION_SECONDS: u32 = 3 * 24 * 60 * 60;
+const SPCS_CURRENT_USER_HEADER: &str = "sf-context-current-user";
+const SPCS_CURRENT_ROLE_HEADER: &str = "sf-context-current-role";
+const SPCS_CURRENT_ACCOUNT_HEADER: &str = "sf-context-current-account";
+
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
 
 #[tracing::instrument(
     name = "api_snowflake_rest::handle_login_request",
@@ -30,19 +43,30 @@ pub async fn handle_login_request(
     credentials: LoginRequestData,
     params: LoginRequestQueryParams,
     client_ip: Option<String>,
+    headers: &HeaderMap,
 ) -> Result<LoginResponse> {
     let LoginRequestData {
-        login_name,
+        login_name: requested_login_name,
         password,
-        account_name,
+        account_name: requested_account_name,
         client_app_id,
         client_app_version,
         ..
     } = credentials;
 
-    if login_name != *state.config.auth.demo_user || password != *state.config.auth.demo_password {
-        return api_snowflake_rest_error::InvalidAuthDataSnafu.fail();
-    }
+    let login_name = if state.config.auth.trust_spcs_ingress {
+        header_value(headers, SPCS_CURRENT_USER_HEADER)
+            .context(api_snowflake_rest_error::InvalidAuthDataSnafu)?
+    } else {
+        if requested_login_name != *state.config.auth.demo_user
+            || password != *state.config.auth.demo_password
+        {
+            return api_snowflake_rest_error::InvalidAuthDataSnafu.fail();
+        }
+        requested_login_name
+    };
+    let account_name =
+        header_value(headers, SPCS_CURRENT_ACCOUNT_HEADER).unwrap_or(requested_account_name);
 
     // host is required to check token audience claim
     let jwt_secret = &*state.config.auth.jwt_secret;
@@ -53,6 +77,9 @@ pub async fn handle_login_request(
     session_metadata.set_attr(SessionMetadataAttr::AccountName, account_name);
     session_metadata.set_attr(SessionMetadataAttr::ClientAppId, client_app_id);
     session_metadata.set_attr(SessionMetadataAttr::ClientAppVersion, client_app_version);
+    if let Some(role) = header_value(headers, SPCS_CURRENT_ROLE_HEADER) {
+        session_metadata.set_attr(SessionMetadataAttr::Role, role);
+    }
     // set database, schema when provided
     if let Some(db) = params.database_name {
         session_metadata.set_attr(SessionMetadataAttr::Database, db);

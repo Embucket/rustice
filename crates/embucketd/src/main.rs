@@ -117,7 +117,8 @@ async fn async_main(
         .with_demo_credentials(
             opts.auth_demo_user.clone().unwrap(),
             opts.auth_demo_password.clone().unwrap(),
-        );
+        )
+        .with_trust_spcs_ingress(opts.auth_trust_spcs_ingress);
 
     let execution_cfg = ExecutionConfig {
         embucket_version: BuildInfo::VERSION.to_string(),

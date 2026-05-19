@@ -151,6 +151,7 @@ impl QueryMetric {
 #[derive(strum::Display, Clone, Copy)]
 pub enum SessionMetadataAttr {
     UserName,
+    Role,
     Warehouse,
     Database,
     Schema,

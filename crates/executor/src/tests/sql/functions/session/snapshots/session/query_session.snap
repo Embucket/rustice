@@ -1,13 +1,13 @@
 ---
 source: crates/executor/src/tests/sql/functions/session/funcs.rs
-description: "\"SELECT CURRENT_ROLE_TYPE(), CURRENT_ROLE()\""
+description: "\"SELECT CURRENT_ROLE_TYPE(), CURRENT_ROLE(), CURRENT_USER()\""
 ---
 Ok(
     [
-        "+-------------------+--------------+",
-        "| current_role_type | current_role |",
-        "+-------------------+--------------+",
-        "| ROLE              | default      |",
-        "+-------------------+--------------+",
+        "+-------------------+--------------+--------------+",
+        "| current_role_type | current_role | current_user |",
+        "+-------------------+--------------+--------------+",
+        "| ROLE              | default      | default      |",
+        "+-------------------+--------------+--------------+",
     ],
 )
