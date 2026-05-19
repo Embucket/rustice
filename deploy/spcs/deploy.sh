@@ -80,6 +80,8 @@ RUSTICE_CLIENT_PASSWORD="${RUSTICE_CLIENT_PASSWORD:-embucket}"
 RUSTICE_CLIENT_DATABASE="${RUSTICE_CLIENT_DATABASE:-embucket}"
 RUSTICE_CLIENT_SCHEMA="${RUSTICE_CLIENT_SCHEMA:-public}"
 RUSTICE_CLIENT_WAREHOUSE="${RUSTICE_CLIENT_WAREHOUSE:-embucket}"
+RUSTICE_CLIENT_TOKEN_CONNECTION="${RUSTICE_CLIENT_TOKEN_CONNECTION:-${SNOW_CONNECTION}}"
+RUSTICE_CLIENT_TOKEN_CONFIG_FILE="${RUSTICE_CLIENT_TOKEN_CONFIG_FILE:-${SNOW_CONFIG_FILE:-}}"
 
 usage() {
   cat <<'USAGE'
@@ -114,6 +116,11 @@ Common options:
                             Skip creating a service-user PAT for SPCS public ingress.
   RUSTICE_GENERATE_CLIENT_CONFIG=0
                             Skip writing deploy/spcs/generated client files for embucket-snow.
+  RUSTICE_CLIENT_TOKEN_CONNECTION
+                            Snowflake CLI profile used by embucket-snow to issue an SPCS ingress token.
+                            Default: SNOW_CONNECTION.
+  RUSTICE_CLIENT_TOKEN_CONFIG_FILE
+                            Snowflake CLI config file for that token source. Default: SNOW_CONFIG_FILE.
   RUSTICE_WAIT_FOR_READY=0   Do not wait for service READY/ingress URL before exiting.
   RUSTICE_AUTO_SUSPEND_SECS Service auto suspend seconds. Must be 0 for public endpoints.
   RUSTICE_EGRESS_HOSTS      Comma-separated hosts allowed from the container.
@@ -366,7 +373,13 @@ password = $(toml_quote "$RUSTICE_CLIENT_PASSWORD")
 database = $(toml_quote "$RUSTICE_CLIENT_DATABASE")
 schema = $(toml_quote "$RUSTICE_CLIENT_SCHEMA")
 warehouse = $(toml_quote "$RUSTICE_CLIENT_WAREHOUSE")
+spcs_token_connection = $(toml_quote "$RUSTICE_CLIENT_TOKEN_CONNECTION")
 EOF
+  if [[ -n "$RUSTICE_CLIENT_TOKEN_CONFIG_FILE" ]]; then
+    cat >> "$RUSTICE_CLIENT_CONFIG" <<EOF
+spcs_token_config_file = $(toml_quote "$RUSTICE_CLIENT_TOKEN_CONFIG_FILE")
+EOF
+  fi
 
   if [[ -n "$ingress_pat" ]]; then
     printf '%s' "$ingress_pat" > "$RUSTICE_CLIENT_TOKEN_FILE"
@@ -821,7 +834,10 @@ if [[ -n "$RUSTICE_RESOLVED_INGRESS_URL" ]]; then
 fi
 if [[ "$RUSTICE_GENERATE_CLIENT_CONFIG" == "1" && "$RUSTICE_DRY_RUN" != "1" ]]; then
   log "embucket-snow config: ${RUSTICE_CLIENT_CONFIG}"
-  log "embucket-snow token file: ${RUSTICE_CLIENT_TOKEN_FILE}"
+  log "embucket-snow token source connection: ${RUSTICE_CLIENT_TOKEN_CONNECTION}"
+  if [[ -f "$RUSTICE_CLIENT_TOKEN_FILE" ]]; then
+    log "embucket-snow fallback token file: ${RUSTICE_CLIENT_TOKEN_FILE}"
+  fi
   cat <<EOF
 
 Run a smoke query:

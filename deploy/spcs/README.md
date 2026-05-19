@@ -38,7 +38,7 @@ RUSTICE_HORIZON_ROLE=DATA_ENGINEER \
 ./deploy/spcs/deploy.sh
 ```
 
-After the service is ready, the script creates `deploy/spcs/generated/config.toml` and `deploy/spcs/generated/embucket_spcs_token` for the patched `embucket-snow` CLI. The smoke command printed by the script can be run directly:
+After the service is ready, the script creates `deploy/spcs/generated/config.toml` for the patched `embucket-snow` CLI. The smoke command printed by the script can be run directly:
 
 ```bash
 embucket-snow --config-file deploy/spcs/generated/config.toml \
@@ -114,6 +114,8 @@ RUSTICE_TRUST_SPCS_INGRESS=1
 RUSTICE_CREATE_INGRESS_PAT=1
 RUSTICE_GENERATE_CLIENT_CONFIG=1
 RUSTICE_CLIENT_OUTPUT_DIR=deploy/spcs/generated
+RUSTICE_CLIENT_TOKEN_CONNECTION=<SNOW_CONNECTION>
+RUSTICE_CLIENT_TOKEN_CONFIG_FILE=<SNOW_CONFIG_FILE>
 RUSTICE_WAIT_FOR_READY=1
 RUSTICE_EGRESS_HOSTS=<optional-comma-separated-egress-hosts>
 RUSTICE_GRANT_TO_ROLE=ANALYST
@@ -145,9 +147,9 @@ This is needed for plain `CREATE TABLE` statements sent through Rustice to Horiz
 
 Snowflake requires service users to satisfy programmatic access token policy requirements before a PAT can be generated. The default `RUSTICE_CREATE_PAT_AUTH_POLICY=1` creates a user-scoped authentication policy with `NETWORK_POLICY_EVALUATION = ENFORCED_NOT_REQUIRED`. Set `RUSTICE_CREATE_PAT_AUTH_POLICY=0` if your account already enforces a suitable network or authentication policy for the service user.
 
-The deploy script also creates an ingress-only service user/PAT by default with `RUSTICE_CREATE_INGRESS_PAT=1`. That PAT is used by `embucket-snow` to pass Snowflake SPCS public ingress. It is written to `deploy/spcs/generated/embucket_spcs_token` with local user-only permissions and is not stored in the main Snowflake CLI config. Set `RUSTICE_CREATE_INGRESS_PAT=0` if your orchestrator provides its own OAuth or PAT token.
+The deploy script also creates an ingress-only service user/PAT by default with `RUSTICE_CREATE_INGRESS_PAT=1`. That PAT is written to `deploy/spcs/generated/embucket_spcs_token` with local user-only permissions as a fallback for non-interactive environments. The normal `embucket-snow` path does not need that file: it uses the regular Snowflake CLI profile named by `RUSTICE_CLIENT_TOKEN_CONNECTION` to issue a short-lived SPCS ingress token in memory for each CLI process.
 
-`RUSTICE_GENERATE_CLIENT_CONFIG=1` writes `deploy/spcs/generated/config.toml` with an `embucket_spcs` profile that points at the public ingress URL. The patched `embucket-snow` CLI automatically reads `embucket_spcs_token` next to that generated config, so no extra environment variable is needed for the standard smoke command. Set `RUSTICE_GENERATE_CLIENT_CONFIG=0` when client config is managed outside the deploy script.
+`RUSTICE_GENERATE_CLIENT_CONFIG=1` writes `deploy/spcs/generated/config.toml` with an `embucket_spcs` profile that points at the public ingress URL and includes `spcs_token_connection = "<SNOW_CONNECTION>"`. When `SNOW_CONFIG_FILE` is provided, the generated profile also includes `spcs_token_config_file = "<SNOW_CONFIG_FILE>"`. This lets the standard smoke command work without extra environment variables or token-file rotation. Set `RUSTICE_GENERATE_CLIENT_CONFIG=0` when client config is managed outside the deploy script.
 
 If your environment uses short-lived OAuth tokens instead of the generated PAT file, set `EMBUCKET_SPCS_TOKEN_COMMAND=/path/to/get-spcs-token` when running `embucket-snow`. The command is executed without a shell and may return either a raw token or a full `Snowflake Token="..."` header value.
 
@@ -221,9 +223,9 @@ Embucket/Rustice exposes the same Snowflake-compatible REST flow that the Snowfl
 Behind SPCS public ingress, the client must authenticate to Snowflake ingress on every request. A Snowflake-compatible CLI or connector can query the SPCS endpoint if it is configured to:
 
 - point the Snowflake host/account URL at the SPCS public endpoint;
-- keep `Authorization: Snowflake Token="<pat-or-oauth-token>"` on every request for SPCS ingress.
+- keep `Authorization: Snowflake Token="<issued-token>"` on every request for SPCS ingress.
 
-The `embucket-snow` wrapper preserves the normal Snowflake CLI UX while keeping the Snowflake ingress token in `Authorization`. It automatically reads `embucket_spcs_token` next to the generated `config.toml`, which lets the deploy script create a ready-to-run profile without storing the token in the config file.
+The `embucket-snow` wrapper preserves the normal Snowflake CLI UX while keeping the Snowflake ingress token in `Authorization`. By default it logs in through the regular Snowflake profile referenced by `spcs_token_connection`, calls the Python connector's token issue flow, caches the short-lived token in memory, and sends SQL to the SPCS endpoint. The generated PAT file remains a fallback for service-user or offline token-management setups.
 
 With the generated deploy output, the user-facing command is:
 
