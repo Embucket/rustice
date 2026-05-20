@@ -4,10 +4,21 @@ mod tests {
     use crate::models::{
         JsonResponse, LoginRequestBody, LoginRequestData, LoginResponse, QueryRequestBody,
     };
+    use crate::server::layer::require_auth;
+    use crate::server::state::AppState;
     use crate::tests::create_test_server::run_test_rest_api_server;
     use crate::tests::rest_default_cfg;
+    use api_snowflake_rest_sessions::TokenizedSession;
+    use api_snowflake_rest_sessions::layer::Host;
     use axum::body::Bytes;
+    use axum::body::{Body, to_bytes};
+    use axum::extract::State;
     use axum::http;
+    use axum::middleware;
+    use axum::routing::post;
+    use axum::{Extension, Json, Router};
+    use executor::SessionMetadataAttr;
+    use executor::service::make_test_execution_svc;
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use jsonwebtoken::{EncodingKey, Header, encode};
@@ -17,7 +28,7 @@ mod tests {
     use serde_json::json;
     use std::collections::HashMap;
     use std::io::Write;
-    use std::time::Duration;
+    use tower::ServiceExt;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -175,43 +186,62 @@ mod tests {
     #[tokio::test]
     async fn test_spcs_trusted_ingress_query_uses_ingress_session_without_embucket_token() {
         let rest_cfg = rest_default_cfg("json").with_trust_spcs_ingress(true);
-        let addr = run_test_rest_api_server(Some(rest_cfg), None).await;
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap();
-        let host = format!("127.0.0.1:{}", addr.port());
-        let query_url = format!("http://{host}/queries/v1/query-request");
-        let normalized_host = host.split_once(':').map_or(host.as_str(), |(name, _)| name);
+        let execution_svc = make_test_execution_svc().await;
+        let app_state = AppState {
+            execution_svc,
+            config: rest_cfg,
+        };
+        let host = "127.0.0.1:3000";
+        let normalized_host = host.split_once(':').map_or(host, |(name, _)| name);
         let caller_token = make_spcs_caller_token(normalized_host);
 
-        let query_request = QueryRequestBody {
-            sql_text: "SELECT 1;".to_string(),
-            async_exec: Some(false),
-            query_submission_time: Some(1_764_161_275_445),
-        };
+        let app = Router::new()
+            .route("/protected", post(spcs_trusted_session_probe))
+            .with_state(app_state.clone())
+            .layer(Extension(Host(String::default())))
+            .layer(middleware::from_fn_with_state(
+                app_state.clone(),
+                require_auth,
+            ));
 
-        let res = client
-            .request(
-                Method::POST,
-                format!("{query_url}?requestId={}", Uuid::new_v4()),
+        let res = app
+            .oneshot(
+                http::Request::builder()
+                    .method(http::Method::POST)
+                    .uri("/protected")
+                    .header("Host", host)
+                    .header(AUTHORIZATION, "Snowflake Token=\"snowflake.ingress.token\"")
+                    .header("Sf-Context-Current-User", "SNOWFLAKE_USER")
+                    .header("Sf-Context-Current-Account", "SNOWFLAKE_ACCOUNT")
+                    .header("Sf-Context-Current-User-Token", caller_token)
+                    .body(Body::empty())
+                    .unwrap(),
             )
-            .header("Content-Type", "application/json")
-            .header(AUTHORIZATION, "Snowflake Token=\"snowflake.ingress.token\"")
-            .header("Sf-Context-Current-User", "SNOWFLAKE_USER")
-            .header("Sf-Context-Current-Account", "SNOWFLAKE_ACCOUNT")
-            .header("Sf-Context-Current-User-Token", caller_token)
-            .body(serde_json::to_string(&query_request).unwrap())
-            .send()
             .await
             .unwrap();
 
         let status = res.status();
-        let body = res.text().await.unwrap();
-        assert_eq!(http::StatusCode::OK, status, "{body}");
-        let query_response: JsonResponse = serde_json::from_str(&body).unwrap();
-        assert!(query_response.success);
-        assert!(query_response.data.is_some());
+        assert_eq!(http::StatusCode::OK, status);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["user"], "SNOWFLAKE_USER");
+        assert_eq!(body["account"], "SNOWFLAKE_ACCOUNT");
+        assert!(
+            body["session_id"]
+                .as_str()
+                .is_some_and(|session_id| session_id.starts_with("spcs-"))
+        );
+    }
+
+    async fn spcs_trusted_session_probe(
+        State(_state): State<AppState>,
+        TokenizedSession(session_id, metadata): TokenizedSession,
+    ) -> Json<serde_json::Value> {
+        Json(json!({
+            "session_id": session_id,
+            "user": metadata.attr(SessionMetadataAttr::UserName),
+            "account": metadata.attr(SessionMetadataAttr::AccountName),
+        }))
     }
 
     fn make_spcs_caller_token(audience: &str) -> String {
