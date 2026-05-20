@@ -65,6 +65,8 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Install Dependencies
         run: | 
           sudo apt install -y llvm-18 libclang-18-dev
