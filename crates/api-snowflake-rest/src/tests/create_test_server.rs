@@ -10,19 +10,25 @@ use std::net::SocketAddr;
 use std::net::TcpListener;
 use std::ops::Deref;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::Duration;
 use tokio::runtime::Builder;
 use tokio::sync::Notify;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio::sync::Semaphore;
 use tokio::sync::oneshot;
 #[cfg(feature = "traces-test-log")]
 use tracing_subscriber::{fmt, fmt::format::FmtSpan};
 
 static INIT: std::sync::Once = std::sync::Once::new();
+static REST_TEST_SERVER_SEMAPHORE: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(1)));
 
 pub struct TestRestApiServer {
     addr: SocketAddr,
     shutdown_tx: Option<oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
+    _server_permit: OwnedSemaphorePermit,
 }
 
 impl TestRestApiServer {
@@ -70,6 +76,10 @@ pub async fn run_test_rest_api_server(
     rest_cfg: Option<RestApiConfig>,
     executor_cfg: Option<UtilsConfig>,
 ) -> TestRestApiServer {
+    let server_permit = Arc::clone(&REST_TEST_SERVER_SEMAPHORE)
+        .acquire_owned()
+        .await
+        .expect("REST test server semaphore closed");
     let rest_cfg = rest_cfg.unwrap_or_else(|| rest_default_cfg("json"));
     let executor_cfg = executor_cfg.unwrap_or_else(executor_default_cfg);
 
@@ -122,6 +132,7 @@ pub async fn run_test_rest_api_server(
         addr,
         shutdown_tx: Some(shutdown_tx),
         thread: Some(thread),
+        _server_permit: server_permit,
     }
 }
 
