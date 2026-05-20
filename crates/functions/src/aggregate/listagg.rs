@@ -48,13 +48,18 @@ impl AggregateUDFImpl for ListAggUDAF {
     }
 
     fn accumulator(&self, acc_args: AccumulatorArgs) -> Result<Box<dyn Accumulator>> {
-        if acc_args.exprs.is_empty() || acc_args.exprs.len() > 2 {
+        let order_by_arg_count = acc_args.order_bys.len();
+        let listagg_arg_count = acc_args.exprs.len().saturating_sub(order_by_arg_count);
+        if listagg_arg_count == 0 || listagg_arg_count > 2 {
             return exec_err!(
                 "LISTAGG requires 1 or 2 arguments, got {}",
-                acc_args.exprs.len()
+                listagg_arg_count
             );
         }
-        Ok(Box::new(ListAggAccumulator::new(acc_args.is_distinct)))
+        Ok(Box::new(ListAggAccumulator::new(
+            acc_args.is_distinct,
+            order_by_arg_count,
+        )))
     }
 
     fn state_fields(&self, args: StateFieldsArgs) -> Result<Vec<FieldRef>> {
@@ -76,6 +81,10 @@ impl AggregateUDFImpl for ListAggUDAF {
             )),
         ])
     }
+
+    fn supports_within_group_clause(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug)]
@@ -84,16 +93,18 @@ struct ListAggAccumulator {
     delimiter: String,
     delimiter_set: bool,
     is_distinct: bool,
+    value_offset: usize,
     seen_values: HashSet<String>,
 }
 
 impl ListAggAccumulator {
-    fn new(is_distinct: bool) -> Self {
+    fn new(is_distinct: bool, value_offset: usize) -> Self {
         Self {
             result: None,
             delimiter: String::new(),
             delimiter_set: false,
             is_distinct,
+            value_offset,
             seen_values: HashSet::new(),
         }
     }
@@ -121,9 +132,10 @@ impl ListAggAccumulator {
 
 impl Accumulator for ListAggAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
-        if values.is_empty() {
+        if values.len() <= self.value_offset {
             return Ok(());
         }
+        let values = &values[self.value_offset..];
 
         let arr = &values[0];
 

@@ -3,4 +3,12 @@ source: crates/functions/src/tests/aggregate/listagg.rs
 assertion_line: 51
 description: "\"SELECT LISTAGG(name, ' -> ') WITHIN GROUP (ORDER BY name DESC) FROM (VALUES ('apple'), ('banana'), ('cherry')) AS t(name)\""
 ---
-"Error: Error during planning: WITHIN GROUP is only supported for ordered-set aggregate functions"
+Ok(
+    [
+        "+---------------------------------------------------------------------+",
+        "| listagg(t.name,Utf8(\" -> \")) WITHIN GROUP [t.name DESC NULLS FIRST] |",
+        "+---------------------------------------------------------------------+",
+        "| apple -> banana -> cherry                                           |",
+        "+---------------------------------------------------------------------+",
+    ],
+)
