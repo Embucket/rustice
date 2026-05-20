@@ -12,9 +12,6 @@ use std::sync::Arc;
 use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
-// Run unittests:
-// cargo test --workspace --lib --features=state-store-query-test tests::statestore_queries_unittest
-
 const TEST_SESSION_ID: &str = "test_session_id";
 const TEST_DATABASE: &str = "test_database";
 const TEST_SCHEMA: &str = "test_schema";

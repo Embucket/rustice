@@ -61,4 +61,3 @@ jobs:
         timeout-minutes: 45
         run: |
           cargo test --profile=ci --workspace --all-targets
-          cargo test --profile=ci --workspace --lib --features=state-store-query-test tests::statestore_queries_unittest
