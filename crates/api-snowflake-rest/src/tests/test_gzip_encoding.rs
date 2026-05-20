@@ -17,6 +17,7 @@ mod tests {
     use serde_json::json;
     use std::collections::HashMap;
     use std::io::Write;
+    use std::time::Duration;
     use uuid::Uuid;
 
     #[tokio::test]
@@ -175,10 +176,14 @@ mod tests {
     async fn test_spcs_trusted_ingress_query_uses_ingress_session_without_embucket_token() {
         let rest_cfg = rest_default_cfg("json").with_trust_spcs_ingress(true);
         let addr = run_test_rest_api_server(Some(rest_cfg), None).await;
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
         let host = format!("127.0.0.1:{}", addr.port());
         let query_url = format!("http://{host}/queries/v1/query-request");
-        let caller_token = make_spcs_caller_token(&host);
+        let normalized_host = host.split_once(':').map_or(host.as_str(), |(name, _)| name);
+        let caller_token = make_spcs_caller_token(normalized_host);
 
         let query_request = QueryRequestBody {
             sql_text: "SELECT 1;".to_string(),
@@ -210,10 +215,14 @@ mod tests {
     }
 
     fn make_spcs_caller_token(audience: &str) -> String {
+        let issuer = std::env::var("SNOWFLAKE_ISSUER_HOST")
+            .ok()
+            .or_else(|| std::env::var("SNOWFLAKE_HOST").ok())
+            .unwrap_or_else(|| "snowflake-test".to_string());
         let claims = json!({
             "type": "SCT",
             "aud": audience,
-            "iss": "snowflake-test",
+            "iss": issuer,
             "callContext": "CALLER",
             "sub": "20777405349",
             "exp": time::OffsetDateTime::now_utc().unix_timestamp() + 120,
