@@ -2,7 +2,7 @@ use crate::catalog_list::{CatalogListConfig, DEFAULT_CATALOG, EmbucketCatalogLis
 use crate::error::{IcebergSnafu, Result};
 use crate::rest_catalog_config::{
     configure_rest_catalog_auth, rest_catalog_bootstrap_schemas, rest_catalog_bootstrap_tables,
-    rest_catalog_eager_load, rest_catalog_prefix,
+    rest_catalog_eager_load, rest_catalog_prefix, rest_catalog_sql_catalog,
 };
 use datafusion::execution::object_store::ObjectStoreRegistry;
 use iceberg_file_catalog::FileCatalogList;
@@ -39,6 +39,7 @@ pub async fn build_dev_catalog_list(
             configure_rest_catalog_auth(&mut configuration).await?;
 
             let rest_prefix = rest_catalog_prefix(DEFAULT_CATALOG);
+            let rest_sql_catalog = rest_catalog_sql_catalog(DEFAULT_CATALOG);
             let catalog: Arc<dyn Catalog> = Arc::new(RestCatalog::new(
                 Some(&rest_prefix),
                 configuration,
@@ -47,14 +48,14 @@ pub async fn build_dev_catalog_list(
             ));
             if rest_catalog_eager_load() {
                 embucket
-                    .register_iceberg_catalog(DEFAULT_CATALOG, catalog, false)
+                    .register_iceberg_catalog(&rest_sql_catalog, catalog, false)
                     .await?;
             } else {
                 let bootstrap_schemas = rest_catalog_bootstrap_schemas();
                 let bootstrap_tables = rest_catalog_bootstrap_tables();
                 embucket
                     .register_iceberg_catalog_lazy(
-                        DEFAULT_CATALOG,
+                        &rest_sql_catalog,
                         catalog,
                         &bootstrap_schemas,
                         &bootstrap_tables,

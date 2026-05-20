@@ -3558,7 +3558,16 @@ pub fn cast_input_to_target_schema(
     for field in target_schema.fields() {
         let name = field.name();
         let data_type = field.data_type();
-        let (reference, input_field) = get_field(input_schema, name)?;
+        let Ok((reference, input_field)) = get_field(input_schema, name) else {
+            projections.push(
+                DFExpr::TryCast(TryCast::new(
+                    Box::new(lit(ScalarValue::Null)),
+                    data_type.clone(),
+                ))
+                .alias(name),
+            );
+            continue;
+        };
         if input_field.data_type() == data_type {
             if input_field.name() == name {
                 projections.push(col(name));
