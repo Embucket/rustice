@@ -462,9 +462,10 @@ mod tests {
 
             match result {
                 Err(e) => {
+                    let error_msg = e.to_string();
                     assert!(
-                        matches!(e, DataFusionError::ArrowError(..)),
-                        "Expected Arrow error, got: {e}",
+                        error_msg.contains("Encountered non UTF-8 data"),
+                        "Expected non UTF-8 conversion error, got: {e}",
                     );
                 }
                 Ok(_) => panic!("Expected error but query succeeded"),
