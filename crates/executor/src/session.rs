@@ -33,7 +33,7 @@ use std::sync::{Arc, RwLock};
 use std::thread::available_parallelism;
 use time::{Duration, OffsetDateTime};
 
-pub const SESSION_INACTIVITY_EXPIRATION_SECONDS: i64 = 5 * 60;
+pub const SESSION_INACTIVITY_EXPIRATION_SECONDS: i64 = 4 * 60 * 60;
 static MINIMUM_PARALLEL_OUTPUT_FILES: usize = 1;
 static PARALLEL_ROW_GROUP_RATIO: usize = 4;
 

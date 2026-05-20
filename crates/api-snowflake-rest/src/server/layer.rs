@@ -4,7 +4,9 @@ use api_snowflake_rest_sessions::helpers::{
     ensure_jwt_secret_is_valid, get_claims_validate_jwt_token,
 };
 use api_snowflake_rest_sessions::layer::Host;
-use api_snowflake_rest_sessions::session::extract_token_from_auth;
+use api_snowflake_rest_sessions::session::{
+    extract_token_from_auth, redacted_headers, spcs_ingress_session_from_headers,
+};
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
@@ -15,7 +17,7 @@ use snafu::{OptionExt, ResultExt};
     name = "api_snowflake_rest::layer::require_auth",
     level = "trace",
     skip(state, req, next),
-    fields(request_headers = format!("{:#?}", req.headers()), response_headers, session_id),
+    fields(request_headers = %redacted_headers(req.headers()), response_headers, session_id),
     err,
 )]
 pub async fn require_auth(
@@ -26,6 +28,16 @@ pub async fn require_auth(
 ) -> error::Result<impl IntoResponse> {
     // no demo user -> no auth required
     if state.config.auth.demo_user.is_empty() || state.config.auth.demo_password.is_empty() {
+        return Ok(next.run(req).await);
+    }
+
+    if state.config.auth.trust_spcs_ingress
+        && let Some(session) = spcs_ingress_session_from_headers(req.headers())
+    {
+        let session_id = session.session_id().to_string();
+        let mut req = req;
+        req.extensions_mut().insert(session);
+        tracing::Span::current().record("session_id", session_id.as_str());
         return Ok(next.run(req).await);
     }
 
@@ -45,7 +57,7 @@ pub async fn require_auth(
     let response = next.run(req).await;
 
     // Record the result as part of the current span.
-    tracing::Span::current().record("response_headers", format!("{:#?}", response.headers()));
+    tracing::Span::current().record("response_headers", redacted_headers(response.headers()));
 
     Ok(response)
 }

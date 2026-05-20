@@ -8,7 +8,7 @@ use datafusion::execution::SessionState;
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_expr::expressions::Column;
 use datafusion_common::tree_node::{Transformed, TreeNode};
-use datafusion_common::{Statistics, plan_err, project_schema};
+use datafusion_common::{SchemaExt, Statistics, plan_err, project_schema};
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::{Expr, LogicalPlan, TableProviderFilterPushDown, TableScan, TableType};
 use datafusion_physical_plan::ExecutionPlan;
@@ -64,6 +64,33 @@ impl CachingTable {
         *self
             .case_sensitive_schema
             .get_or_init(|| case_sensitive_schema(&self.table.schema()))
+    }
+
+    #[allow(clippy::as_conversions)]
+    fn project_input_to_table_schema(
+        &self,
+        input: Arc<dyn ExecutionPlan>,
+    ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+        let table_schema = self.schema();
+        let input_schema = input.schema();
+
+        if table_schema.equivalent_names_and_types(&input_schema)
+            || !self
+                .normalized_schema()
+                .equivalent_names_and_types(&input_schema)
+        {
+            return Ok(input);
+        }
+
+        let mut projection_exprs = Vec::with_capacity(input_schema.fields().len());
+        for (idx, field) in input_schema.fields().iter().enumerate() {
+            let target_name = table_schema.field(idx).name().clone();
+            projection_exprs.push((
+                Arc::new(Column::new(field.name(), idx)) as Arc<dyn PhysicalExpr>,
+                target_name,
+            ));
+        }
+        Ok(Arc::new(ProjectionExec::try_new(projection_exprs, input)?))
     }
 
     #[allow(clippy::as_conversions)]
@@ -179,6 +206,7 @@ impl TableProvider for CachingTable {
         input: Arc<dyn ExecutionPlan>,
         insert_op: InsertOp,
     ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
+        let input = self.project_input_to_table_schema(input)?;
         self.table.insert_into(state, input, insert_op).await
     }
 }

@@ -1,10 +1,14 @@
 use crate::catalog_list::{CatalogListConfig, DEFAULT_CATALOG, EmbucketCatalogList};
 use crate::error::{IcebergSnafu, Result};
+use crate::rest_catalog_config::{
+    configure_rest_catalog_auth, rest_catalog_bootstrap_schemas, rest_catalog_bootstrap_tables,
+    rest_catalog_eager_load, rest_catalog_prefix,
+};
 use datafusion::execution::object_store::ObjectStoreRegistry;
 use iceberg_file_catalog::FileCatalogList;
 use iceberg_rest_catalog::apis::configuration::Configuration;
-use iceberg_rest_catalog::catalog::RestCatalogList;
-use iceberg_rust::catalog::CatalogList;
+use iceberg_rest_catalog::catalog::RestCatalog;
+use iceberg_rust::catalog::{Catalog, CatalogList};
 use iceberg_rust::error::Error as IcebergError;
 use iceberg_rust::object_store::{Bucket, ObjectStoreBuilder};
 use object_store::local::LocalFileSystem;
@@ -28,15 +32,37 @@ pub async fn build_dev_catalog_list(
 
     let catalog_list: Arc<dyn CatalogList> =
         if catalog_url.starts_with("http:") || catalog_url.starts_with("https:") {
-            let configuration = Configuration {
+            let mut configuration = Configuration {
                 base_path: catalog_url.to_string(),
                 ..Default::default()
             };
-            Arc::new(RestCatalogList::new(
+            configure_rest_catalog_auth(&mut configuration).await?;
+
+            let rest_prefix = rest_catalog_prefix(DEFAULT_CATALOG);
+            let catalog: Arc<dyn Catalog> = Arc::new(RestCatalog::new(
+                Some(&rest_prefix),
                 configuration,
                 Some(ObjectStoreBuilder::s3()),
                 false,
-            ))
+            ));
+            if rest_catalog_eager_load() {
+                embucket
+                    .register_iceberg_catalog(DEFAULT_CATALOG, catalog, false)
+                    .await?;
+            } else {
+                let bootstrap_schemas = rest_catalog_bootstrap_schemas();
+                let bootstrap_tables = rest_catalog_bootstrap_tables();
+                embucket
+                    .register_iceberg_catalog_lazy(
+                        DEFAULT_CATALOG,
+                        catalog,
+                        &bootstrap_schemas,
+                        &bootstrap_tables,
+                        false,
+                    )
+                    .await?;
+            }
+            return Ok(embucket);
         } else {
             let object_store_builder = if catalog_url.starts_with("s3:") {
                 ObjectStoreBuilder::s3()

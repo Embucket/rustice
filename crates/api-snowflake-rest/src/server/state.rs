@@ -1,6 +1,6 @@
 use super::server_models::RestApiConfig;
 use crate::server::core_state::CoreState;
-use api_snowflake_rest_sessions::session::JwtSecret;
+use api_snowflake_rest_sessions::session::{JwtSecret, TrustedSpcsIngress};
 use executor::ExecutionAppState;
 use executor::service::ExecutionService;
 use std::sync::Arc;
@@ -20,6 +20,12 @@ impl ExecutionAppState for AppState {
 impl JwtSecret for AppState {
     fn jwt_secret(&self) -> &str {
         self.config.auth.jwt_secret.as_str()
+    }
+}
+
+impl TrustedSpcsIngress for AppState {
+    fn trust_spcs_ingress(&self) -> bool {
+        self.config.auth.trust_spcs_ingress
     }
 }
 

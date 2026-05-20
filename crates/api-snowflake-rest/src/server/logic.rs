@@ -9,18 +9,30 @@ use crate::server::error::{
 use crate::server::helpers::handle_query_ok_result;
 use api_snowflake_rest_sessions::TokenizedSession;
 use api_snowflake_rest_sessions::helpers::{create_jwt, ensure_jwt_secret_is_valid, jwt_claims};
+use api_snowflake_rest_sessions::session::{
+    SPCS_CURRENT_ACCOUNT_HEADER, redacted_headers, spcs_ingress_session_from_headers,
+};
+use axum::http::HeaderMap;
 use executor::RunningQueryId;
 use executor::models::{QueryContext, SessionMetadata, SessionMetadataAttr};
 use snafu::{OptionExt, ResultExt};
 use time::Duration;
 
 pub const JWT_TOKEN_EXPIRATION_SECONDS: u32 = 3 * 24 * 60 * 60;
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
 
 #[tracing::instrument(
     name = "api_snowflake_rest::handle_login_request",
     level = "debug",
-    skip(state, credentials),
-    fields(session_metadata),
+    skip(state, credentials, headers),
+    fields(session_metadata, request_headers = %redacted_headers(headers)),
     err,
     ret(level = tracing::Level::TRACE)
 )]
@@ -30,23 +42,44 @@ pub async fn handle_login_request(
     credentials: LoginRequestData,
     params: LoginRequestQueryParams,
     client_ip: Option<String>,
+    headers: &HeaderMap,
 ) -> Result<LoginResponse> {
     let LoginRequestData {
-        login_name,
+        login_name: requested_login_name,
         password,
-        account_name,
+        account_name: requested_account_name,
         client_app_id,
         client_app_version,
         ..
     } = credentials;
 
-    if login_name != *state.config.auth.demo_user || password != *state.config.auth.demo_password {
-        return api_snowflake_rest_error::InvalidAuthDataSnafu.fail();
-    }
+    let spcs_session = if state.config.auth.trust_spcs_ingress {
+        Some(
+            spcs_ingress_session_from_headers(headers)
+                .context(api_snowflake_rest_error::InvalidAuthDataSnafu)?,
+        )
+    } else {
+        None
+    };
 
-    // host is required to check token audience claim
-    let jwt_secret = &*state.config.auth.jwt_secret;
-    let _ = ensure_jwt_secret_is_valid(jwt_secret).context(NoJwtSecretSnafu)?;
+    let login_name = if let Some(session) = spcs_session.as_ref() {
+        session
+            .metadata()
+            .attr(SessionMetadataAttr::UserName)
+            .context(api_snowflake_rest_error::InvalidAuthDataSnafu)?
+    } else {
+        if requested_login_name != *state.config.auth.demo_user
+            || password != *state.config.auth.demo_password
+        {
+            return api_snowflake_rest_error::InvalidAuthDataSnafu.fail();
+        }
+        requested_login_name
+    };
+    let account_name = spcs_session
+        .as_ref()
+        .and_then(|session| session.metadata().attr(SessionMetadataAttr::AccountName))
+        .or_else(|| header_value(headers, SPCS_CURRENT_ACCOUNT_HEADER))
+        .unwrap_or(requested_account_name);
 
     let mut session_metadata = SessionMetadata::default();
     session_metadata.set_attr(SessionMetadataAttr::UserName, login_name.clone());
@@ -66,24 +99,33 @@ pub async fn handle_login_request(
 
     tracing::Span::current().record("session_metadata", format!("{session_metadata:?}"));
 
-    let tokenized_session = TokenizedSession::default().with_metadata(session_metadata);
+    let tokenized_session = spcs_session
+        .unwrap_or_default()
+        .with_metadata(session_metadata);
 
-    let jwt_claims = jwt_claims(
-        &login_name,
-        &host,
-        Duration::seconds(JWT_TOKEN_EXPIRATION_SECONDS.into()),
-        tokenized_session,
-    );
+    let session_id = tokenized_session.session_id().to_string();
+    let _session = state.execution_svc.create_session(&session_id).await?;
 
-    tracing::info!("Host '{host}' for token creation");
+    let token = if state.config.auth.trust_spcs_ingress {
+        session_id
+    } else {
+        // host is required to check token audience claim
+        let jwt_secret = &*state.config.auth.jwt_secret;
+        let _ = ensure_jwt_secret_is_valid(jwt_secret).context(NoJwtSecretSnafu)?;
 
-    let session_id = jwt_claims.session.session_id();
-    let _session = state.execution_svc.create_session(session_id).await?;
+        let jwt_claims = jwt_claims(
+            &login_name,
+            &host,
+            Duration::seconds(JWT_TOKEN_EXPIRATION_SECONDS.into()),
+            tokenized_session,
+        );
 
-    let jwt_token = create_jwt(&jwt_claims, jwt_secret).context(CreateJwtSnafu)?;
+        tracing::info!("Host '{host}' for token creation");
+        create_jwt(&jwt_claims, jwt_secret).context(CreateJwtSnafu)?
+    };
 
     Ok(LoginResponse {
-        data: Option::from(LoginResponseData { token: jwt_token }),
+        data: Option::from(LoginResponseData { token }),
         success: true,
         message: Option::from("successfully executed".to_string()),
     })

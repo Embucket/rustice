@@ -19,6 +19,7 @@ use std::sync::Arc;
 pub struct CachingSchema {
     pub schema: Arc<dyn SchemaProvider>,
     pub iceberg_catalog: Option<Arc<dyn Catalog>>,
+    pub iceberg_namespace: String,
     pub name: String,
     pub tables_cache: DashMap<String, Arc<CachingTable>>,
     pub config: CatalogConfig,
@@ -45,6 +46,11 @@ impl SchemaProvider for CachingSchema {
         // Sorted for the same reason as `CachingCatalog::schema_names`: the
         // underlying iceberg mirror is a DashMap with non-deterministic order.
         let mut names = self.schema.table_names();
+        for table in &self.tables_cache {
+            if !names.contains(table.key()) {
+                names.push(table.key().clone());
+            }
+        }
         names.sort();
         names
     }
@@ -163,7 +169,7 @@ impl CachingSchema {
             .clone()
             .ok_or_else(|| iceberg_rust::error::Error::NotFound("iceberg catalog".to_string()))
             .context(error::IcebergSnafu)?;
-        let namespace = vec![self.name.clone()];
+        let namespace = vec![self.iceberg_namespace.clone()];
         let ident = Identifier::new(&namespace, &name);
         let iceberg_table = builder
             .build(ident.namespace(), catalog)
@@ -199,7 +205,7 @@ impl CachingSchema {
         let removed = self.tables_cache.remove(name).map(|(_, t)| t);
 
         if let Some(catalog) = &self.iceberg_catalog {
-            let namespace = vec![self.name.clone()];
+            let namespace = vec![self.iceberg_namespace.clone()];
             let ident = Identifier::new(&namespace, name);
             // Best-effort: ignore errors when dropping a view through this path —
             // views go through deregister via the catalog provider, not here.

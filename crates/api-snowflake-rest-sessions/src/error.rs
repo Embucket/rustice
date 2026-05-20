@@ -44,6 +44,12 @@ pub enum Error {
         location: Location,
     },
 
+    #[snafu(display("Missing auth token"))]
+    MissingAuthToken {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Can't authenticate request: Host is missing"))]
     MissingHost {
         #[snafu(implicit)]
@@ -70,6 +76,7 @@ impl IntoResponse for Error {
         let message = self.to_string();
         let code = match self {
             Self::BadAuthToken { .. }
+            | Self::MissingAuthToken { .. }
             | Self::MissingHost { .. }
             | Self::ExtensionRejection { .. } => StatusCode::UNAUTHORIZED,
             _ => StatusCode::INTERNAL_SERVER_ERROR,

@@ -7,8 +7,10 @@ use crate::server::error::Result;
 use crate::server::logic::{handle_login_request, handle_query_request};
 use api_snowflake_rest_sessions::TokenizedSession;
 use api_snowflake_rest_sessions::layer::Host;
+use api_snowflake_rest_sessions::session::redacted_headers;
 use axum::Json;
 use axum::extract::{ConnectInfo, Query, State};
+use axum::http::HeaderMap;
 use executor::RunningQueryId;
 use serde::Deserialize;
 use std::net::SocketAddr;
@@ -23,12 +25,20 @@ pub struct SessionQueryParams {
     request_guid: Option<String>,
 }
 
-#[tracing::instrument(name = "api_snowflake_rest::login", level = "debug", skip(state), err, ret(level = tracing::Level::TRACE))]
+#[tracing::instrument(
+    name = "api_snowflake_rest::login",
+    level = "debug",
+    skip(state, headers, login_request),
+    fields(request_headers = %redacted_headers(&headers)),
+    err,
+    ret(level = tracing::Level::TRACE)
+)]
 pub async fn login(
     Host(host): Host,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
     Query(params): Query<LoginRequestQueryParams>,
+    headers: HeaderMap,
     Json(login_request): Json<LoginRequestBody>,
 ) -> Result<Json<LoginResponse>> {
     let response = handle_login_request(
@@ -37,6 +47,7 @@ pub async fn login(
         login_request.data,
         params,
         Option::from(addr.ip().to_string()),
+        &headers,
     )
     .await?;
     Ok(Json(response))
@@ -120,4 +131,24 @@ pub async fn session(
     }
 
     Ok(Json(serde_json::value::Value::Null))
+}
+
+#[tracing::instrument(
+    name = "api_snowflake_rest::heartbeat",
+    level = "debug",
+    skip(_state),
+    fields(session_id = %tokenized_session.session_id()),
+    err,
+    ret(level = tracing::Level::TRACE)
+)]
+pub async fn heartbeat(
+    tokenized_session: TokenizedSession,
+    State(_state): State<AppState>,
+) -> Result<Json<serde_json::value::Value>> {
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "code": null,
+        "message": null,
+        "data": null,
+    })))
 }

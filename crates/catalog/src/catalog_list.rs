@@ -6,11 +6,12 @@ use crate::table::CachingTable;
 use crate::utils::fetch_table_providers;
 use dashmap::DashMap;
 use datafusion::{
-    catalog::{CatalogProvider, CatalogProviderList},
+    catalog::{CatalogProvider, CatalogProviderList, MemorySchemaProvider},
     execution::object_store::ObjectStoreRegistry,
 };
+use datafusion_common::DataFusionError;
 use datafusion_iceberg::catalog::catalog::IcebergCatalog as DataFusionIcebergCatalog;
-use iceberg_rust::catalog::Catalog;
+use iceberg_rust::catalog::{Catalog, identifier::Identifier};
 use object_store::ObjectStore;
 use object_store::local::LocalFileSystem;
 use snafu::ResultExt;
@@ -90,6 +91,88 @@ impl EmbucketCatalogList {
         Ok(())
     }
 
+    /// Register an Iceberg catalog without eagerly listing every namespace and
+    /// tabular. This is useful for remote catalogs that allow direct table
+    /// access but restrict broad list operations.
+    pub async fn register_iceberg_catalog_lazy(
+        &self,
+        name: &str,
+        iceberg_catalog: Arc<dyn Catalog>,
+        bootstrap_schemas: &[String],
+        bootstrap_tables: &[String],
+        should_refresh: bool,
+    ) -> Result<()> {
+        let iceberg_provider = DataFusionIcebergCatalog::new_sync(iceberg_catalog.clone(), None);
+
+        for schema in bootstrap_schemas {
+            iceberg_provider
+                .register_schema(schema, Arc::new(MemorySchemaProvider::new()))
+                .context(catalog_error::DataFusionSnafu)?;
+        }
+
+        let mut table_identifiers = Vec::with_capacity(bootstrap_tables.len());
+        for table in bootstrap_tables {
+            let Some(identifier) = parse_bootstrap_table_identifier(table)? else {
+                continue;
+            };
+            let namespace = identifier.namespace().join(".");
+            for namespace_alias in case_aliases(&namespace) {
+                if !iceberg_provider.mirror().schema_exists(&namespace_alias) {
+                    iceberg_provider
+                        .register_schema(&namespace_alias, Arc::new(MemorySchemaProvider::new()))
+                        .context(catalog_error::DataFusionSnafu)?;
+                }
+            }
+            iceberg_provider
+                .mirror()
+                .register_table(identifier.clone())
+                .context(catalog_error::DataFusionSnafu)?;
+            table_identifiers.push(identifier);
+        }
+
+        let catalog_provider: Arc<dyn CatalogProvider> = Arc::new(iceberg_provider);
+
+        let caching = CachingCatalog::new(
+            catalog_provider,
+            name.to_owned(),
+            Some(iceberg_catalog),
+            (&self.config).into(),
+        )
+        .with_refresh(should_refresh)
+        .with_properties(Properties::default());
+
+        for identifier in table_identifiers {
+            let namespace = identifier.namespace().join(".");
+            let table_name = identifier.name().to_owned();
+            let exact_schema = bootstrap_caching_schema(&caching, &namespace, &namespace)?;
+            let table_provider = exact_schema
+                .schema
+                .table(&table_name)
+                .await
+                .context(catalog_error::DataFusionSnafu)?
+                .ok_or_else(|| {
+                    DataFusionError::Internal(format!(
+                        "Bootstrap Iceberg table {identifier} was not found"
+                    ))
+                })
+                .context(catalog_error::DataFusionSnafu)?;
+
+            for namespace_alias in case_aliases(&namespace) {
+                let caching_schema =
+                    bootstrap_caching_schema(&caching, &namespace_alias, &namespace)?;
+                for table_alias in case_aliases(&table_name) {
+                    caching_schema.tables_cache.insert(
+                        table_alias.clone(),
+                        Arc::new(CachingTable::new(table_alias, Arc::clone(&table_provider))),
+                    );
+                }
+            }
+        }
+
+        self.catalogs.insert(name.to_owned(), Arc::new(caching));
+        Ok(())
+    }
+
     #[allow(clippy::as_conversions)]
     #[tracing::instrument(
         name = "EmbucketCatalogList::refresh",
@@ -122,6 +205,7 @@ impl EmbucketCatalogList {
                             tables_cache: DashMap::default(),
                             name: schema.clone(),
                             iceberg_catalog: catalog.iceberg_catalog.clone(),
+                            iceberg_namespace: schema.clone(),
                             config: catalog.config.clone(),
                         };
                         let table_providers = fetch_table_providers(
@@ -156,6 +240,70 @@ impl EmbucketCatalogList {
         }
         Ok(())
     }
+}
+
+fn parse_bootstrap_table_identifier(table: &str) -> Result<Option<Identifier>> {
+    let ident_parts: Vec<String> = table
+        .split('.')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    if ident_parts.len() < 2 {
+        return Ok(None);
+    }
+
+    Identifier::try_new(&ident_parts, None)
+        .map(Some)
+        .map_err(|error| DataFusionError::External(Box::new(error)))
+        .context(catalog_error::DataFusionSnafu)
+}
+
+fn bootstrap_caching_schema(
+    catalog: &CachingCatalog,
+    namespace: &str,
+    iceberg_namespace: &str,
+) -> Result<Arc<CachingSchema>> {
+    if let Some(schema) = catalog.schemas_cache.get(namespace) {
+        return Ok(Arc::clone(schema.value()));
+    }
+
+    let schema_provider = catalog
+        .catalog
+        .schema(namespace)
+        .ok_or_else(|| {
+            DataFusionError::Internal(format!(
+                "Bootstrap Iceberg schema {namespace} was not found"
+            ))
+        })
+        .context(catalog_error::DataFusionSnafu)?;
+
+    let caching_schema = Arc::new(CachingSchema {
+        schema: schema_provider,
+        iceberg_catalog: catalog.iceberg_catalog.clone(),
+        iceberg_namespace: iceberg_namespace.to_string(),
+        name: namespace.to_string(),
+        tables_cache: DashMap::default(),
+        config: catalog.config.clone(),
+    });
+    catalog
+        .schemas_cache
+        .insert(namespace.to_string(), Arc::clone(&caching_schema));
+    Ok(caching_schema)
+}
+
+fn case_aliases(name: &str) -> Vec<String> {
+    let mut aliases = Vec::with_capacity(3);
+    for alias in [
+        name.to_owned(),
+        name.to_ascii_lowercase(),
+        name.to_ascii_uppercase(),
+    ] {
+        if !aliases.contains(&alias) {
+            aliases.push(alias);
+        }
+    }
+    aliases
 }
 
 impl std::fmt::Debug for EmbucketCatalogList {

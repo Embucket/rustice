@@ -135,6 +135,14 @@ pub struct CliOpts {
 
     #[arg(
         long,
+        env = "AUTH_TRUST_SPCS_INGRESS",
+        default_value = "false",
+        help = "Trust Snowflake SPCS ingress caller context for Snowflake-compatible REST sessions"
+    )]
+    pub auth_trust_spcs_ingress: bool,
+
+    #[arg(
+        long,
         env = "OTEL_EXPORTER_OTLP_PROTOCOL",
         default_value = "grpc",
         help = "OpenTelemetry Exporter Protocol"

@@ -460,7 +460,7 @@ fn test_table_function_result_scan() -> DFResult<()> {
         (
             "select a.*, b.IS_ICEBERG as 'is_iceberg'
             from table(result_scan(last_query_id(-1))) a left join test as b on a.t = b.t",
-            "SELECT a.*, b.IS_ICEBERG AS 'is_iceberg' FROM result_scan(last_query_id(-1)) AS a LEFT JOIN test AS b ON a.t = b.t",
+            "SELECT a.*, b.IS_ICEBERG AS 'is_iceberg' FROM result_scan(last_query_id(-1)) a LEFT JOIN test AS b ON a.t = b.t",
         ),
         (
             "SELECT * FROM TABLE(FLATTEN(input => parse_json('[1, 77]')))",
@@ -511,7 +511,7 @@ fn test_table_function_cte() -> DFResult<()> {
             SELECT * FROM intermediate;"#,
             "WITH base AS (SELECT '{\"a\": 1}' AS jsontext), intermediate AS \
            (SELECT value FROM base, LATERAL FLATTEN(INPUT => parse_json((SELECT jsontext FROM \
-           (SELECT '{\"a\": 1}' AS jsontext) AS base))) AS d) SELECT * FROM intermediate",
+           (SELECT '{\"a\": 1}' AS jsontext) AS base))) d) SELECT * FROM intermediate",
         ),
         (
             "WITH source AS (
@@ -529,9 +529,9 @@ fn test_table_function_cte() -> DFResult<()> {
                 SELECT * FROM data_points_flushed_out;",
             "WITH source AS (SELECT jsontext FROM test), metric_per_row AS \
             (SELECT value AS datapoints FROM source, LATERAL FLATTEN(INPUT => parse_json(\
-            (SELECT jsontext FROM (SELECT jsontext FROM test) AS source))) AS d), data_points_flushed_out AS \
+            (SELECT jsontext FROM (SELECT jsontext FROM test) AS source))) d), data_points_flushed_out AS \
             (SELECT metric_value FROM metric_per_row, LATERAL FLATTEN(INPUT => \
-            (SELECT datapoints FROM (SELECT value AS datapoints FROM (SELECT jsontext FROM test), LATERAL FLATTEN(INPUT => parse_json(jsontext)) AS d) AS metric_per_row)) AS dp) \
+            (SELECT datapoints FROM (SELECT value AS datapoints FROM (SELECT jsontext FROM test), LATERAL FLATTEN(INPUT => parse_json(jsontext)) d) AS metric_per_row)) dp) \
             SELECT * FROM data_points_flushed_out",
         ),
         (
@@ -544,7 +544,7 @@ fn test_table_function_cte() -> DFResult<()> {
                 )
                 SELECT * FROM recursive_cte;",
             "WITH recursive_cte AS (SELECT 1 AS id, '[1,2,3]' AS arr UNION ALL SELECT id + 1, arr \
-             FROM recursive_cte, LATERAL FLATTEN(INPUT => parse_json(arr)) AS f) \
+             FROM recursive_cte, LATERAL FLATTEN(INPUT => parse_json(arr)) f) \
              SELECT * FROM recursive_cte",
         ),
     ];

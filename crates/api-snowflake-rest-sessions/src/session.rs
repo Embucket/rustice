@@ -3,20 +3,28 @@ use crate::error::BadAuthTokenSnafu;
 use crate::helpers::get_claims_validate_jwt_token;
 use axum::extract::FromRequestParts;
 use executor::ExecutionAppState;
-use executor::SessionMetadata;
 use executor::service::ExecutionService;
+use executor::{SessionMetadata, SessionMetadataAttr};
 use http::header::COOKIE;
 use http::request::Parts;
 use http::{HeaderMap, HeaderName};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use snafu::{OptionExt, ResultExt};
-use std::{collections::HashMap, sync::Arc};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, HashMap};
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub const SESSION_ID_COOKIE_NAME: &str = "session_id";
+pub const SPCS_CURRENT_USER_HEADER: &str = "sf-context-current-user";
+pub const SPCS_CURRENT_ACCOUNT_HEADER: &str = "sf-context-current-account";
+pub const SPCS_CURRENT_USER_TOKEN_HEADER: &str = "sf-context-current-user-token";
 
-pub const SESSION_EXPIRATION_SECONDS: u64 = 60;
+pub const SESSION_EXPIRATION_SECONDS: u64 = 4 * 60 * 60;
+const REDACTED_HEADER_VALUE: &str = "<redacted>";
 
 #[derive(Clone)]
 pub struct SessionStore {
@@ -39,6 +47,10 @@ impl SessionStore {
 
 pub trait JwtSecret {
     fn jwt_secret(&self) -> &str;
+}
+
+pub trait TrustedSpcsIngress {
+    fn trust_spcs_ingress(&self) -> bool;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,7 +87,7 @@ impl TokenizedSession {
 
 impl<S> FromRequestParts<S> for TokenizedSession
 where
-    S: Send + Sync + ExecutionAppState + JwtSecret,
+    S: Send + Sync + ExecutionAppState + JwtSecret + TrustedSpcsIngress,
 {
     type Rejection = session_error::Error;
 
@@ -97,7 +109,11 @@ where
         //     .context(session_error::ExtensionRejectionSnafu)?;
         // tracing::info!("Host '{host}' extracted from TokenizedSession");
 
-        let (session, located_at) = if let Some(token) = extract_token_from_auth(&req.headers) {
+        let (session, located_at) = if state.trust_spcs_ingress()
+            && let Some(session) = spcs_ingress_session_from_headers(&req.headers)
+        {
+            (session, "spcs ingress headers")
+        } else if let Some(token) = extract_token_from_auth(&req.headers) {
             // host is require to check token audience claim
             let host = req.headers.get("host");
             let host = host.and_then(|host| host.to_str().ok());
@@ -109,8 +125,10 @@ where
 
             (jwt_claims.session, "auth header")
         } else {
-            //This is guaranteed by the `propagate_session_cookie`, so we can unwrap
-            let session = req.extensions.get::<Self>().unwrap();
+            let session = req
+                .extensions
+                .get::<Self>()
+                .context(session_error::MissingAuthTokenSnafu)?;
             (session.clone(), "extensions")
         };
 
@@ -161,17 +179,269 @@ impl TokenizedSession {
 // Where it's used in the `require_auth` layer as part of the session flow and where it was originally from.
 #[must_use]
 pub fn extract_token_from_auth(headers: &HeaderMap) -> Option<String> {
-    //First we check the header
-    headers.get("authorization").and_then(|value| {
-        value.to_str().ok().and_then(|auth| {
-            #[allow(clippy::unwrap_used)]
-            let re = Regex::new(
-                r#"Snowflake Token="([A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})""#
-            ).unwrap();
-            re.captures(auth)
-                .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
-        })
+    headers
+        .get("authorization")
+        .and_then(extract_token_from_header_value)
+}
+
+#[must_use]
+pub fn redacted_headers(headers: &HeaderMap) -> String {
+    let mut redacted = BTreeMap::<String, Vec<String>>::new();
+    for (name, value) in headers {
+        let name = name.as_str();
+        let value = if is_sensitive_header(name) {
+            REDACTED_HEADER_VALUE.to_string()
+        } else {
+            value
+                .to_str()
+                .map_or_else(|_| "<non-utf8>".to_string(), ToOwned::to_owned)
+        };
+        redacted.entry(name.to_string()).or_default().push(value);
+    }
+
+    format!("{redacted:#?}")
+}
+
+fn is_sensitive_header(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name == "authorization"
+        || name == "proxy-authorization"
+        || name == "cookie"
+        || name == "set-cookie"
+        || name.contains("token")
+}
+
+fn extract_token_from_header_value(value: &http::HeaderValue) -> Option<String> {
+    value.to_str().ok().and_then(|auth| {
+        #[allow(clippy::unwrap_used)]
+        let re = Regex::new(
+            r#"Snowflake Token="([A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})""#,
+        )
+        .unwrap();
+        re.captures(auth)
+            .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
     })
+}
+
+#[must_use]
+pub fn spcs_ingress_session_from_headers(headers: &HeaderMap) -> Option<TokenizedSession> {
+    let user = header_value(headers, SPCS_CURRENT_USER_HEADER)?;
+    let account = header_value(headers, SPCS_CURRENT_ACCOUNT_HEADER).unwrap_or_default();
+    let user_token = header_value(headers, SPCS_CURRENT_USER_TOKEN_HEADER);
+
+    let mut hasher = DefaultHasher::new();
+    if let Some(token) = user_token.as_deref() {
+        let claims = validated_spcs_caller_token_claims(token, &user, headers)?;
+        "sct".hash(&mut hasher);
+        claims.iss.as_deref().unwrap_or_default().hash(&mut hasher);
+        claims
+            .aud
+            .as_ref()
+            .map(JwtAudience::canonical)
+            .unwrap_or_default()
+            .hash(&mut hasher);
+        claims
+            .sub
+            .as_deref()
+            .unwrap_or(user.as_str())
+            .hash(&mut hasher);
+        account.hash(&mut hasher);
+    } else {
+        "user".hash(&mut hasher);
+        account.hash(&mut hasher);
+        user.hash(&mut hasher);
+    }
+    let session_id = format!("spcs-{:016x}", hasher.finish());
+
+    let mut metadata = SessionMetadata::default();
+    metadata.set_attr(SessionMetadataAttr::UserName, user);
+    if !account.is_empty() {
+        metadata.set_attr(SessionMetadataAttr::AccountName, account);
+    }
+
+    Some(TokenizedSession::new(session_id).with_metadata(metadata))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SpcsCallerTokenClaims {
+    #[serde(rename = "type")]
+    token_type: Option<String>,
+    aud: Option<JwtAudience>,
+    iss: Option<String>,
+    call_context: Option<String>,
+    sub: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum JwtAudience {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl JwtAudience {
+    fn contains(&self, expected: &str) -> bool {
+        match self {
+            Self::One(aud) => aud == expected,
+            Self::Many(audiences) => audiences.iter().any(|aud| aud == expected),
+        }
+    }
+
+    fn canonical(&self) -> String {
+        match self {
+            Self::One(aud) => aud.clone(),
+            Self::Many(audiences) => {
+                let mut audiences = audiences.clone();
+                audiences.sort_unstable();
+                audiences.join(",")
+            }
+        }
+    }
+}
+
+fn validated_spcs_caller_token_claims(
+    token: &str,
+    user: &str,
+    headers: &HeaderMap,
+) -> Option<SpcsCallerTokenClaims> {
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.insecure_disable_signature_validation();
+    validation.validate_aud = false;
+    validation.set_required_spec_claims(&["exp", "aud", "iss", "sub"]);
+
+    let Ok(decoded) =
+        decode::<SpcsCallerTokenClaims>(token, &DecodingKey::from_secret(&[]), &validation)
+    else {
+        tracing::warn!("Rejecting SPCS caller token with invalid JWT structure or expiry");
+        return None;
+    };
+
+    let claims = decoded.claims;
+    if !spcs_caller_token_claims_match(&claims, user, headers) {
+        return None;
+    }
+
+    Some(claims)
+}
+
+fn spcs_caller_token_claims_match(
+    claims: &SpcsCallerTokenClaims,
+    user: &str,
+    headers: &HeaderMap,
+) -> bool {
+    if claims.token_type.as_deref() != Some("SCT") {
+        tracing::warn!("Rejecting SPCS caller token with non-SCT type");
+        return false;
+    }
+    if claims.call_context.as_deref() != Some("CALLER") {
+        tracing::warn!("Rejecting SPCS caller token with non-CALLER context");
+        return false;
+    }
+
+    spcs_caller_subject_matches(claims, user)
+        && spcs_caller_audience_matches(claims, headers)
+        && spcs_caller_issuer_matches(claims)
+}
+
+fn spcs_caller_subject_matches(claims: &SpcsCallerTokenClaims, user: &str) -> bool {
+    let Some(sub) = claims
+        .sub
+        .as_deref()
+        .map(str::trim)
+        .filter(|sub| !sub.is_empty())
+    else {
+        tracing::warn!("Rejecting SPCS caller token without subject");
+        return false;
+    };
+
+    if !sub.eq_ignore_ascii_case(user) {
+        tracing::debug!(
+            sub,
+            user,
+            "SPCS caller token subject differs from current user header; treating subject as Snowflake principal id"
+        );
+    }
+
+    true
+}
+
+fn spcs_caller_audience_matches(claims: &SpcsCallerTokenClaims, headers: &HeaderMap) -> bool {
+    let Some(host) = header_value(headers, "host") else {
+        return true;
+    };
+
+    let normalized_host = host
+        .trim_end_matches('.')
+        .split_once(':')
+        .map_or(host.as_str(), |(name, _)| name);
+    let endpoint_id = normalized_host
+        .split_once('.')
+        .map_or(normalized_host, |(name, _)| name);
+
+    if claims
+        .aud
+        .as_ref()
+        .is_some_and(|aud| aud.contains(normalized_host) || aud.contains(endpoint_id))
+    {
+        return true;
+    }
+
+    tracing::warn!("Rejecting SPCS caller token with mismatched audience");
+    false
+}
+
+fn spcs_caller_issuer_matches(claims: &SpcsCallerTokenClaims) -> bool {
+    let Some(expected_issuer) = std::env::var("SNOWFLAKE_ISSUER_HOST")
+        .ok()
+        .or_else(|| std::env::var("SNOWFLAKE_HOST").ok())
+    else {
+        return true;
+    };
+
+    if claims
+        .iss
+        .as_deref()
+        .is_some_and(|iss| issuer_matches(iss, &expected_issuer))
+    {
+        return true;
+    }
+
+    tracing::warn!("Rejecting SPCS caller token with mismatched issuer");
+    false
+}
+
+fn issuer_matches(issuer: &str, expected_host: &str) -> bool {
+    let Some(issuer_host) = normalized_url_host(issuer) else {
+        return false;
+    };
+    let Some(expected_host) = normalized_url_host(expected_host) else {
+        return false;
+    };
+
+    issuer_host.eq_ignore_ascii_case(expected_host)
+}
+
+fn normalized_url_host(value: &str) -> Option<&str> {
+    let value = value.trim();
+    let value = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+        .unwrap_or(value);
+    let value = value.split_once('/').map_or(value, |(host, _)| host);
+    let value = value.trim_end_matches('.');
+    let value = value.split_once(':').map_or(value, |(host, _)| host);
+
+    (!value.is_empty()).then_some(value)
+}
+
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 #[must_use]
@@ -203,15 +473,89 @@ pub fn cookies_from_header(headers: &HeaderMap, header_name: HeaderName) -> Hash
 
 #[cfg(test)]
 mod tests {
-    use crate::session::SessionStore;
+    use crate::session::{
+        JwtAudience, SessionStore, SpcsCallerTokenClaims, extract_token_from_auth, issuer_matches,
+        redacted_headers, spcs_caller_audience_matches,
+    };
     use executor::models::QueryContext;
     use executor::service::ExecutionService;
     use executor::service::make_test_execution_svc;
     use executor::session::to_unix;
+    use http::{HeaderMap, HeaderName, HeaderValue, header};
     use std::sync::atomic::Ordering;
     use std::time::Duration;
     use time::OffsetDateTime;
     use tokio::time::sleep;
+
+    #[test]
+    fn extracts_snowflake_token_from_authorization_header() {
+        let token = "11111111-1111-1111-1111-111111111111";
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Snowflake Token=\"11111111-1111-1111-1111-111111111111\""),
+        );
+
+        assert_eq!(extract_token_from_auth(&headers), Some(token.to_string()));
+    }
+
+    #[test]
+    fn redacts_sensitive_headers_for_tracing() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Snowflake Token=\"secret\""),
+        );
+        headers.insert(
+            HeaderName::from_static("sf-context-current-user-token"),
+            HeaderValue::from_static("sct-secret"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-request-id"),
+            HeaderValue::from_static("request-1"),
+        );
+
+        let formatted = redacted_headers(&headers);
+
+        assert!(!formatted.contains("Snowflake Token"));
+        assert!(!formatted.contains("sct-secret"));
+        assert!(formatted.contains("<redacted>"));
+        assert!(formatted.contains("request-1"));
+    }
+
+    #[test]
+    fn accepts_spcs_endpoint_id_as_caller_token_audience() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::HOST,
+            HeaderValue::from_static("igxz2e-iwuwgvk-lv71752.snowflakecomputing.app"),
+        );
+        let claims = SpcsCallerTokenClaims {
+            token_type: Some("SCT".to_string()),
+            aud: Some(JwtAudience::One("igxz2e-iwuwgvk-lv71752".to_string())),
+            iss: Some("snowflake-test".to_string()),
+            call_context: Some("CALLER".to_string()),
+            sub: Some("81161852".to_string()),
+        };
+
+        assert!(spcs_caller_audience_matches(&claims, &headers));
+    }
+
+    #[test]
+    fn accepts_spcs_issuer_host_with_scheme_and_case_differences() {
+        assert!(issuer_matches(
+            "https://AA06228.us-east-2.aws.snowflakecomputing.com/",
+            "aa06228.us-east-2.aws.snowflakecomputing.com",
+        ));
+        assert!(issuer_matches(
+            "https://AA06228.us-east-2.aws.snowflakecomputing.com",
+            "AA06228.us-east-2.aws.snowflakecomputing.com:443",
+        ));
+        assert!(!issuer_matches(
+            "https://OTHER.us-east-2.aws.snowflakecomputing.com",
+            "AA06228.us-east-2.aws.snowflakecomputing.com",
+        ));
+    }
 
     #[tokio::test]
     #[allow(clippy::expect_used, clippy::too_many_lines)]
