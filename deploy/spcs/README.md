@@ -2,6 +2,217 @@
 
 This directory deploys the `embucketd` container from `rustice` to Snowpark Container Services (SPCS) by using Snowflake CLI SQL commands.
 
+## Prerequisites
+
+- Snowflake CLI is installed and has a working connection profile, for example `snowflake`.
+- The Snowflake role used by that profile can create SPCS resources: database/schema, image repository, compute pool, external access integration, secrets, service users, PATs, and services.
+- Docker or Podman is running locally. The script copies the selected image into the Snowflake image registry because SPCS runs images from Snowflake's registry.
+- `embucket-snow` is installed from [Embucket/embucket-snowflake-connector](https://github.com/Embucket/embucket-snowflake-connector). It uses the generated config to query Rustice through the SPCS ingress endpoint.
+- The target Snowflake-managed Iceberg database/schema exists, and `RUSTICE_HORIZON_ROLE` has access to the tables you want Rustice to read or write.
+
+Check the Snowflake profile before deploying:
+
+```bash
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SELECT CURRENT_ORGANIZATION_NAME(), CURRENT_ACCOUNT_NAME(), CURRENT_REGION(), CURRENT_ROLE()"
+```
+
+## Deploy With Script
+
+Use this path for the normal first deployment. It creates the Snowflake-side SPCS objects, pushes the selected Rustice image into the Snowflake image registry, waits for the service to become `READY`, and writes an `embucket-snow` config.
+
+Deploy the default one-node `CPU_X64_XS` service:
+
+```bash
+SNOW_CONFIG_FILE=/path/to/config.toml \
+SNOW_CONNECTION=snowflake \
+RUSTICE_HORIZON_DATABASE=RUSTICE_E2E \
+RUSTICE_HORIZON_ROLE=RUSTICE_E2E_ROLE \
+RUSTICE_GRANT_TO_ROLE=<role-used-by-snowflake-profile> \
+RUSTICE_HORIZON_TABLES=PUBLIC.SMOKE \
+RUSTICE_IMAGE_TAG=latest \
+./deploy/spcs/deploy.sh
+```
+
+Use the role returned by `CURRENT_ROLE()` as `RUSTICE_GRANT_TO_ROLE` when that same profile should also run `embucket-snow` through the generated config.
+
+For local PR testing, use the same command with `RUSTICE_BUILD_LOCAL=1` and a unique tag:
+
+```bash
+SNOW_CONFIG_FILE=/path/to/config.toml \
+SNOW_CONNECTION=snowflake \
+RUSTICE_HORIZON_DATABASE=RUSTICE_E2E \
+RUSTICE_HORIZON_ROLE=RUSTICE_E2E_ROLE \
+RUSTICE_GRANT_TO_ROLE=<role-used-by-snowflake-profile> \
+RUSTICE_HORIZON_TABLES=PUBLIC.SMOKE \
+RUSTICE_BUILD_LOCAL=1 \
+RUSTICE_IMAGE_TAG=pr-test \
+./deploy/spcs/deploy.sh
+```
+
+The script waits until the service is `READY`, prints the public ingress URL, and writes:
+
+- `deploy/spcs/generated/config.toml`
+- `deploy/spcs/generated/embucket_spcs_token` as a fallback token file
+- `deploy/spcs/generated/embucket_spcs.env`
+
+The generated `config.toml` uses `spcs_token_connection = "<SNOW_CONNECTION>"`, so the normal `embucket-snow` path gets short-lived SPCS ingress tokens in memory from the regular Snowflake profile. No daily token-file refresh is needed for that path.
+
+## Deploy With SQL
+
+Use [deploy.sql](deploy.sql) when you want a worksheet-friendly deployment without running the shell script. SQL can create the Snowflake resources, but it cannot pull, tag, or push Docker images and cannot write local `embucket-snow` config files.
+
+First create the image repository, then push the image into Snowflake's registry:
+
+```sql
+CREATE DATABASE IF NOT EXISTS RUSTICE_APP;
+CREATE SCHEMA IF NOT EXISTS RUSTICE_APP.PUBLIC;
+CREATE IMAGE REPOSITORY IF NOT EXISTS RUSTICE_APP.PUBLIC.RUSTICE_REPO;
+
+SELECT LOWER(REPLACE(CURRENT_ORGANIZATION_NAME() || '-' || CURRENT_ACCOUNT_NAME(), '_', '-'))
+  || '.registry.snowflakecomputing.com' AS registry_host;
+```
+
+```bash
+snow --config-file /path/to/config.toml spcs image-registry login -c snowflake
+
+docker pull --platform linux/amd64 embucket/rustice:latest
+docker tag embucket/rustice:latest \
+  <registry_host>/rustice_app/public/rustice_repo/rustice:latest
+docker push \
+  <registry_host>/rustice_app/public/rustice_repo/rustice:latest
+```
+
+Then edit section `0. Parameters` in [deploy.sql](deploy.sql), especially:
+
+- `RUSTICE_HORIZON_DATABASE`
+- `RUSTICE_HORIZON_ROLE`
+- `RUSTICE_HORIZON_TABLES` when existing tables should be visible without eager listing
+- `RUSTICE_IMAGE_TAG` when not using `latest`
+
+Run the SQL file:
+
+```bash
+snow --config-file /path/to/config.toml \
+  sql -c snowflake \
+  --filename deploy/spcs/deploy.sql
+```
+
+After SQL deployment, get the ingress host:
+
+```bash
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SHOW ENDPOINTS IN SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE"
+```
+
+Grant the service endpoint to the role used by the regular Snowflake CLI profile if you want `embucket-snow` to fetch short-lived ingress tokens in memory:
+
+```sql
+GRANT USAGE ON DATABASE RUSTICE_APP TO ROLE <role-used-by-snowflake-profile>;
+GRANT USAGE ON SCHEMA RUSTICE_APP.PUBLIC TO ROLE <role-used-by-snowflake-profile>;
+GRANT SERVICE ROLE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE!RUSTICE_USER TO ROLE <role-used-by-snowflake-profile>;
+```
+
+Create an `embucket-snow` config manually:
+
+```toml
+default_connection_name = "embucket_spcs"
+
+[connections.embucket_spcs]
+host = "<ingress_url from SHOW ENDPOINTS>"
+protocol = "https"
+port = 443
+account = "embucket"
+user = "embucket"
+password = "embucket"
+database = "embucket"
+schema = "public"
+warehouse = "embucket"
+spcs_token_connection = "snowflake"
+spcs_token_config_file = "/path/to/config.toml"
+```
+
+`spcs_token_connection` points at the regular Snowflake CLI profile that can access the service endpoint. `embucket-snow` uses that profile to issue short-lived SPCS ingress tokens in memory.
+
+The `account`, `user`, `password`, `database`, `schema`, and `warehouse` fields are compatibility values for the Snowflake-compatible client surface. In trusted SPCS mode, ingress authentication comes from `spcs_token_connection`, not from the placeholder password.
+
+As a fallback, [deploy.sql](deploy.sql) also returns an ingress `token_secret` once. Store it next to the config as `embucket_spcs_token` with local user-only permissions:
+
+```bash
+umask 077
+printf '%s' '<token_secret>' > embucket_spcs_token
+```
+
+## Verify With Snowflake CLI
+
+These checks use regular Snowflake SQL, not Rustice. They verify that the SPCS infrastructure is up and that the baseline Iceberg table is visible to Snowflake:
+
+```bash
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SELECT SYSTEM\$GET_SERVICE_STATUS('RUSTICE_APP.PUBLIC.RUSTICE_SERVICE')"
+
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SHOW ENDPOINTS IN SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE"
+
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SHOW SERVICE CONTAINERS IN SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE"
+
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SELECT * FROM RUSTICE_E2E.PUBLIC.SMOKE ORDER BY ID"
+```
+
+Expected service state:
+
+- `SYSTEM$GET_SERVICE_STATUS` contains `"status":"READY"`.
+- `SHOW ENDPOINTS` returns an `ingress_url` ending with `.snowflakecomputing.app`.
+- `SHOW SERVICE CONTAINERS` shows the image tag you deployed and `instance_status = READY`.
+
+## Verify With Embucket CLI
+
+These checks go through the Rustice Snowflake-compatible REST API running inside SPCS:
+
+```bash
+embucket-snow --config-file deploy/spcs/generated/config.toml \
+  sql -c embucket_spcs \
+  -q "SELECT * FROM embucket.public.smoke ORDER BY id"
+```
+
+Expected result for the standard smoke table:
+
+```text
++----------+
+| id | msg |
+|----+-----|
+| 1  | ok  |
++----------+
+```
+
+Optional write/create smoke:
+
+```bash
+embucket-snow --config-file deploy/spcs/generated/config.toml \
+  sql -c embucket_spcs \
+  -q "CREATE OR REPLACE TABLE embucket.public.rustice_write_smoke (id INT, msg STRING)"
+
+embucket-snow --config-file deploy/spcs/generated/config.toml \
+  sql -c embucket_spcs \
+  -q "INSERT INTO embucket.public.rustice_write_smoke VALUES (1, 'written through spcs')"
+
+embucket-snow --config-file deploy/spcs/generated/config.toml \
+  sql -c embucket_spcs \
+  -q "SELECT * FROM embucket.public.rustice_write_smoke ORDER BY id"
+```
+
+Verify the same table from regular Snowflake SQL. Current Rustice REST create behavior preserves lower-case table names, so quote the identifier:
+
+```bash
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SHOW ICEBERG TABLES LIKE 'rustice_write_smoke' IN SCHEMA RUSTICE_E2E.PUBLIC"
+
+snow --config-file /path/to/config.toml sql -c snowflake \
+  -q "SELECT * FROM RUSTICE_E2E.PUBLIC.\"rustice_write_smoke\" ORDER BY 1"
+```
+
 ## Image
 
 `rustice` already has:
@@ -9,44 +220,9 @@ This directory deploys the `embucketd` container from `rustice` to Snowpark Cont
 - A root `Dockerfile` that builds `embucketd`.
 - A release workflow that publishes Docker Hub image `embucket/rustice`.
 
-The deploy script uses `embucket/rustice:latest` by default. Set `RUSTICE_BUILD_LOCAL=1` to build the local checkout instead.
+The deploy script uses `embucket/rustice:latest` by default. The normal user path is to use that Docker Hub image and let the script copy it into Snowflake's image registry. Set `RUSTICE_BUILD_LOCAL=1` only while testing changes from a local checkout.
 
 SPCS currently requires `linux/amd64` images, so the script uses that platform when it pulls or builds the image.
-
-The normal user path is to use the Docker Hub image published by the repository release workflow. The script still copies that image into a Snowflake image repository, because SPCS services run images from Snowflake's registry:
-
-```bash
-SNOW_CONFIG_FILE=/path/to/config.toml \
-SNOW_CONNECTION=snowflake \
-RUSTICE_HORIZON_DATABASE=ANALYTICS \
-RUSTICE_HORIZON_ROLE=DATA_ENGINEER \
-RUSTICE_GRANT_TO_ROLE=DATA_ENGINEER \
-RUSTICE_IMAGE_TAG=latest \
-./deploy/spcs/deploy.sh
-```
-
-Use `RUSTICE_BUILD_LOCAL=1` only while testing changes from a local checkout.
-
-## Quick Start
-
-Run with a Snowflake CLI connection that can create SPCS resources, external access integrations, service users, and PATs:
-
-```bash
-SNOW_CONFIG_FILE=/path/to/config.toml \
-SNOW_CONNECTION=snowflake \
-RUSTICE_HORIZON_DATABASE=ANALYTICS \
-RUSTICE_HORIZON_ROLE=DATA_ENGINEER \
-RUSTICE_GRANT_TO_ROLE=DATA_ENGINEER \
-./deploy/spcs/deploy.sh
-```
-
-After the service is ready, the script creates `deploy/spcs/generated/config.toml` for the patched `embucket-snow` CLI. The smoke command printed by the script can be run directly:
-
-```bash
-embucket-snow --config-file deploy/spcs/generated/config.toml \
-  sql -c embucket_spcs \
-  -q "SELECT * FROM embucket.public.smoke"
-```
 
 The default mode is `RUSTICE_HORIZON_AUTH=pat`:
 
@@ -59,42 +235,20 @@ The default mode is `RUSTICE_HORIZON_AUTH=pat`:
 `rustice` exchanges that credential for a Horizon Catalog access token at startup and uses `ICEBERG_REST_PREFIX` as the Horizon database/prefix.
 The SQL catalog name exposed by Rustice remains `embucket`; the Horizon database/prefix is configured separately through `RUSTICE_HORIZON_DATABASE`.
 
-## Deployment Modes
+## Dry Run SQL
 
-There are three supported ways to create the SPCS resources:
-
-1. Run `deploy.sh`. This is the easiest path because it builds or pulls the image, logs in to the Snowflake image registry, pushes the image into Snowflake, creates the compute pool, secrets, EAI, service, and grants.
-2. Run [deploy.sql](deploy.sql). This is a pure SQL template with comments for every block and the same default object names as `deploy.sh`. Edit section `0. Parameters`, make sure the image already exists in the Snowflake image repository, then run it in Snowsight or with `snow sql`.
-3. Generate SQL with `RUSTICE_DRY_RUN=1` and run that SQL manually in Snowsight or through `snow sql`. This is useful when a user wants to review or adapt the exact DDL produced by the shell script. The image must still exist in a Snowflake image repository before the service can start; use `RUSTICE_SKIP_IMAGE_PUSH=1` only after the image has already been pushed.
-
-After deployment, Snowflake SQL is used to manage and inspect the SPCS service. SQL execution against Embucket/Rustice itself goes through the Snowflake-compatible REST endpoint exposed by the SPCS public ingress.
-
-## SQL-Only Deployment
-
-Use [deploy.sql](deploy.sql) when you want a worksheet-friendly deployment without running the shell script:
+Generate SQL with `RUSTICE_DRY_RUN=1` when you want to review or adapt the exact DDL produced by the shell script before running it in Snowsight or through `snow sql`:
 
 ```bash
-snow --config-file /path/to/config.toml \
-  sql -c snowflake \
-  --filename deploy/spcs/deploy.sql
+RUSTICE_DRY_RUN=1 \
+SNOW_CONNECTION=snowflake \
+RUSTICE_HORIZON_DATABASE=RUSTICE_E2E \
+RUSTICE_HORIZON_ROLE=RUSTICE_E2E_ROLE \
+RUSTICE_HORIZON_TABLES=PUBLIC.SMOKE \
+./deploy/spcs/deploy.sh > rustice-spcs.sql
 ```
 
-Before running it:
-
-- Set `RUSTICE_HORIZON_DATABASE` to the Snowflake database that contains the Snowflake-managed Iceberg tables.
-- Set `RUSTICE_HORIZON_ROLE` to the role that should access those Iceberg tables through Horizon.
-- Push `embucket/rustice:<tag>` into the Snowflake image repository named by `RUSTICE_DB`, `RUSTICE_SCHEMA`, and `RUSTICE_IMAGE_REPOSITORY`.
-
-Pure SQL cannot pull, tag, or push Docker images and cannot write local client config files. The SQL template creates the image repository, but the image must be pushed separately before `CREATE SERVICE` can start the container. When creating the `embucket_snow` config manually, prefer `spcs_token_connection = "<regular Snowflake CLI profile>"` so `embucket-snow` can issue short-lived ingress tokens in memory; the role used by that profile must have the service role grant.
-
-The final PAT block returns an ingress `token_secret` once. Treat it as a secret, then write it next to the `embucket-snow` config:
-
-```bash
-umask 077
-printf '%s' '<token_secret>' > embucket_spcs_token
-```
-
-Use the `ingress_url` from `SHOW ENDPOINTS IN SERVICE` as the `host` in the `embucket_spcs` connection profile.
+The image must still exist in the Snowflake image repository before the service can start. Use `RUSTICE_SKIP_IMAGE_PUSH=1` only after the image has already been pushed.
 
 ## Common Options
 
