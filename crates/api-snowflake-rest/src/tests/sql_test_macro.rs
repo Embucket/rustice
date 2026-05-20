@@ -163,7 +163,7 @@ where
         run_test_rest_api_server(sql_test.server_cfg.clone(), sql_test.executor_cfg.clone()).await;
     let skip_login_token = sql_test
         .skip_login
-        .then(|| sql_test.create_access_token(server_addr));
+        .then(|| sql_test.create_access_token(server_addr.addr()));
 
     let mut prev_response: Option<JsonResponse> = None;
     let test_start = std::time::Instant::now();

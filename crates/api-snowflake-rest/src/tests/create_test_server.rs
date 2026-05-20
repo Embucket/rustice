@@ -8,14 +8,48 @@ use executor::service::ExecutionService;
 use executor::utils::Config as UtilsConfig;
 use std::net::SocketAddr;
 use std::net::TcpListener;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Builder;
 use tokio::sync::Notify;
+use tokio::sync::oneshot;
 #[cfg(feature = "traces-test-log")]
 use tracing_subscriber::{fmt, fmt::format::FmtSpan};
 
 static INIT: std::sync::Once = std::sync::Once::new();
+
+pub struct TestRestApiServer {
+    addr: SocketAddr,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl TestRestApiServer {
+    #[must_use]
+    pub const fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+}
+
+impl Deref for TestRestApiServer {
+    type Target = SocketAddr;
+
+    fn deref(&self) -> &Self::Target {
+        &self.addr
+    }
+}
+
+impl Drop for TestRestApiServer {
+    fn drop(&mut self) {
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
 
 #[allow(clippy::expect_used)]
 #[must_use]
@@ -35,29 +69,39 @@ pub fn executor_default_cfg() -> UtilsConfig {
 pub async fn run_test_rest_api_server(
     rest_cfg: Option<RestApiConfig>,
     executor_cfg: Option<UtilsConfig>,
-) -> SocketAddr {
+) -> TestRestApiServer {
     let rest_cfg = rest_cfg.unwrap_or_else(|| rest_default_cfg("json"));
     let executor_cfg = executor_cfg.unwrap_or_else(executor_default_cfg);
 
     let notify = Arc::new(Notify::new());
     let notify_clone = Arc::clone(&notify);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     let listener = TcpListener::bind("0.0.0.0:0").expect("Failed to bind to address");
     let addr = listener.local_addr().expect("Failed to get local address");
+    listener
+        .set_nonblocking(true)
+        .expect("Failed to set listener to non-blocking mode");
 
     // Start a new thread with its own runtime for the server.
     // A dedicated runtime is required because catalog code uses
     // block_in_place + handle.block_on, which deadlocks if run
     // on another runtime's worker thread via tokio::spawn.
-    let _handle = std::thread::spawn(move || {
+    let thread = std::thread::spawn(move || {
         let rt = Builder::new_multi_thread()
             .enable_all()
             .build()
             .expect("Failed to create Tokio runtime");
 
         rt.block_on(async {
-            run_test_rest_api_server_with_config(rest_cfg, executor_cfg, listener, notify_clone)
-                .await;
+            run_test_rest_api_server_with_config(
+                rest_cfg,
+                executor_cfg,
+                listener,
+                notify_clone,
+                shutdown_rx,
+            )
+            .await;
         });
     });
 
@@ -74,7 +118,11 @@ pub async fn run_test_rest_api_server(
         }
     }
 
-    addr
+    TestRestApiServer {
+        addr,
+        shutdown_tx: Some(shutdown_tx),
+        thread: Some(thread),
+    }
 }
 
 fn setup_tracing() {
@@ -152,6 +200,7 @@ pub async fn run_test_rest_api_server_with_config(
     execution_cfg: UtilsConfig,
     listener: std::net::TcpListener,
     notify: Arc<Notify>,
+    shutdown_rx: oneshot::Receiver<()>,
 ) {
     let addr = listener.local_addr().unwrap();
 
@@ -184,6 +233,14 @@ pub async fn run_test_rest_api_server_with_config(
 
     tracing::info!("Server ready at {addr}");
 
-    // Serve the application
-    axum_server::from_tcp(listener).serve(app).await.unwrap();
+    let listener = tokio::net::TcpListener::from_std(listener)
+        .expect("Failed to create Tokio listener from std listener");
+
+    // Serve the application until the test guard is dropped.
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.await;
+        })
+        .await
+        .unwrap();
 }
