@@ -41,6 +41,7 @@ jobs:
       CARGO_TERM_COLOR: always
       COLUMNS: "80"
       RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
+      RUST_TEST_THREADS: "1"
     strategy:
       matrix:
         # run on stable and beta to ensure that tests won't break on the next version of the rust
