@@ -1,0 +1,22 @@
+manifest_version: 2
+
+artifacts:
+  setup_script: setup_script.sql
+  readme: README.md
+  container_services:
+    images:
+      - /RUSTICE_NATIVE_APP_IMAGES/PUBLIC/RUSTICE_REPO/rustice:latest
+
+configuration:
+  log_level: INFO
+  trace_level: OFF
+  metric_level: ALL
+  log_event_level: INFO
+
+privileges:
+  - CREATE COMPUTE POOL:
+      description: "Allows the app to create a small compute pool for the Rustice service."
+  - BIND SERVICE ENDPOINT:
+      description: "Allows the app to expose the Rustice Snowflake-compatible endpoint."
+  - CREATE EXTERNAL ACCESS INTEGRATION:
+      description: "Allows the app to create controlled egress for Horizon Catalog and object-store access."

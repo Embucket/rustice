@@ -1,0 +1,38 @@
+spec:
+  containers:
+    - name: rustice
+      image: {{ image }}
+      env:
+        BUCKET_HOST: "0.0.0.0"
+        BUCKET_PORT: "3000"
+        RUST_LOG: "{{ rust_log }}"
+        AUTH_TRUST_SPCS_INGRESS: "true"
+        SNOWFLAKE_ISSUER_HOST: "{{ snowflake_issuer_host }}"
+        CATALOG_URL: "{{ catalog_url }}"
+        ICEBERG_REST_PREFIX: "{{ horizon_database }}"
+        ICEBERG_REST_CATALOG: "{{ client_database }}"
+        ICEBERG_REST_SCOPE: "session:role:{{ horizon_role }}"
+        ICEBERG_REST_SCHEMAS: "{{ horizon_schemas }}"
+        ICEBERG_REST_TABLES: "{{ horizon_tables }}"
+        ICEBERG_REST_EAGER_LOAD: "{{ horizon_eager_load }}"
+        ICEBERG_REST_OAUTH_TOKEN_FILE: "/snowflake/session/token"
+        AWS_REGION: "{{ s3_region }}"
+        AWS_DEFAULT_REGION: "{{ s3_region }}"
+      secrets:
+        - snowflakeSecret: {{ jwt_secret }}
+          envVarName: JWT_SECRET
+          secretKeyRef: secret_string
+      readinessProbe:
+        port: 3000
+        path: /health
+  endpoints:
+    - name: main
+      port: 3000
+      public: true
+capabilities:
+  securityContext:
+    executeAsCaller: true
+serviceRoles:
+  - name: rustice_user
+    endpoints:
+      - main

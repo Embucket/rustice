@@ -1,0 +1,22 @@
+definition_version: 2
+entities:
+  rustice_native_app_pkg:
+    type: application package
+    manifest: app/manifest.yml
+    artifacts:
+      - src: app/*
+        dest: ./
+      - src: service/rustice_spec.yaml
+        dest: service/rustice_spec.yaml
+    meta:
+      role: ACCOUNTADMIN
+      warehouse: COMPUTE_WH
+
+  rustice_native_app:
+    type: application
+    from:
+      target: rustice_native_app_pkg
+    debug: false
+    meta:
+      role: ACCOUNTADMIN
+      warehouse: COMPUTE_WH

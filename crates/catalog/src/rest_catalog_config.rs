@@ -6,14 +6,18 @@ use iceberg_rest_catalog::apis::{
 use iceberg_rust::error::Error as IcebergError;
 use snafu::ResultExt;
 use std::env;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 const ICEBERG_REST_PREFIX_ENV: &str = "ICEBERG_REST_PREFIX";
 const ICEBERG_REST_CATALOG_ENV: &str = "ICEBERG_REST_CATALOG";
 const ICEBERG_REST_BEARER_TOKEN_ENV: &str = "ICEBERG_REST_BEARER_TOKEN";
+const ICEBERG_REST_BEARER_TOKEN_FILE_ENV: &str = "ICEBERG_REST_BEARER_TOKEN_FILE";
 const ICEBERG_REST_OAUTH_TOKEN_ENV: &str = "ICEBERG_REST_OAUTH_TOKEN";
+const ICEBERG_REST_OAUTH_TOKEN_FILE_ENV: &str = "ICEBERG_REST_OAUTH_TOKEN_FILE";
 const ICEBERG_REST_CREDENTIAL_ENV: &str = "ICEBERG_REST_CREDENTIAL";
+const ICEBERG_REST_CREDENTIAL_FILE_ENV: &str = "ICEBERG_REST_CREDENTIAL_FILE";
 const ICEBERG_REST_SCOPE_ENV: &str = "ICEBERG_REST_SCOPE";
 const ICEBERG_REST_ROLE_ENV: &str = "ICEBERG_REST_ROLE";
 const ICEBERG_REST_CLIENT_ID_ENV: &str = "ICEBERG_REST_CLIENT_ID";
@@ -75,7 +79,12 @@ pub fn rest_catalog_bootstrap_tables() -> Vec<String> {
 }
 
 pub async fn configure_rest_catalog_auth(configuration: &mut Configuration) -> Result<()> {
-    if let Some(token) = env_non_empty(ICEBERG_REST_BEARER_TOKEN_ENV) {
+    if let Some(token) = env_non_empty_or_file(
+        ICEBERG_REST_BEARER_TOKEN_ENV,
+        ICEBERG_REST_BEARER_TOKEN_FILE_ENV,
+    )
+    .context(IcebergSnafu)?
+    {
         configuration.bearer_access_token = Some(token);
     }
 
@@ -83,11 +92,22 @@ pub async fn configure_rest_catalog_auth(configuration: &mut Configuration) -> R
         configuration.oauth_access_token = Some(static_oauth_token_provider(token));
     }
 
+    if configuration.oauth_access_token.is_none()
+        && let Some(token_file) = env_non_empty(ICEBERG_REST_OAUTH_TOKEN_FILE_ENV)
+    {
+        configuration.oauth_access_token = Some(file_oauth_token_provider(token_file));
+    }
+
     if configuration.bearer_access_token.is_some() || configuration.oauth_access_token.is_some() {
         return Ok(());
     }
 
-    let Some(credential) = env_non_empty(ICEBERG_REST_CREDENTIAL_ENV) else {
+    let Some(credential) = env_non_empty_or_file(
+        ICEBERG_REST_CREDENTIAL_ENV,
+        ICEBERG_REST_CREDENTIAL_FILE_ENV,
+    )
+    .context(IcebergSnafu)?
+    else {
         return Ok(());
     };
 
@@ -113,11 +133,50 @@ fn env_non_empty(name: &str) -> Option<String> {
     env::var(name).ok().filter(|value| !value.trim().is_empty())
 }
 
+fn env_non_empty_or_file(
+    value_env: &str,
+    file_env: &str,
+) -> std::result::Result<Option<String>, IcebergError> {
+    if let Some(value) = env_non_empty(value_env) {
+        return Ok(Some(value));
+    }
+
+    let Some(path) = env_non_empty(file_env) else {
+        return Ok(None);
+    };
+
+    read_trimmed_file(Path::new(&path)).map(Some)
+}
+
+fn read_trimmed_file(path: &Path) -> std::result::Result<String, IcebergError> {
+    std::fs::read_to_string(path)
+        .map(|token| token.trim().to_string())
+        .map_err(|error| IcebergError::External(Box::new(error)))
+        .and_then(|token| {
+            if token.is_empty() {
+                Err(IcebergError::InvalidFormat(format!(
+                    "token file '{}' is empty",
+                    path.display()
+                )))
+            } else {
+                Ok(token)
+            }
+        })
+}
+
 fn static_oauth_token_provider(token: String) -> OAuthAccessTokenProvider {
     let token = Arc::new(token);
     Arc::new(move || {
         let token = Arc::clone(&token);
         Box::pin(async move { Ok((*token).clone()) })
+    })
+}
+
+fn file_oauth_token_provider(path: String) -> OAuthAccessTokenProvider {
+    let path = Arc::new(PathBuf::from(path));
+    Arc::new(move || {
+        let path = Arc::clone(&path);
+        Box::pin(async move { read_trimmed_file(&path) })
     })
 }
 
