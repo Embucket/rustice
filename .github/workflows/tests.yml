@@ -57,7 +57,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: cargo test
+      - name: cargo test workspace
+        timeout-minutes: 35
+        run: |
+          cargo test --profile=ci --workspace --all-targets --exclude api-snowflake-rest
+      - name: cargo test api-snowflake-rest
         timeout-minutes: 45
         run: |
-          cargo test --profile=ci --workspace --all-targets
+          cargo test --profile=ci -p api-snowflake-rest --all-targets -- --test-threads=1

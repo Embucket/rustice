@@ -32,8 +32,10 @@
 -- real account. The Horizon role must be able to access the target
 -- Snowflake-managed Iceberg database/schema/tables.
 
-SET RUSTICE_HORIZON_DATABASE = 'EMBUCKET';
+SET RUSTICE_HORIZON_DATABASE = 'RUSTICE_SPCS';
 SET RUSTICE_HORIZON_ROLE = 'DATA_ENGINEER';
+SET RUSTICE_CLIENT_DATABASE = 'rustice_spcs';
+SET RUSTICE_CLIENT_SCHEMA = 'public';
 
 -- Object names match deploy.sh defaults.
 SET RUSTICE_DB = 'RUSTICE_APP';
@@ -57,6 +59,7 @@ SET RUSTICE_HORIZON_TABLES = '';
 SET RUSTICE_HORIZON_EAGER_LOAD = '0';
 SET RUSTICE_HORIZON_EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED';
 SET RUSTICE_HORIZON_CATALOG = 'SNOWFLAKE';
+SET RUSTICE_S3_REGION = '';
 
 -- Service users/PATs mirror deploy.sh defaults.
 SET RUSTICE_HORIZON_SERVICE_USER = 'RUSTICE_HORIZON_SVC';
@@ -94,6 +97,9 @@ SET RUSTICE_SNOWFLAKE_ISSUER_HOST = (
     '.snowflakecomputing.com'
 );
 SET RUSTICE_S3_HOST = (SELECT 's3.' || $RUSTICE_AWS_REGION || '.amazonaws.com');
+SET RUSTICE_EFFECTIVE_S3_REGION = (
+  SELECT COALESCE(NULLIF($RUSTICE_S3_REGION, ''), $RUSTICE_AWS_REGION)
+);
 SET RUSTICE_REGISTRY_HOST = (
   SELECT $RUSTICE_ACCOUNT_IDENTIFIER || '.registry.snowflakecomputing.com'
 );
@@ -304,8 +310,11 @@ BEGIN
         RUST_LOG: "info"
         AUTH_TRUST_SPCS_INGRESS: "true"
         SNOWFLAKE_ISSUER_HOST: "' || $RUSTICE_SNOWFLAKE_ISSUER_HOST || '"
+        AWS_REGION: "' || $RUSTICE_EFFECTIVE_S3_REGION || '"
+        AWS_DEFAULT_REGION: "' || $RUSTICE_EFFECTIVE_S3_REGION || '"
         CATALOG_URL: "' || $RUSTICE_CATALOG_URL || '"
         ICEBERG_REST_PREFIX: "' || $RUSTICE_HORIZON_DATABASE || '"
+        ICEBERG_REST_CATALOG: "' || $RUSTICE_CLIENT_DATABASE || '"
         ICEBERG_REST_SCOPE: "session:role:' || $RUSTICE_HORIZON_ROLE || '"
         ICEBERG_REST_SCHEMAS: "' || $RUSTICE_HORIZON_SCHEMAS || '"
         ICEBERG_REST_EAGER_LOAD: "' || $RUSTICE_HORIZON_EAGER_LOAD || '"
@@ -442,7 +451,7 @@ SHOW SERVICE CONTAINERS IN SERVICE IDENTIFIER($RUSTICE_SERVICE_FQN);
 -- account = "embucket"
 -- user = "embucket"
 -- password = "embucket"
--- database = "embucket"
+-- database = "rustice_spcs"
 -- schema = "public"
 -- warehouse = "embucket"
 -- spcs_token_connection = "<regular Snowflake CLI profile>"
@@ -457,4 +466,4 @@ SHOW SERVICE CONTAINERS IN SERVICE IDENTIFIER($RUSTICE_SERVICE_FQN);
 --
 -- Smoke query:
 --   embucket-snow --config-file ./config.toml sql -c embucket_spcs \
---     -q "SELECT * FROM embucket.public.smoke"
+--     -q "SELECT * FROM rustice_spcs.public.smoke"

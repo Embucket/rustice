@@ -59,6 +59,7 @@ RUSTICE_EAI="${RUSTICE_EAI:-RUSTICE_HORIZON_EAI}"
 RUSTICE_WAIT_FOR_READY="${RUSTICE_WAIT_FOR_READY:-1}"
 RUSTICE_READY_TIMEOUT_SECS="${RUSTICE_READY_TIMEOUT_SECS:-600}"
 RUSTICE_READY_POLL_SECS="${RUSTICE_READY_POLL_SECS:-10}"
+RUSTICE_S3_REGION="${RUSTICE_S3_REGION:-}"
 
 RUSTICE_CREATE_INGRESS_PAT="${RUSTICE_CREATE_INGRESS_PAT:-1}"
 RUSTICE_INGRESS_ROLE="${RUSTICE_INGRESS_ROLE:-RUSTICE_INGRESS_ROLE}"
@@ -116,6 +117,7 @@ Common options:
                             Skip creating a service-user PAT for SPCS public ingress.
   RUSTICE_GENERATE_CLIENT_CONFIG=0
                             Skip writing deploy/spcs/generated client files for embucket-snow.
+  RUSTICE_CLIENT_DATABASE   SQL database/catalog name exposed by Rustice. Default: embucket.
   RUSTICE_CLIENT_TOKEN_CONNECTION
                             Snowflake CLI profile used by embucket-snow to issue an SPCS ingress token.
                             Default: SNOW_CONNECTION.
@@ -125,6 +127,8 @@ Common options:
   RUSTICE_AUTO_SUSPEND_SECS Service auto suspend seconds. Must be 0 for public endpoints.
   RUSTICE_EGRESS_HOSTS      Comma-separated hosts allowed from the container.
                             Include Snowflake/Horizon and object-store hosts vended by Horizon.
+  RUSTICE_S3_REGION         AWS region used by COPY INTO s3:// sources. Defaults to the
+                            Snowflake account AWS region when CURRENT_REGION is AWS_*.
   RUSTICE_GRANT_TO_ROLE     Grant service endpoint access to this Snowflake role.
   RUSTICE_DRY_RUN=1         Print SQL and docker commands without executing them.
 
@@ -468,6 +472,7 @@ require_ident RUSTICE_EGRESS_RULE "$RUSTICE_EGRESS_RULE"
 require_ident RUSTICE_EAI "$RUSTICE_EAI"
 require_ident RUSTICE_HORIZON_DATABASE "$RUSTICE_HORIZON_DATABASE"
 require_ident RUSTICE_CLIENT_CONNECTION "$RUSTICE_CLIENT_CONNECTION"
+require_ident RUSTICE_CLIENT_DATABASE "$RUSTICE_CLIENT_DATABASE"
 
 case "$RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS" in
   0|1)
@@ -601,6 +606,9 @@ catalog_host="$(url_host "$catalog_url")"
 snowflake_issuer="${RUSTICE_SNOWFLAKE_ISSUER_HOST:-$(snowflake_issuer_host "$account_locator" "$current_region")}"
 
 egress_hosts="${RUSTICE_EGRESS_HOSTS:-$(default_egress_hosts "$catalog_host" "$current_region")}"
+if [[ -z "$RUSTICE_S3_REGION" && "$current_region" == AWS_* ]]; then
+  RUSTICE_S3_REGION="$(printf '%s' "${current_region#AWS_}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+fi
 egress_values_sql=""
 IFS=',' read -r -a egress_host_array <<< "$egress_hosts"
 for host in "${egress_host_array[@]}"; do
@@ -696,6 +704,7 @@ horizon_env_lines=""
 if [[ "$RUSTICE_HORIZON_AUTH" != "none" ]]; then
   horizon_env_lines+="        CATALOG_URL: $(yaml_quote "$catalog_url")
         ICEBERG_REST_PREFIX: $(yaml_quote "$RUSTICE_HORIZON_DATABASE")
+        ICEBERG_REST_CATALOG: $(yaml_quote "$RUSTICE_CLIENT_DATABASE")
         ICEBERG_REST_SCOPE: $(yaml_quote "session:role:${RUSTICE_HORIZON_ROLE}")
         ICEBERG_REST_SCHEMAS: $(yaml_quote "$RUSTICE_HORIZON_SCHEMAS")
         ICEBERG_REST_EAGER_LOAD: $(yaml_quote "$RUSTICE_HORIZON_EAGER_LOAD")"
@@ -703,6 +712,12 @@ if [[ "$RUSTICE_HORIZON_AUTH" != "none" ]]; then
     horizon_env_lines+="
         ICEBERG_REST_TABLES: $(yaml_quote "$RUSTICE_HORIZON_TABLES")"
   fi
+fi
+
+s3_env_lines=""
+if [[ -n "$RUSTICE_S3_REGION" ]]; then
+  s3_env_lines+="        AWS_REGION: $(yaml_quote "$RUSTICE_S3_REGION")
+        AWS_DEFAULT_REGION: $(yaml_quote "$RUSTICE_S3_REGION")"
 fi
 
 case "$RUSTICE_HORIZON_AUTH" in
@@ -804,6 +819,7 @@ spec:
         RUST_LOG: $(yaml_quote "${RUST_LOG:-info}")
         AUTH_TRUST_SPCS_INGRESS: $(yaml_quote "$auth_trust_spcs_ingress_value")
         SNOWFLAKE_ISSUER_HOST: $(yaml_quote "$snowflake_issuer")
+${s3_env_lines}
 ${horizon_env_lines}
 ${secrets_yaml}
       readinessProbe:
@@ -863,7 +879,7 @@ if [[ "$RUSTICE_GENERATE_CLIENT_CONFIG" == "1" && "$RUSTICE_DRY_RUN" != "1" ]]; 
   cat <<EOF
 
 Run a smoke query:
-  embucket-snow --config-file $(shell_quote "$RUSTICE_CLIENT_CONFIG") sql -c ${RUSTICE_CLIENT_CONNECTION} -q "SELECT * FROM embucket.public.smoke"
+  embucket-snow --config-file $(shell_quote "$RUSTICE_CLIENT_CONFIG") sql -c ${RUSTICE_CLIENT_CONNECTION} -q "SELECT * FROM ${RUSTICE_CLIENT_DATABASE}.${RUSTICE_CLIENT_SCHEMA}.smoke"
 
 EOF
 fi

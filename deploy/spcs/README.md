@@ -26,10 +26,11 @@ Deploy the default one-node `CPU_X64_XS` service:
 ```bash
 SNOW_CONFIG_FILE=/path/to/config.toml \
 SNOW_CONNECTION=snowflake \
-RUSTICE_HORIZON_DATABASE=RUSTICE_E2E \
-RUSTICE_HORIZON_ROLE=RUSTICE_E2E_ROLE \
+RUSTICE_HORIZON_DATABASE=RUSTICE_SPCS \
+RUSTICE_HORIZON_ROLE=<role-with-iceberg-access> \
 RUSTICE_GRANT_TO_ROLE=<role-used-by-snowflake-profile> \
-RUSTICE_HORIZON_TABLES=PUBLIC.SMOKE \
+RUSTICE_CLIENT_DATABASE=rustice_spcs \
+RUSTICE_CLIENT_SCHEMA=public \
 RUSTICE_IMAGE_TAG=latest \
 ./deploy/spcs/deploy.sh
 ```
@@ -41,10 +42,11 @@ For local PR testing, use the same command with `RUSTICE_BUILD_LOCAL=1` and a un
 ```bash
 SNOW_CONFIG_FILE=/path/to/config.toml \
 SNOW_CONNECTION=snowflake \
-RUSTICE_HORIZON_DATABASE=RUSTICE_E2E \
-RUSTICE_HORIZON_ROLE=RUSTICE_E2E_ROLE \
+RUSTICE_HORIZON_DATABASE=RUSTICE_SPCS \
+RUSTICE_HORIZON_ROLE=<role-with-iceberg-access> \
 RUSTICE_GRANT_TO_ROLE=<role-used-by-snowflake-profile> \
-RUSTICE_HORIZON_TABLES=PUBLIC.SMOKE \
+RUSTICE_CLIENT_DATABASE=rustice_spcs \
+RUSTICE_CLIENT_SCHEMA=public \
 RUSTICE_BUILD_LOCAL=1 \
 RUSTICE_IMAGE_TAG=pr-test \
 ./deploy/spcs/deploy.sh
@@ -125,7 +127,7 @@ port = 443
 account = "embucket"
 user = "embucket"
 password = "embucket"
-database = "embucket"
+database = "rustice_spcs"
 schema = "public"
 warehouse = "embucket"
 spcs_token_connection = "snowflake"
@@ -156,9 +158,6 @@ snow --config-file /path/to/config.toml sql -c snowflake \
 
 snow --config-file /path/to/config.toml sql -c snowflake \
   -q "SHOW SERVICE CONTAINERS IN SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE"
-
-snow --config-file /path/to/config.toml sql -c snowflake \
-  -q "SELECT * FROM RUSTICE_E2E.PUBLIC.SMOKE ORDER BY ID"
 ```
 
 Expected service state:
@@ -174,7 +173,15 @@ These checks go through the Rustice Snowflake-compatible REST API running inside
 ```bash
 embucket-snow --config-file deploy/spcs/generated/config.toml \
   sql -c embucket_spcs \
-  -q "SELECT * FROM embucket.public.smoke ORDER BY id"
+  -q "CREATE TABLE IF NOT EXISTS rustice_spcs.public.smoke (id INT, msg STRING)"
+
+embucket-snow --config-file deploy/spcs/generated/config.toml \
+  sql -c embucket_spcs \
+  -q "INSERT INTO rustice_spcs.public.smoke VALUES (1, 'ok')"
+
+embucket-snow --config-file deploy/spcs/generated/config.toml \
+  sql -c embucket_spcs \
+  -q "SELECT * FROM rustice_spcs.public.smoke ORDER BY id"
 ```
 
 Expected result for the standard smoke table:
@@ -192,25 +199,25 @@ Optional write/create smoke:
 ```bash
 embucket-snow --config-file deploy/spcs/generated/config.toml \
   sql -c embucket_spcs \
-  -q "CREATE OR REPLACE TABLE embucket.public.rustice_write_smoke (id INT, msg STRING)"
+  -q "CREATE OR REPLACE TABLE rustice_spcs.public.rustice_write_smoke (id INT, msg STRING)"
 
 embucket-snow --config-file deploy/spcs/generated/config.toml \
   sql -c embucket_spcs \
-  -q "INSERT INTO embucket.public.rustice_write_smoke VALUES (1, 'written through spcs')"
+  -q "INSERT INTO rustice_spcs.public.rustice_write_smoke VALUES (1, 'written through spcs')"
 
 embucket-snow --config-file deploy/spcs/generated/config.toml \
   sql -c embucket_spcs \
-  -q "SELECT * FROM embucket.public.rustice_write_smoke ORDER BY id"
+  -q "SELECT * FROM rustice_spcs.public.rustice_write_smoke ORDER BY id"
 ```
 
 Verify the same table from regular Snowflake SQL. Current Rustice REST create behavior preserves lower-case table names, so quote the identifier:
 
 ```bash
 snow --config-file /path/to/config.toml sql -c snowflake \
-  -q "SHOW ICEBERG TABLES LIKE 'rustice_write_smoke' IN SCHEMA RUSTICE_E2E.PUBLIC"
+  -q "SHOW ICEBERG TABLES LIKE 'rustice_write_smoke' IN SCHEMA RUSTICE_SPCS.PUBLIC"
 
 snow --config-file /path/to/config.toml sql -c snowflake \
-  -q "SELECT * FROM RUSTICE_E2E.PUBLIC.\"rustice_write_smoke\" ORDER BY 1"
+  -q "SELECT * FROM RUSTICE_SPCS.PUBLIC.\"rustice_write_smoke\" ORDER BY 1"
 ```
 
 ## Image
@@ -233,7 +240,7 @@ The default mode is `RUSTICE_HORIZON_AUTH=pat`:
 5. Mounts the secret into the SPCS container as `ICEBERG_REST_CREDENTIAL`.
 
 `rustice` exchanges that credential for a Horizon Catalog access token at startup and uses `ICEBERG_REST_PREFIX` as the Horizon database/prefix.
-The SQL catalog name exposed by Rustice remains `embucket`; the Horizon database/prefix is configured separately through `RUSTICE_HORIZON_DATABASE`.
+The SQL catalog name exposed by Rustice is configured separately through `RUSTICE_CLIENT_DATABASE` and is passed to the container as `ICEBERG_REST_CATALOG`. For example, `RUSTICE_HORIZON_DATABASE=RUSTICE_SPCS` with `RUSTICE_CLIENT_DATABASE=rustice_spcs` lets users query `rustice_spcs.public.<table>` while Horizon stores the tables under Snowflake database `RUSTICE_SPCS`.
 
 ## Dry Run SQL
 
@@ -242,8 +249,8 @@ Generate SQL with `RUSTICE_DRY_RUN=1` when you want to review or adapt the exact
 ```bash
 RUSTICE_DRY_RUN=1 \
 SNOW_CONNECTION=snowflake \
-RUSTICE_HORIZON_DATABASE=RUSTICE_E2E \
-RUSTICE_HORIZON_ROLE=RUSTICE_E2E_ROLE \
+RUSTICE_HORIZON_DATABASE=RUSTICE_SPCS \
+RUSTICE_HORIZON_ROLE=RUSTICE_SPCS_ROLE \
 RUSTICE_HORIZON_TABLES=PUBLIC.SMOKE \
 ./deploy/spcs/deploy.sh > rustice-spcs.sql
 ```
@@ -266,6 +273,9 @@ RUSTICE_HORIZON_EAGER_LOAD=0
 RUSTICE_CONFIGURE_HORIZON_SCHEMA_DEFAULTS=1
 RUSTICE_HORIZON_EXTERNAL_VOLUME=SNOWFLAKE_MANAGED
 RUSTICE_HORIZON_CATALOG=SNOWFLAKE
+RUSTICE_CLIENT_DATABASE=rustice_spcs
+RUSTICE_CLIENT_SCHEMA=public
+RUSTICE_S3_REGION=<optional-aws-region-for-copy-into-s3-sources>
 RUSTICE_TRUST_SPCS_INGRESS=1
 RUSTICE_CREATE_INGRESS_PAT=1
 RUSTICE_GENERATE_CLIENT_CONFIG=1
@@ -392,7 +402,7 @@ With the generated deploy output, the user-facing command is:
 ```bash
 embucket-snow --config-file deploy/spcs/generated/config.toml \
   sql -c embucket_spcs \
-  -q "SELECT * FROM embucket.public.smoke"
+  -q "SELECT * FROM rustice_spcs.public.smoke"
 ```
 
 ## Result
@@ -529,9 +539,9 @@ SHOW SERVICE CONTAINERS IN SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE;
 List Iceberg tables that the current Snowflake role can see:
 
 ```sql
-SHOW ICEBERG TABLES IN DATABASE RUSTICE_E2E;
-SHOW ICEBERG TABLES IN SCHEMA RUSTICE_E2E.PUBLIC;
-DESCRIBE ICEBERG TABLE RUSTICE_E2E.PUBLIC.SMOKE;
+SHOW ICEBERG TABLES IN DATABASE RUSTICE_SPCS;
+SHOW ICEBERG TABLES IN SCHEMA RUSTICE_SPCS.PUBLIC;
+DESCRIBE ICEBERG TABLE RUSTICE_SPCS.PUBLIC.SMOKE;
 ```
 
 To run the deployment from Snowsight instead of Snowflake CLI, first push the image into the Snowflake image repository once. Then either run [deploy.sql](deploy.sql) in a worksheet or run the script with `RUSTICE_SKIP_IMAGE_PUSH=1 RUSTICE_DRY_RUN=1` and paste the emitted SQL into a worksheet.
@@ -541,33 +551,33 @@ To run the deployment from Snowsight instead of Snowflake CLI, first push the im
 First create a Snowflake-managed Iceberg table in the Horizon database that Rustice will use as `ICEBERG_REST_PREFIX`:
 
 ```sql
-CREATE DATABASE IF NOT EXISTS RUSTICE_E2E;
-CREATE SCHEMA IF NOT EXISTS RUSTICE_E2E.PUBLIC;
-ALTER SCHEMA RUSTICE_E2E.PUBLIC SET EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED';
-ALTER SCHEMA RUSTICE_E2E.PUBLIC SET CATALOG = 'SNOWFLAKE';
+CREATE DATABASE IF NOT EXISTS RUSTICE_SPCS;
+CREATE SCHEMA IF NOT EXISTS RUSTICE_SPCS.PUBLIC;
+ALTER SCHEMA RUSTICE_SPCS.PUBLIC SET EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED';
+ALTER SCHEMA RUSTICE_SPCS.PUBLIC SET CATALOG = 'SNOWFLAKE';
 
-CREATE OR REPLACE ICEBERG TABLE RUSTICE_E2E.PUBLIC.SMOKE (
+CREATE OR REPLACE ICEBERG TABLE RUSTICE_SPCS.PUBLIC.SMOKE (
   ID INT,
   MSG STRING
 )
   CATALOG = 'SNOWFLAKE'
   EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED';
 
-INSERT INTO RUSTICE_E2E.PUBLIC.SMOKE VALUES (1, 'ok');
+INSERT INTO RUSTICE_SPCS.PUBLIC.SMOKE VALUES (1, 'ok');
 
-CREATE ROLE IF NOT EXISTS RUSTICE_E2E_ROLE;
-GRANT USAGE ON DATABASE RUSTICE_E2E TO ROLE RUSTICE_E2E_ROLE;
-GRANT MONITOR ON DATABASE RUSTICE_E2E TO ROLE RUSTICE_E2E_ROLE;
-GRANT USAGE ON SCHEMA RUSTICE_E2E.PUBLIC TO ROLE RUSTICE_E2E_ROLE;
-GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON TABLE RUSTICE_E2E.PUBLIC.SMOKE TO ROLE RUSTICE_E2E_ROLE;
-GRANT CREATE TABLE ON SCHEMA RUSTICE_E2E.PUBLIC TO ROLE RUSTICE_E2E_ROLE;
-GRANT CREATE ICEBERG TABLE ON SCHEMA RUSTICE_E2E.PUBLIC TO ROLE RUSTICE_E2E_ROLE;
+CREATE ROLE IF NOT EXISTS RUSTICE_SPCS_ROLE;
+GRANT USAGE ON DATABASE RUSTICE_SPCS TO ROLE RUSTICE_SPCS_ROLE;
+GRANT MONITOR ON DATABASE RUSTICE_SPCS TO ROLE RUSTICE_SPCS_ROLE;
+GRANT USAGE ON SCHEMA RUSTICE_SPCS.PUBLIC TO ROLE RUSTICE_SPCS_ROLE;
+GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON TABLE RUSTICE_SPCS.PUBLIC.SMOKE TO ROLE RUSTICE_SPCS_ROLE;
+GRANT CREATE TABLE ON SCHEMA RUSTICE_SPCS.PUBLIC TO ROLE RUSTICE_SPCS_ROLE;
+GRANT CREATE ICEBERG TABLE ON SCHEMA RUSTICE_SPCS.PUBLIC TO ROLE RUSTICE_SPCS_ROLE;
 ```
 
 For Horizon write/create checks, Snowflake also requires the write path to be enabled for the account and the role to satisfy Horizon write privileges. In particular, creating an Iceberg table through Horizon requires `CREATE ICEBERG TABLE` on the schema and `USAGE` on the external volume used by the table. Grant external-volume access with your account-specific volume name when applicable:
 
 ```sql
-GRANT USAGE ON EXTERNAL VOLUME <external_volume_name> TO ROLE RUSTICE_E2E_ROLE;
+GRANT USAGE ON EXTERNAL VOLUME <external_volume_name> TO ROLE RUSTICE_SPCS_ROLE;
 ```
 
 Deploy Rustice with:
@@ -575,8 +585,8 @@ Deploy Rustice with:
 ```bash
 SNOW_CONFIG_FILE=/path/to/config.toml \
 SNOW_CONNECTION=snowflake \
-RUSTICE_HORIZON_DATABASE=RUSTICE_E2E \
-RUSTICE_HORIZON_ROLE=RUSTICE_E2E_ROLE \
+RUSTICE_HORIZON_DATABASE=RUSTICE_SPCS \
+RUSTICE_HORIZON_ROLE=RUSTICE_SPCS_ROLE \
 RUSTICE_INSTANCE_FAMILY=CPU_X64_XS \
 RUSTICE_POOL_MIN_NODES=1 \
 RUSTICE_POOL_MAX_NODES=1 \
@@ -585,6 +595,8 @@ RUSTICE_MAX_INSTANCES=1 \
 RUSTICE_AUTO_SUSPEND_SECS=0 \
 RUSTICE_HORIZON_SCHEMAS=PUBLIC,public \
 RUSTICE_HORIZON_TABLES=PUBLIC.SMOKE \
+RUSTICE_CLIENT_DATABASE=rustice_spcs \
+RUSTICE_CLIENT_SCHEMA=public \
 ./deploy/spcs/deploy.sh
 ```
 
@@ -598,7 +610,7 @@ Verify the baseline Snowflake-managed Iceberg table through regular Snowflake SQ
 
 ```bash
 snow --config-file /path/to/config.toml sql -c snowflake \
-  -q "SELECT * FROM RUSTICE_E2E.PUBLIC.SMOKE"
+  -q "SELECT * FROM RUSTICE_SPCS.PUBLIC.SMOKE"
 ```
 
 Expected result:
@@ -624,33 +636,33 @@ snow --config-file /path/to/config.toml sql -c snowflake \
   -q "SHOW ENDPOINTS IN SERVICE RUSTICE_APP.PUBLIC.RUSTICE_SERVICE"
 ```
 
-After the service reaches `READY`, run this SQL through the Embucket/Rustice Snowflake-compatible endpoint with the patched client/connector. The SQL catalog name remains `embucket`; `RUSTICE_E2E` is the underlying Horizon prefix:
+After the service reaches `READY`, run this SQL through the Embucket/Rustice Snowflake-compatible endpoint with the patched client/connector. `rustice_spcs` is the Rustice SQL catalog configured by `RUSTICE_CLIENT_DATABASE`; `RUSTICE_SPCS` is the underlying Horizon/Snowflake database configured by `RUSTICE_HORIZON_DATABASE`:
 
 ```sql
 SHOW DATABASES;
-SHOW SCHEMAS IN DATABASE embucket;
-SHOW TABLES IN SCHEMA embucket.public;
-SELECT * FROM embucket.public.smoke;
+SHOW SCHEMAS IN DATABASE rustice_spcs;
+SHOW TABLES IN SCHEMA rustice_spcs.public;
+SELECT * FROM rustice_spcs.public.smoke;
 ```
 
 If Horizon write access is enabled and the role has the required write privileges, use a separate write smoke:
 
 ```sql
-CREATE TABLE embucket.public.rustice_write_smoke (
+CREATE TABLE rustice_spcs.public.rustice_write_smoke (
   id INT,
   msg STRING
 );
 
-INSERT INTO embucket.public.rustice_write_smoke VALUES (2, 'written by rustice');
-SELECT * FROM embucket.public.rustice_write_smoke;
-DROP TABLE embucket.public.rustice_write_smoke;
+INSERT INTO rustice_spcs.public.rustice_write_smoke VALUES (2, 'written by rustice');
+SELECT * FROM rustice_spcs.public.rustice_write_smoke;
+DROP TABLE rustice_spcs.public.rustice_write_smoke;
 ```
 
 To inspect a table created through Rustice from regular Snowflake SQL or Snowsight, query the underlying Horizon database and schema. Current Rustice REST create behavior preserves the lower-case table name, so quote the table identifier in Snowflake SQL:
 
 ```sql
-SHOW ICEBERG TABLES LIKE 'rustice_write_smoke' IN SCHEMA RUSTICE_E2E.PUBLIC;
-SELECT * FROM RUSTICE_E2E.PUBLIC."rustice_write_smoke";
+SHOW ICEBERG TABLES LIKE 'rustice_write_smoke' IN SCHEMA RUSTICE_SPCS.PUBLIC;
+SELECT * FROM RUSTICE_SPCS.PUBLIC."rustice_write_smoke";
 ```
 
 Snowflake SQL can manage and inspect the SPCS service directly, but it does not speak the Snowflake REST session protocol that Rustice exposes. For SQL execution against Rustice itself, use the modified Snowflake-compatible client or connector pointed at the SPCS ingress endpoint.

@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 const ICEBERG_REST_PREFIX_ENV: &str = "ICEBERG_REST_PREFIX";
+const ICEBERG_REST_CATALOG_ENV: &str = "ICEBERG_REST_CATALOG";
 const ICEBERG_REST_BEARER_TOKEN_ENV: &str = "ICEBERG_REST_BEARER_TOKEN";
 const ICEBERG_REST_OAUTH_TOKEN_ENV: &str = "ICEBERG_REST_OAUTH_TOKEN";
 const ICEBERG_REST_CREDENTIAL_ENV: &str = "ICEBERG_REST_CREDENTIAL";
@@ -30,6 +31,10 @@ struct CachedOAuthToken {
 
 pub fn rest_catalog_prefix(default_catalog: &str) -> String {
     env_non_empty(ICEBERG_REST_PREFIX_ENV).unwrap_or_else(|| default_catalog.into())
+}
+
+pub fn rest_catalog_sql_catalog(default_catalog: &str) -> String {
+    env_non_empty(ICEBERG_REST_CATALOG_ENV).unwrap_or_else(|| default_catalog.into())
 }
 
 pub fn rest_catalog_eager_load() -> bool {

@@ -138,6 +138,13 @@ fn client_options_from_env() -> ClientOptions {
         ))
 }
 
+fn s3_region_from_env() -> Option<String> {
+    env::var("AWS_REGION")
+        .or_else(|_| env::var("AWS_DEFAULT_REGION"))
+        .ok()
+        .filter(|region| !region.trim().is_empty())
+}
+
 impl S3Volume {
     #[must_use]
     pub fn with_client_options(self, client_options: Option<ClientOptions>) -> Self {
@@ -337,9 +344,13 @@ pub async fn create_object_store_from_url(
 
             let client_options = client_options.unwrap_or_default();
 
-            let region = resolve_bucket_region(bucket, &client_options)
-                .await
-                .context(metastore_error::ObjectStoreSnafu)?;
+            let region = if let Some(region) = s3_region_from_env() {
+                region
+            } else {
+                resolve_bucket_region(bucket, &client_options)
+                    .await
+                    .context(metastore_error::ObjectStoreSnafu)?
+            };
 
             let s3_volume = S3Volume {
                 region: Some(region),
