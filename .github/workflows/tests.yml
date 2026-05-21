@@ -41,7 +41,6 @@ jobs:
       CARGO_TERM_COLOR: always
       COLUMNS: "80"
       RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
-      RUST_TEST_THREADS: "1"
     strategy:
       matrix:
         # run on stable and beta to ensure that tests won't break on the next version of the rust
@@ -58,7 +57,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: cargo test
+      - name: cargo test workspace
+        timeout-minutes: 35
+        run: |
+          cargo test --profile=ci --workspace --all-targets --exclude api-snowflake-rest
+      - name: cargo test api-snowflake-rest
         timeout-minutes: 45
         run: |
-          cargo test --profile=ci --workspace --all-targets
+          cargo test --profile=ci -p api-snowflake-rest --all-targets -- --test-threads=1
