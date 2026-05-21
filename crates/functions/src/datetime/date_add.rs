@@ -1,5 +1,5 @@
 use crate::datetime_errors::{InvalidArgumentSnafu, ReturnTypeFromArgsShouldBeCalledSnafu};
-use datafusion::arrow::array::{Array, ArrayRef, Int64Array, Int64Builder};
+use datafusion::arrow::array::{Array, ArrayRef, Int64Array, Int64Builder, new_empty_array};
 use datafusion::arrow::compute::cast;
 use datafusion::arrow::compute::kernels::numeric::add_wrapping;
 use datafusion::arrow::datatypes::DataType;
@@ -45,6 +45,10 @@ impl DateAddFunc {
     }
 
     fn add_years(dates: &Arc<dyn Array>, years: &Int64Array) -> Result<ArrayRef> {
+        if dates.is_empty() {
+            return Ok(new_empty_array(dates.data_type()));
+        }
+
         let intervals: Vec<ScalarValue> = years
             .iter()
             .map(|opt_y| {
@@ -61,6 +65,10 @@ impl DateAddFunc {
         months: &Int64Array,
         multiplier: i64,
     ) -> Result<ArrayRef> {
+        if dates.is_empty() {
+            return Ok(new_empty_array(dates.data_type()));
+        }
+
         let intervals: Vec<ScalarValue> = months
             .iter()
             .map(|m| {
@@ -76,6 +84,10 @@ impl DateAddFunc {
     }
 
     fn add_days(dates: &Arc<dyn Array>, days: &Int64Array, multiplier: i64) -> Result<ArrayRef> {
+        if dates.is_empty() {
+            return Ok(new_empty_array(dates.data_type()));
+        }
+
         let intervals: Vec<ScalarValue> = days
             .iter()
             .map(|opt_d| {
@@ -95,6 +107,10 @@ impl DateAddFunc {
         nanos: &Int64Array,
         multiplier: i64,
     ) -> Result<ArrayRef> {
+        if dates.is_empty() {
+            return Ok(new_empty_array(dates.data_type()));
+        }
+
         let intervals: Vec<ScalarValue> = nanos
             .iter()
             .map(|opt_ns| ScalarValue::new_interval_mdn(0, 0, opt_ns.unwrap_or(0) * multiplier))
@@ -392,6 +408,23 @@ mod tests {
                 "+---------------+---------------------+--------------------------+",
             ],
             &result
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_date_add_empty_input() -> DFResult<()> {
+        let ctx = SessionContext::new();
+        ctx.register_udf(ScalarUDF::from(DateAddFunc::new()));
+
+        let sql = "SELECT DATEADD('second', -5, ts) AS res \
+            FROM (SELECT CAST(NULL AS TIMESTAMP) AS ts WHERE false)";
+        let result = ctx.sql(sql).await?.collect().await?;
+
+        assert_eq!(
+            result.iter().map(|batch| batch.num_rows()).sum::<usize>(),
+            0
         );
 
         Ok(())

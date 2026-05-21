@@ -1,6 +1,6 @@
 use super::errors as dtime_errors;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
-use datafusion::arrow::array::Array;
+use datafusion::arrow::array::{Array, new_empty_array};
 use datafusion::arrow::datatypes::{DataType, TimeUnit};
 use datafusion::error::Result as DFResult;
 use datafusion::logical_expr::TypeSignature::{Coercible, Exact};
@@ -89,6 +89,9 @@ impl ScalarUDFImpl for AddMonthsFunc {
             ColumnarValue::Array(arr) => arr,
             ColumnarValue::Scalar(v) => v.to_array()?,
         };
+        if arr.is_empty() {
+            return Ok(ColumnarValue::Array(new_empty_array(arr.data_type())));
+        }
 
         let mut res = Vec::with_capacity(arr.len());
         for i in 0..arr.len() {
@@ -229,6 +232,23 @@ mod tests {
             ],
             &result
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_add_months_empty_input() -> DFResult<()> {
+        let ctx = SessionContext::new();
+        ctx.register_udf(ScalarUDF::from(AddMonthsFunc::new()));
+
+        let sql = "SELECT ADD_MONTHS(ts, 1) AS value \
+            FROM (SELECT CAST(NULL AS TIMESTAMP) AS ts WHERE false)";
+        let result = ctx.sql(sql).await?.collect().await?;
+
+        assert_eq!(
+            result.iter().map(|batch| batch.num_rows()).sum::<usize>(),
+            0
+        );
+
         Ok(())
     }
 }
