@@ -239,7 +239,11 @@ export EMBUCKET_THREADS=1
 7. Publish the private listing.
 
 Container Native Apps require Snowflake Product Security approval and automated
-container image scanning before listings can be published.
+container image scanning before listings can be published. If the target
+consumer account is outside the provider organization, the application package
+must also be eligible for `DISTRIBUTION = EXTERNAL`; Snowflake may need to
+enable this on the provider account for Native Apps that use Snowpark Container
+Services.
 
 For a provider-side draft listing that is not submitted for review and is not
 published, run:
@@ -250,5 +254,10 @@ snow --config-file /path/to/.snowflake/config.toml \
   -f create_draft_listing.sql
 ```
 
-The draft SQL uses `IWUWGVK.LV71752` as a placeholder target account. Replace it
-with the consumer `ORG.ACCOUNT` identifier before submitting or publishing.
+The draft SQL uses `IFSMGKM.UIC40916` for the current consumer test account.
+Replace it with the target consumer `ORG.ACCOUNT` identifier before submitting
+or publishing a different private listing. It also enables listing
+auto-fulfillment with `SUB_DATABASE_WITH_REFERENCE_USAGE`, which Snowflake
+requires when the target consumer is outside the provider's current region.
+Provider accounts must have global data sharing/auto-fulfillment enabled before
+the script can create or update such a listing.
