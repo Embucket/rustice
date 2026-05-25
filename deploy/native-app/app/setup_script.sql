@@ -62,15 +62,14 @@ BEGIN
   s3_host := IFF(effective_s3_region = '', '', 's3.' || effective_s3_region || '.amazonaws.com');
   all_hosts := catalog_host || IFF(s3_host = '', '', ',' || s3_host) || IFF(COALESCE(extra_egress_hosts, '') = '', '', ',' || extra_egress_hosts);
 
-  FOR host_row IN (
-    SELECT DISTINCT TRIM(value::STRING) AS host
+  SELECT COALESCE(LISTAGG(host_literal, ', '), '')
+  INTO :host_values
+  FROM (
+    SELECT DISTINCT
+      '''' || REPLACE(TRIM(value::STRING), '''', '''''') || '''' AS host_literal
     FROM TABLE(SPLIT_TO_TABLE(:all_hosts, ','))
     WHERE TRIM(value::STRING) <> ''
-  ) DO
-    host_values := host_values ||
-      IFF(host_values = '', '', ', ') ||
-      '''' || REPLACE(host_row.host, '''', '''''') || '''';
-  END FOR;
+  );
 
   IF (host_values = '') THEN
     RETURN 'No external access hosts resolved';
@@ -98,16 +97,16 @@ BEGIN
   DELETE FROM core.rustice_config;
   INSERT INTO core.rustice_config(key, value)
   SELECT * FROM VALUES
-    ('horizon_database', horizon_database),
-    ('horizon_role', horizon_role),
-    ('client_database', client_database),
-    ('client_schema', client_schema),
-    ('horizon_schemas', horizon_schemas),
-    ('horizon_tables', horizon_tables),
-    ('s3_region', effective_s3_region),
-    ('catalog_url', catalog_url),
-    ('snowflake_issuer_host', snowflake_issuer_host),
-    ('eai_name', eai_name),
+    ('horizon_database', :horizon_database),
+    ('horizon_role', :horizon_role),
+    ('client_database', :client_database),
+    ('client_schema', :client_schema),
+    ('horizon_schemas', :horizon_schemas),
+    ('horizon_tables', :horizon_tables),
+    ('s3_region', :effective_s3_region),
+    ('catalog_url', :catalog_url),
+    ('snowflake_issuer_host', :snowflake_issuer_host),
+    ('eai_name', :eai_name),
     ('image_path', '/RUSTICE_NATIVE_APP_IMAGES/PUBLIC/RUSTICE_REPO/rustice:latest');
 
   RETURN 'Configured Rustice external access hosts: ' || all_hosts ||
