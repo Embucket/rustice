@@ -15,6 +15,52 @@ CREATE SECRET IF NOT EXISTS core.rustice_jwt_secret
   TYPE = GENERIC_STRING
   SECRET_STRING = 'rustice-native-app-spcs-trusted-ingress';
 
+CREATE OR REPLACE PROCEDURE app_public.register_reference(ref_name STRING, operation STRING, ref_or_alias STRING)
+RETURNS STRING
+LANGUAGE SQL
+AS
+$$
+BEGIN
+  CASE (UPPER(operation))
+    WHEN 'ADD' THEN
+      SELECT SYSTEM$SET_REFERENCE(:ref_name, :ref_or_alias);
+    WHEN 'REMOVE' THEN
+      SELECT SYSTEM$REMOVE_REFERENCE(:ref_name, :ref_or_alias);
+    WHEN 'CLEAR' THEN
+      SELECT SYSTEM$REMOVE_ALL_REFERENCES(:ref_name);
+    ELSE
+      RETURN 'Unknown reference operation: ' || operation;
+  END CASE;
+
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE PROCEDURE app_public.get_configuration_for_reference(ref_name STRING)
+RETURNS STRING
+LANGUAGE SQL
+AS
+$$
+BEGIN
+  CASE (LOWER(ref_name))
+    WHEN 'horizon_credential_secret' THEN
+      RETURN '{
+        "type": "CONFIGURATION",
+        "payload": {
+          "type": "GENERIC_STRING"
+        }
+      }';
+    ELSE
+      RETURN '{
+        "type": "ERROR",
+        "payload": {
+          "message": "Unknown Rustice Native App reference."
+        }
+      }';
+  END CASE;
+END;
+$$;
+
 CREATE OR REPLACE PROCEDURE app_public.configure_external_access(
   horizon_database STRING,
   horizon_role STRING,
@@ -84,6 +130,7 @@ BEGIN
 
   create_eai_sql := 'CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION ' || eai_name ||
     ' ALLOWED_NETWORK_RULES = (' || network_rule_fqn || ')' ||
+    ' ALLOWED_AUTHENTICATION_SECRETS = ALL' ||
     ' ENABLED = TRUE';
   EXECUTE IMMEDIATE create_eai_sql;
 
@@ -110,7 +157,7 @@ BEGIN
     ('image_path', '/RUSTICE_NATIVE_APP_IMAGES/PUBLIC/RUSTICE_REPO/rustice:latest');
 
   RETURN 'Configured Rustice external access hosts: ' || all_hosts ||
-    '. Approve the app specification if Snowsight shows it as pending, then call APP_PUBLIC.START_APP().';
+    '. Approve the app specification if Snowsight shows it as pending, bind horizon_credential_secret, then call APP_PUBLIC.START_APP().';
 END;
 $$;
 
@@ -188,7 +235,8 @@ BEGIN
     ' horizon_tables => ' || CHR(39) || TO_JSON(TO_VARIANT(COALESCE(horizon_tables, ''))) || CHR(39) || ',' ||
     ' horizon_eager_load => ' || CHR(39) || TO_JSON(TO_VARIANT('0')) || CHR(39) || ',' ||
     ' s3_region => ' || CHR(39) || TO_JSON(TO_VARIANT(COALESCE(s3_region, ''))) || CHR(39) || ',' ||
-    ' jwt_secret => ' || CHR(39) || TO_JSON(TO_VARIANT(CURRENT_DATABASE() || '.CORE.RUSTICE_JWT_SECRET')) || CHR(39) ||
+    ' jwt_secret => ' || CHR(39) || TO_JSON(TO_VARIANT(CURRENT_DATABASE() || '.CORE.RUSTICE_JWT_SECRET')) || CHR(39) || ',' ||
+    ' horizon_credential_secret_reference => ' || CHR(39) || TO_JSON(TO_VARIANT('horizon_credential_secret')) || CHR(39) ||
     ' )' ||
     ' AUTO_SUSPEND_SECS = 0' ||
     ' EXTERNAL_ACCESS_INTEGRATIONS = (' || eai_name || ')' ||
@@ -227,6 +275,38 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE PROCEDURE app_public.service_logs(line_count NUMBER)
+RETURNS STRING
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+$$
+DECLARE
+  logs STRING;
+BEGIN
+  SELECT SYSTEM$GET_SERVICE_LOGS('core.rustice_service', 0, 'rustice', :line_count, FALSE)
+  INTO :logs;
+
+  RETURN logs;
+END;
+$$;
+
+CREATE OR REPLACE PROCEDURE app_public.service_previous_logs(line_count NUMBER)
+RETURNS STRING
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+$$
+DECLARE
+  logs STRING;
+BEGIN
+  SELECT SYSTEM$GET_SERVICE_LOGS('core.rustice_service', 0, 'rustice', :line_count, TRUE)
+  INTO :logs;
+
+  RETURN logs;
+END;
+$$;
+
 CREATE OR REPLACE PROCEDURE app_public.suspend_app()
 RETURNS STRING
 LANGUAGE SQL
@@ -261,11 +341,19 @@ $$;
 
 GRANT USAGE ON PROCEDURE app_public.configure_external_access(STRING, STRING, STRING, STRING, STRING, STRING, STRING, STRING)
   TO APPLICATION ROLE app_user;
+GRANT USAGE ON PROCEDURE app_public.register_reference(STRING, STRING, STRING)
+  TO APPLICATION ROLE app_user;
+GRANT USAGE ON PROCEDURE app_public.get_configuration_for_reference(STRING)
+  TO APPLICATION ROLE app_user;
 GRANT USAGE ON PROCEDURE app_public.start_app()
   TO APPLICATION ROLE app_user;
 GRANT USAGE ON PROCEDURE app_public.service_status()
   TO APPLICATION ROLE app_user;
 GRANT USAGE ON PROCEDURE app_public.service_endpoints()
+  TO APPLICATION ROLE app_user;
+GRANT USAGE ON PROCEDURE app_public.service_logs(NUMBER)
+  TO APPLICATION ROLE app_user;
+GRANT USAGE ON PROCEDURE app_public.service_previous_logs(NUMBER)
   TO APPLICATION ROLE app_user;
 GRANT USAGE ON PROCEDURE app_public.suspend_app()
   TO APPLICATION ROLE app_user;
