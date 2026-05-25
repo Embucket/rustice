@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS core.rustice_config (
 
 CREATE SECRET IF NOT EXISTS core.rustice_jwt_secret
   TYPE = GENERIC_STRING
-  SECRET_STRING = UUID_STRING() || UUID_STRING();
+  SECRET_STRING = 'rustice-native-app-spcs-trusted-ingress';
 
 CREATE OR REPLACE PROCEDURE app_public.configure_external_access(
   horizon_database STRING,
