@@ -65,11 +65,12 @@ snow app run --config-file /path/to/.snowflake/config.toml -c snowflake
 ```
 
 After the development application is created, grant the account privileges that
-SPCS requires:
+SPCS requires if they were not granted automatically from `manifest.yml`:
 
 ```sql
 GRANT CREATE COMPUTE POOL ON ACCOUNT TO APPLICATION RUSTICE_NATIVE_APP;
 GRANT BIND SERVICE ENDPOINT ON ACCOUNT TO APPLICATION RUSTICE_NATIVE_APP;
+GRANT CREATE EXTERNAL ACCESS INTEGRATION ON ACCOUNT TO APPLICATION RUSTICE_NATIVE_APP;
 ```
 
 Configure external access and create the service:
@@ -77,7 +78,7 @@ Configure external access and create the service:
 ```sql
 CALL RUSTICE_NATIVE_APP.APP_PUBLIC.CONFIGURE_EXTERNAL_ACCESS(
   'RUSTICE_SPCS',
-  'RUSTICE_SPCS',
+  'ACCOUNTADMIN',
   'rustice_spcs',
   'public_snowplow_manifest',
   'public_snowplow_manifest,public_snowplow_manifest_derived,public_snowplow_manifest_scratch,public_snowplow_manifest_snowplow_manifest',
@@ -86,8 +87,11 @@ CALL RUSTICE_NATIVE_APP.APP_PUBLIC.CONFIGURE_EXTERNAL_ACCESS(
   'embucket-testdata.s3.us-east-2.amazonaws.com'
 );
 
--- Approve the generated external access app specification in Snowsight if the
--- app shows a pending external access request.
+SHOW SPECIFICATIONS IN APPLICATION RUSTICE_NATIVE_APP;
+
+ALTER APPLICATION RUSTICE_NATIVE_APP
+  APPROVE SPECIFICATION RUSTICE_EXTERNAL_ACCESS
+  SEQUENCE_NUMBER = <sequence_number>;
 
 CALL RUSTICE_NATIVE_APP.APP_PUBLIC.START_APP();
 CALL RUSTICE_NATIVE_APP.APP_PUBLIC.SERVICE_STATUS();
@@ -97,9 +101,9 @@ CALL RUSTICE_NATIVE_APP.APP_PUBLIC.SERVICE_ENDPOINTS();
 The arguments are:
 
 - `horizon_database`: Snowflake database backing the Horizon catalog prefix.
-- `horizon_role`: role/scope to use for Horizon access. Kept for parity with
-  the direct SPCS script; the current OAuth-file experiment does not exchange a
-  PAT for this role.
+- `horizon_role`: role/scope to use for Horizon access. `ACCOUNTADMIN` is only
+  a convenient local development value. Production deployments should use a
+  dedicated role once the secret/reference Horizon auth flow is added.
 - `client_database`: SQL catalog name exposed by Rustice.
 - `client_schema`: default SQL schema exposed by Rustice.
 - `horizon_schemas`: comma-separated schemas to bootstrap lazily.
@@ -107,6 +111,24 @@ The arguments are:
 - `s3_region`: AWS region for `COPY INTO s3://...` sources.
 - `extra_egress_hosts`: comma-separated hosts in addition to the Snowflake
   account host and regional S3 host.
+
+After the endpoint is ready, a smoke query can be sent through the patched
+connector:
+
+```bash
+embucket-snow --config-file /path/to/generated/config.toml \
+  sql -c embucket_spcs \
+  --host <service>.snowflakecomputing.app \
+  -q "SELECT 1"
+```
+
+Runtime validation in the development account confirmed that ingress auth and
+the service role grants work: `SELECT 1` succeeds through the Native App public
+endpoint. Reading Horizon/Iceberg tables with the experimental
+`ICEBERG_REST_OAUTH_TOKEN_FILE=/snowflake/session/token` path returned `401
+Unauthorized`, so real Iceberg reads/writes and dbt workloads still require the
+next auth iteration: a consumer-approved secret/reference flow that supplies
+`ICEBERG_REST_CREDENTIAL` or an equivalent Horizon-compatible token.
 
 ## Consumer Flow for a Private Listing
 
