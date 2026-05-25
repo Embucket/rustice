@@ -13,6 +13,7 @@ members = [
   "crates/error-stack-trace",
   "crates/embucket-lambda",
   "crates/build-info",
+  "crates/sqllogictest",
 ]
 resolver = "2"
 package.license-file = "LICENSE"

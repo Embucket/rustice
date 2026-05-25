@@ -1,0 +1,11 @@
+query TTTT
+WITH bl AS (
+    SELECT * FROM VALUES
+        ('abc', NULL),
+        ('\u0394', X'A1B2')
+    AS bl(v, b)
+)
+SELECT v, b, BIT_LENGTH(v), BIT_LENGTH(b) FROM bl ORDER BY v
+----
+abc	NULL	24	NULL
+Δ	x'a1b2'	16	16

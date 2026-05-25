@@ -1,0 +1,28 @@
+[package]
+name = "embucket-sqllogictest"
+version = "0.1.0"
+edition = "2024"
+license-file.workspace = true
+publish = false
+
+[[test]]
+name = "sqllogictests"
+path = "tests/sqllogictests.rs"
+harness = false
+
+[dependencies]
+executor = { path = "../executor", features = ["test-helpers"] }
+async-trait = { workspace = true }
+bigdecimal = "0.4"
+clap = { workspace = true }
+datafusion = { workspace = true }
+futures = { workspace = true }
+half = "2"
+itertools = "0.13"
+regex = { workspace = true }
+sqllogictest = "0.29"
+thiserror = "2"
+tokio = { workspace = true }
+
+[lints]
+workspace = true

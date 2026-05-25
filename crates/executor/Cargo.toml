@@ -6,6 +6,10 @@ license-file.workspace = true
 
 [features]
 default = []
+# Exposes `executor::test_helpers` (in-memory session factory) to external
+# crates such as `embucket-sqllogictest`. Always enabled for the crate's own
+# tests; downstream crates opt in via this feature.
+test-helpers = []
 
 [dependencies]
 catalog-metastore = { path = "../catalog-metastore" }
