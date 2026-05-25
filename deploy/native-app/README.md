@@ -245,6 +245,51 @@ must also be eligible for `DISTRIBUTION = EXTERNAL`; Snowflake may need to
 enable this on the provider account for Native Apps that use Snowpark Container
 Services.
 
+### External Consumers
+
+Consumers in other Snowflake organizations require two provider-side gates:
+
+1. Enable cross-cloud auto-fulfillment for the provider account with `ORGADMIN`:
+
+   ```sql
+   USE ROLE ORGADMIN;
+   SELECT SYSTEM$IS_GLOBAL_DATA_SHARING_ENABLED_FOR_ACCOUNT('<provider_account_name>');
+   SELECT SYSTEM$ENABLE_GLOBAL_DATA_SHARING_FOR_ACCOUNT('<provider_account_name>');
+   ```
+
+2. Ask Snowflake to approve the provider account for Snowflake Native Apps with
+   Snowpark Container Services and `DISTRIBUTION = EXTERNAL`.
+
+Without the second approval, publishing to an out-of-organization account fails
+when setting external distribution on the application package:
+
+```sql
+ALTER APPLICATION PACKAGE RUSTICE_NATIVE_APP_PKG
+  SET DISTRIBUTION = EXTERNAL;
+```
+
+Expected blocker before Snowflake approval:
+
+```text
+093197: Account is not allowed to create application package versions or patches
+with Snowpark Container Services for EXTERNAL distribution
+```
+
+After Snowflake approves the provider account, set the package distribution,
+wait for the automated security/container scan to pass, then publish the
+private listing:
+
+```sql
+ALTER APPLICATION PACKAGE RUSTICE_NATIVE_APP_PKG
+  SET DISTRIBUTION = EXTERNAL;
+
+ALTER LISTING RUSTICE_NATIVE_APP_PRIVATE PUBLISH;
+```
+
+Adding more private consumers after that should only require adding their
+`ORG.ACCOUNT` identifiers to the listing targets and refreshing/publishing the
+listing metadata.
+
 For a provider-side draft listing that is not submitted for review and is not
 published, run:
 
