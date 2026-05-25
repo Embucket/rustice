@@ -240,3 +240,15 @@ export EMBUCKET_THREADS=1
 
 Container Native Apps require Snowflake Product Security approval and automated
 container image scanning before listings can be published.
+
+For a provider-side draft listing that is not submitted for review and is not
+published, run:
+
+```bash
+snow --config-file /path/to/.snowflake/config.toml \
+  sql -c snowflake \
+  -f create_draft_listing.sql
+```
+
+The draft SQL uses `IWUWGVK.LV71752` as a placeholder target account. Replace it
+with the consumer `ORG.ACCOUNT` identifier before submitting or publishing.
