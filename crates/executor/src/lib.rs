@@ -10,6 +10,8 @@ pub mod running_queries;
 pub mod service;
 pub mod session;
 pub mod snowflake_error;
+#[cfg(any(test, feature = "test-helpers"))]
+pub mod test_helpers;
 pub mod tracing;
 pub mod utils;
 

@@ -35,7 +35,7 @@ jobs:
           --health-cmd "pg_isready -U dev"
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 5    
+          --health-retries 5
     name: ubuntu / ${{ matrix.toolchain }}
     env:
       CARGO_TERM_COLOR: always
@@ -60,8 +60,31 @@ jobs:
       - name: cargo test workspace
         timeout-minutes: 35
         run: |
-          cargo test --profile=ci --workspace --all-targets --exclude api-snowflake-rest
+          cargo test --profile=ci --workspace --all-targets \
+            --exclude api-snowflake-rest \
+            --exclude embucket-sqllogictest
       - name: cargo test api-snowflake-rest
         timeout-minutes: 45
         run: |
           cargo test --profile=ci -p api-snowflake-rest --all-targets -- --test-threads=1
+
+  sqllogictest:
+    runs-on: ubuntu-latest
+    name: sqllogictest (non-gating)
+    continue-on-error: true
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: run sqllogictest harness
+        timeout-minutes: 30
+        run: |
+          cargo test -p embucket-sqllogictest --profile=ci --test sqllogictests -- \
+            --test-threads $(nproc)

@@ -1,0 +1,18 @@
+query T
+WITH strings_test(s) AS (SELECT * FROM
+  VALUES
+    ('coffee'),
+    ('ice tea'),
+    ('latte'),
+    ('tea'),
+    (NULL)
+)
+SELECT * FROM strings_test WHERE ENDSWITH(s, 'te')
+----
+latte
+
+query TT
+SELECT ENDSWITH('nñ', 'n'),
+       ENDSWITH('nn', 'n')
+----
+FALSE	TRUE

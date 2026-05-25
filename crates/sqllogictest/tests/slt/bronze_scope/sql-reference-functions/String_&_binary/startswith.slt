@@ -1,0 +1,16 @@
+query T
+WITH strings_test(s) AS (SELECT * FROM
+  VALUES
+    ('test'),
+    ('testing'),
+    ('best'),
+    ('rest'),
+    ('tempt'),
+    ('stat'),
+    (null)
+)
+SELECT * FROM strings_test WHERE startswith(s, 'te')
+----
+test
+testing
+tempt
