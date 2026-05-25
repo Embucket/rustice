@@ -177,25 +177,25 @@ BEGIN
     ' IN COMPUTE POOL ' || pool_name ||
     ' FROM SPECIFICATION_TEMPLATE_FILE = ''/service/rustice_spec.yaml''' ||
     ' USING (' ||
-    ' image => ''' || REPLACE(image_path, '''', '''''') || ''',' ||
-    ' rust_log => ''info'',' ||
-    ' snowflake_issuer_host => ''' || REPLACE(snowflake_issuer_host, '''', '''''') || ''',' ||
-    ' catalog_url => ''' || REPLACE(catalog_url, '''', '''''') || ''',' ||
-    ' horizon_database => ''' || REPLACE(horizon_database, '''', '''''') || ''',' ||
-    ' horizon_role => ''' || REPLACE(horizon_role, '''', '''''') || ''',' ||
-    ' client_database => ''' || REPLACE(client_database, '''', '''''') || ''',' ||
-    ' client_schema => ''' || REPLACE(client_schema, '''', '''''') || ''',' ||
-    ' horizon_schemas => ''' || REPLACE(horizon_schemas, '''', '''''') || ''',' ||
-    ' horizon_tables => ''' || REPLACE(COALESCE(horizon_tables, ''), '''', '''''') || ''',' ||
-    ' horizon_eager_load => ''0'',' ||
-    ' s3_region => ''' || REPLACE(COALESCE(s3_region, ''), '''', '''''') || ''',' ||
-    ' jwt_secret => ''' || CURRENT_DATABASE() || '.CORE.RUSTICE_JWT_SECRET''' ||
+    ' image => ' || CHR(39) || TO_JSON(TO_VARIANT(image_path)) || CHR(39) || ',' ||
+    ' rust_log => ' || CHR(39) || TO_JSON(TO_VARIANT('info')) || CHR(39) || ',' ||
+    ' snowflake_issuer_host => ' || CHR(39) || TO_JSON(TO_VARIANT(snowflake_issuer_host)) || CHR(39) || ',' ||
+    ' catalog_url => ' || CHR(39) || TO_JSON(TO_VARIANT(catalog_url)) || CHR(39) || ',' ||
+    ' horizon_database => ' || CHR(39) || TO_JSON(TO_VARIANT(horizon_database)) || CHR(39) || ',' ||
+    ' horizon_scope => ' || CHR(39) || TO_JSON(TO_VARIANT('session:role:' || horizon_role)) || CHR(39) || ',' ||
+    ' client_database => ' || CHR(39) || TO_JSON(TO_VARIANT(client_database)) || CHR(39) || ',' ||
+    ' horizon_schemas => ' || CHR(39) || TO_JSON(TO_VARIANT(horizon_schemas)) || CHR(39) || ',' ||
+    ' horizon_tables => ' || CHR(39) || TO_JSON(TO_VARIANT(COALESCE(horizon_tables, ''))) || CHR(39) || ',' ||
+    ' horizon_eager_load => ' || CHR(39) || TO_JSON(TO_VARIANT('0')) || CHR(39) || ',' ||
+    ' s3_region => ' || CHR(39) || TO_JSON(TO_VARIANT(COALESCE(s3_region, ''))) || CHR(39) || ',' ||
+    ' jwt_secret => ' || CHR(39) || TO_JSON(TO_VARIANT(CURRENT_DATABASE() || '.CORE.RUSTICE_JWT_SECRET')) || CHR(39) ||
     ' )' ||
     ' AUTO_SUSPEND_SECS = 0' ||
     ' EXTERNAL_ACCESS_INTEGRATIONS = (' || eai_name || ')' ||
     ' AUTO_RESUME = TRUE MIN_INSTANCES = 1 MAX_INSTANCES = 1';
 
   EXECUTE IMMEDIATE create_service_sql;
+  GRANT SERVICE ROLE core.rustice_service!rustice_user TO APPLICATION ROLE app_user;
 
   RETURN 'Rustice service created. Call APP_PUBLIC.SERVICE_STATUS() and APP_PUBLIC.SERVICE_ENDPOINTS().';
 END;
