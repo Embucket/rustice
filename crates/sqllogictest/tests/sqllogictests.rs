@@ -14,9 +14,10 @@ use embucket_sqllogictest::embucket_validator;
 use embucket_sqllogictest::engine::EmbucketSession;
 use embucket_sqllogictest::preprocessor::strip_custom_directives;
 use executor::test_helpers::create_df_session_with_catalog_url;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use sqllogictest::{Runner, parse_with_name};
 use std::collections::BTreeMap;
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -51,6 +52,10 @@ fn default_threads() -> usize {
 }
 
 const ERRS_PER_FILE_LIMIT: usize = 10;
+
+thread_local! {
+    static LAST_PANIC: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
 
 #[derive(Debug)]
 struct FileOutcome {
@@ -91,8 +96,36 @@ async fn run(cli: Cli) -> i32 {
         cli.test_threads
     );
 
+    // Capture the most recent panic message per thread so `catch_unwind` payloads
+    // (which can be opaque) get a human-readable companion. Also suppresses the
+    // default stderr backtrace so it doesn't interleave with the summary.
+    std::panic::set_hook(Box::new(|info| {
+        LAST_PANIC.with(|cell| {
+            *cell.borrow_mut() = Some(info.to_string());
+        });
+    }));
+
     let outcomes: Vec<FileOutcome> = futures::stream::iter(files)
-        .map(|path| async move { run_file(path).await })
+        .map(|path| {
+            let path_for_panic = path.clone();
+            let start = Instant::now();
+            LAST_PANIC.with(|cell| *cell.borrow_mut() = None);
+            AssertUnwindSafe(run_file(path))
+                .catch_unwind()
+                .map(move |result| match result {
+                    Ok(outcome) => outcome,
+                    Err(payload) => {
+                        let hook_msg = LAST_PANIC.with(|cell| cell.borrow_mut().take());
+                        let payload_msg = panic_message(&payload);
+                        let msg = hook_msg.unwrap_or(payload_msg);
+                        FileOutcome {
+                            path: path_for_panic,
+                            errors: vec![format!("panicked: {msg}")],
+                            duration_ms: start.elapsed().as_millis(),
+                        }
+                    }
+                })
+        })
         .buffer_unordered(cli.test_threads)
         .collect()
         .await;
@@ -101,6 +134,16 @@ async fn run(cli: Cli) -> i32 {
 
     let failures = outcomes.iter().filter(|o| !o.errors.is_empty()).count();
     if cli.strict && failures > 0 { 1 } else { 0 }
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "<non-string panic payload>".to_string()
+    }
 }
 
 fn collect_files(root: &Path, cli: &Cli) -> Vec<PathBuf> {
