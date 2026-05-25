@@ -15,13 +15,16 @@ spec:
         ICEBERG_REST_SCHEMAS: {{ horizon_schemas }}
         ICEBERG_REST_TABLES: {{ horizon_tables }}
         ICEBERG_REST_EAGER_LOAD: {{ horizon_eager_load }}
-        ICEBERG_REST_OAUTH_TOKEN_FILE: "/snowflake/session/token"
+        ICEBERG_REST_CREDENTIAL_FILE: "/etc/rustice/horizon_credential/secret_string"
         AWS_REGION: {{ s3_region }}
         AWS_DEFAULT_REGION: {{ s3_region }}
       secrets:
         - snowflakeSecret: {{ jwt_secret }}
           envVarName: JWT_SECRET
           secretKeyRef: secret_string
+        - snowflakeSecret:
+            objectReference: {{ horizon_credential_secret_reference }}
+          directoryPath: "/etc/rustice/horizon_credential"
       readinessProbe:
         port: 3000
         path: /health
