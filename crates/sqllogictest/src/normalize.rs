@@ -125,8 +125,7 @@ pub fn cell_to_string(col: &ArrayRef, row: usize) -> Result<String> {
         _ => {
             let mut format_options = datafusion::arrow::util::display::FormatOptions::default();
             format_options = format_options.with_null("NULL");
-            let f = ArrayFormatter::try_new(col.as_ref(), &format_options)
-                .map_err(Error::Arrow)?;
+            let f = ArrayFormatter::try_new(col.as_ref(), &format_options).map_err(Error::Arrow)?;
             Ok(f.value(row).to_string())
         }
     }

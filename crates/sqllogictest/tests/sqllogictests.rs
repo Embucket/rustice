@@ -171,9 +171,7 @@ async fn run_file(path: PathBuf) -> FileOutcome {
     let session = create_df_session_with_catalog_url("/dev").await;
     let make_session = move || {
         let session = Arc::clone(&session);
-        async move {
-            Ok::<_, embucket_sqllogictest::error::Error>(EmbucketSession::new(session))
-        }
+        async move { Ok::<_, embucket_sqllogictest::error::Error>(EmbucketSession::new(session)) }
     };
 
     let mut runner = Runner::new(make_session);

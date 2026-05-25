@@ -4,15 +4,19 @@
 
 #![allow(clippy::unwrap_used)]
 
-use datafusion::arrow::datatypes::{Decimal128Type, Decimal256Type, DecimalType, i256};
 use bigdecimal::BigDecimal;
+use datafusion::arrow::datatypes::{Decimal128Type, Decimal256Type, DecimalType, i256};
 use half::f16;
 use std::str::FromStr;
 
 pub const NULL_STR: &str = "NULL";
 
 pub(crate) fn bool_to_str(value: bool) -> String {
-    if value { "true".to_string() } else { "false".to_string() }
+    if value {
+        "true".to_string()
+    } else {
+        "false".to_string()
+    }
 }
 
 pub(crate) fn varchar_to_str(value: &str) -> String {

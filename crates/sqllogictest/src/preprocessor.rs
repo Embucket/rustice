@@ -16,11 +16,7 @@
 //! parsing. Standard `onlyif`/`skipif` (the upstream forms, no hyphen) are
 //! left untouched.
 
-const STRIP_PREFIXES: &[&str] = &[
-    "exclude-from-coverage",
-    "skip-if ",
-    "only-if ",
-];
+const STRIP_PREFIXES: &[&str] = &["exclude-from-coverage", "skip-if ", "only-if "];
 
 /// Returns the input with any line starting (after leading whitespace) with one
 /// of the embucket-specific directive prefixes removed. Other lines pass
