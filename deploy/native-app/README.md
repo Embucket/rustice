@@ -19,16 +19,14 @@ This scaffold packages the same `embucketd` container service that
 - `executeAsCaller: true`
 - Rustice trusted SPCS ingress mode
 - Horizon/Snowflake REST Catalog settings passed as service environment
-- SPCS service OAuth token mounted from `/snowflake/session/token`
+- a consumer-approved `SECRET` reference mounted through `ICEBERG_REST_CREDENTIAL_FILE`
 
-The Horizon auth mode is intentionally experimental in this scaffold. The
-direct SPCS deploy script uses a service-user PAT stored in a Snowflake secret.
-That pattern works in our account, but it is not yet a good Marketplace UX
-because consumers would still need to manage a PAT. The Native App service spec
-therefore uses `ICEBERG_REST_OAUTH_TOKEN_FILE=/snowflake/session/token` so we
-can test whether Snowflake-managed service credentials are accepted by Horizon
-from inside an app. If they are not, the next implementation step is a
-consumer-approved secret/reference flow for `ICEBERG_REST_CREDENTIAL`.
+The Horizon auth path mirrors the direct SPCS deploy: Rustice receives a
+Horizon-compatible credential from a Snowflake `GENERIC_STRING` secret, exchanges
+it for a short-lived Horizon/Snowflake REST Catalog access token, and refreshes
+that token before it expires. In Native App form the app never creates or owns
+that secret directly. The consumer creates or selects the secret, then binds it
+to the app reference named `horizon_credential_secret`.
 
 ## Provider Setup
 
@@ -73,7 +71,7 @@ GRANT BIND SERVICE ENDPOINT ON ACCOUNT TO APPLICATION RUSTICE_NATIVE_APP;
 GRANT CREATE EXTERNAL ACCESS INTEGRATION ON ACCOUNT TO APPLICATION RUSTICE_NATIVE_APP;
 ```
 
-Configure external access and create the service:
+Configure external access:
 
 ```sql
 CALL RUSTICE_NATIVE_APP.APP_PUBLIC.CONFIGURE_EXTERNAL_ACCESS(
@@ -92,10 +90,67 @@ SHOW SPECIFICATIONS IN APPLICATION RUSTICE_NATIVE_APP;
 ALTER APPLICATION RUSTICE_NATIVE_APP
   APPROVE SPECIFICATION RUSTICE_EXTERNAL_ACCESS
   SEQUENCE_NUMBER = <sequence_number>;
+```
 
+Create or reuse a Snowflake secret containing the Horizon credential. For local
+development this can be the same role-restricted PAT secret that
+`deploy/spcs/deploy.sh` creates. For a clean account, create a service user,
+issue a role-restricted PAT, store only the returned `token_secret` in a
+`GENERIC_STRING` secret, and bind that secret to the Native App reference:
+
+```sql
+CREATE DATABASE IF NOT EXISTS RUSTICE_NATIVE_APP_CONFIG;
+CREATE SCHEMA IF NOT EXISTS RUSTICE_NATIVE_APP_CONFIG.SECRETS;
+
+CREATE USER IF NOT EXISTS RUSTICE_HORIZON_SVC
+  TYPE = SERVICE
+  DEFAULT_ROLE = <horizon_role>;
+
+GRANT ROLE <horizon_role> TO USER RUSTICE_HORIZON_SVC;
+
+CREATE AUTHENTICATION POLICY IF NOT EXISTS RUSTICE_NATIVE_APP_CONFIG.SECRETS.RUSTICE_HORIZON_PAT_AUTH_POLICY
+  PAT_POLICY = (
+    NETWORK_POLICY_EVALUATION = ENFORCED_NOT_REQUIRED
+    REQUIRE_ROLE_RESTRICTION_FOR_SERVICE_USERS = TRUE
+  );
+
+ALTER USER IF EXISTS RUSTICE_HORIZON_SVC
+  SET AUTHENTICATION POLICY RUSTICE_NATIVE_APP_CONFIG.SECRETS.RUSTICE_HORIZON_PAT_AUTH_POLICY
+  FORCE;
+
+ALTER USER IF EXISTS RUSTICE_HORIZON_SVC
+  ADD PROGRAMMATIC ACCESS TOKEN RUSTICE_HORIZON_PAT
+  ROLE_RESTRICTION = '<horizon_role>'
+  DAYS_TO_EXPIRY = 15;
+
+SELECT "token_secret" FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+
+CREATE OR REPLACE SECRET RUSTICE_NATIVE_APP_CONFIG.SECRETS.HORIZON_CREDENTIAL
+  TYPE = GENERIC_STRING
+  SECRET_STRING = '<token_secret returned above>';
+
+SHOW REFERENCES IN APPLICATION RUSTICE_NATIVE_APP;
+
+CALL RUSTICE_NATIVE_APP.APP_PUBLIC.REGISTER_REFERENCE(
+  'horizon_credential_secret',
+  'ADD',
+  SYSTEM$REFERENCE(
+    'SECRET',
+    'RUSTICE_NATIVE_APP_CONFIG.SECRETS.HORIZON_CREDENTIAL',
+    'PERSISTENT',
+    'READ'
+  )
+);
+```
+
+Then start the service:
+
+```sql
 CALL RUSTICE_NATIVE_APP.APP_PUBLIC.START_APP();
 CALL RUSTICE_NATIVE_APP.APP_PUBLIC.SERVICE_STATUS();
 CALL RUSTICE_NATIVE_APP.APP_PUBLIC.SERVICE_ENDPOINTS();
+CALL RUSTICE_NATIVE_APP.APP_PUBLIC.SERVICE_LOGS(100);
+CALL RUSTICE_NATIVE_APP.APP_PUBLIC.SERVICE_PREVIOUS_LOGS(100);
 ```
 
 The arguments are:
@@ -103,7 +158,8 @@ The arguments are:
 - `horizon_database`: Snowflake database backing the Horizon catalog prefix.
 - `horizon_role`: role/scope to use for Horizon access. `ACCOUNTADMIN` is only
   a convenient local development value. Production deployments should use a
-  dedicated role once the secret/reference Horizon auth flow is added.
+  dedicated role, and the bound PAT must be created with the same
+  `ROLE_RESTRICTION` value.
 - `client_database`: SQL catalog name exposed by Rustice.
 - `client_schema`: default SQL schema exposed by Rustice.
 - `horizon_schemas`: comma-separated schemas to bootstrap lazily.
@@ -111,6 +167,12 @@ The arguments are:
 - `s3_region`: AWS region for `COPY INTO s3://...` sources.
 - `extra_egress_hosts`: comma-separated hosts in addition to the Snowflake
   account host and regional S3 host.
+- `horizon_credential_secret`: app reference to a `GENERIC_STRING` secret whose
+  value is the Horizon-compatible credential. The service mounts it as a file
+  and points Rustice to it with `ICEBERG_REST_CREDENTIAL_FILE`.
+
+The `horizon_role` argument and the PAT `ROLE_RESTRICTION` must match. If they
+do not match, Horizon token exchange fails with `unauthorized_client`.
 
 After the endpoint is ready, a smoke query can be sent through the patched
 connector:
@@ -124,22 +186,32 @@ embucket-snow --config-file /path/to/generated/config.toml \
 
 Runtime validation in the development account confirmed that ingress auth and
 the service role grants work: `SELECT 1` succeeds through the Native App public
-endpoint. Reading Horizon/Iceberg tables with the experimental
-`ICEBERG_REST_OAUTH_TOKEN_FILE=/snowflake/session/token` path returned `401
-Unauthorized`, so real Iceberg reads/writes and dbt workloads still require the
-next auth iteration: a consumer-approved secret/reference flow that supplies
-`ICEBERG_REST_CREDENTIAL` or an equivalent Horizon-compatible token.
+endpoint. Horizon/Iceberg access was validated through the consumer-approved
+`horizon_credential_secret` reference with:
+
+```sql
+SELECT COUNT(*) AS c FROM rustice_spcs.public_snowplow_manifest.events;
+-- 125127
+```
 
 ## Consumer Flow for a Private Listing
 
 After the app package is attached to a private listing, the consumer installs it
 from `Catalog -> Apps`, grants requested privileges, approves external access,
-and calls the same procedures:
+creates or selects a Horizon credential secret, binds the
+`horizon_credential_secret` reference, and calls the same procedures:
 
 ```sql
 CALL <installed_app>.APP_PUBLIC.CONFIGURE_EXTERNAL_ACCESS(...);
+CALL <installed_app>.APP_PUBLIC.REGISTER_REFERENCE(
+  'horizon_credential_secret',
+  'ADD',
+  SYSTEM$REFERENCE('SECRET', '<db>.<schema>.<secret>', 'PERSISTENT', 'READ')
+);
 CALL <installed_app>.APP_PUBLIC.START_APP();
 CALL <installed_app>.APP_PUBLIC.SERVICE_ENDPOINTS();
+CALL <installed_app>.APP_PUBLIC.SERVICE_LOGS(100);
+CALL <installed_app>.APP_PUBLIC.SERVICE_PREVIOUS_LOGS(100);
 ```
 
 The consumer then points `embucket-snow` or dbt at the returned public ingress
