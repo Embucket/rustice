@@ -20,3 +20,14 @@ privileges:
       description: "Allows the app to expose the Rustice Snowflake-compatible endpoint."
   - CREATE EXTERNAL ACCESS INTEGRATION:
       description: "Allows the app to create controlled egress for Horizon Catalog and object-store access."
+
+references:
+  - horizon_credential_secret:
+      label: "Horizon credential secret"
+      description: "Snowflake secret containing a Horizon-compatible credential for Snowflake REST Catalog token exchange."
+      privileges:
+        - READ
+      object_type: SECRET
+      multi_valued: false
+      register_callback: app_public.register_reference
+      configuration_callback: app_public.get_configuration_for_reference
