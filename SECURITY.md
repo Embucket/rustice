@@ -47,7 +47,7 @@ The workflow builds the final Docker image and performs:
 
 - vulnerability scanning with Grype and upload of the full vulnerability report;
 - a CI gate that fails on fixable `HIGH` or `CRITICAL` findings;
-- malware scanning with ClamAV over the saved final image archive;
+- malware scanning with ClamAV over the exported final image root filesystem;
 - upload of scan reports as GitHub Actions artifacts.
 
 Reports should be retained with the release evidence used for Snowflake Native
