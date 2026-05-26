@@ -156,8 +156,9 @@ for:
 The GitHub Actions workflow `.github/workflows/image-security.yml` builds the
 final image and scans it with:
 
-- Grype for CVEs, with a `HIGH` severity fail gate;
-- ClamAV for malware, scanning the extracted final image filesystem.
+- Grype for CVEs, uploading the full vulnerability report;
+- a release gate for fixable `HIGH` and `CRITICAL` findings;
+- ClamAV for malware, scanning the saved final image archive.
 
 Run it manually before Snowflake questionnaire resubmission:
 
