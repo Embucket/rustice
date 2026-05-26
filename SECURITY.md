@@ -45,8 +45,9 @@ run the image security workflow in `.github/workflows/image-security.yml`.
 
 The workflow builds the final Docker image and performs:
 
-- vulnerability scanning with Grype, failing on `HIGH` or `CRITICAL` findings;
-- malware scanning with ClamAV over the extracted final image filesystem;
+- vulnerability scanning with Grype and upload of the full vulnerability report;
+- a CI gate that fails on fixable `HIGH` or `CRITICAL` findings;
+- malware scanning with ClamAV over the saved final image archive;
 - upload of scan reports as GitHub Actions artifacts.
 
 Reports should be retained with the release evidence used for Snowflake Native
@@ -54,8 +55,9 @@ App security review.
 
 ## Vulnerability Management
 
-Vulnerabilities are triaged by severity, exploitability, affected component, and
-whether the affected code path is reachable in the Native App runtime.
+Vulnerabilities are triaged by severity, exploitability, affected component, fix
+availability, and whether the affected code path is reachable in the Native App
+runtime.
 
 Target remediation timelines for applicable vulnerabilities in supported Native
 App release artifacts:
@@ -64,6 +66,11 @@ App release artifacts:
 - High: 30 calendar days
 - Medium: 90 calendar days
 - Low: addressed opportunistically or during routine maintenance
+
+Fixable Critical and High findings in the final runtime image block release
+until they are remediated or formally accepted with documented compensating
+controls. Non-fixable findings from the runtime base image are tracked in the
+scan report and re-evaluated on each release or base image rebuild.
 
 If a finding is not applicable, maintainers document the rationale in the release
 or security review evidence. Examples include build-only dependencies that are
