@@ -158,7 +158,7 @@ final image and scans it with:
 
 - Grype for CVEs, uploading the full vulnerability report;
 - a release gate for fixable `HIGH` and `CRITICAL` findings;
-- ClamAV for malware, scanning the saved final image archive.
+- ClamAV for malware, scanning the exported final image root filesystem.
 
 Run it manually before Snowflake questionnaire resubmission:
 
