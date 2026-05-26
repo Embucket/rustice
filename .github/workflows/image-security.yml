@@ -102,8 +102,16 @@ jobs:
           print('No fixable HIGH/CRITICAL vulnerabilities found in final image.')
           PY
 
-      - name: Save final image for malware scan
-        run: docker save "${IMAGE_TAG}" -o scan-reports/rustice-image.tar
+      - name: Export final image rootfs for malware scan
+        run: |
+          mkdir -p scan-reports/image-rootfs
+          container_id="$(docker create "${IMAGE_TAG}")"
+          docker export "$container_id" -o scan-reports/rustice-rootfs.tar
+          docker rm "$container_id"
+          tar -xf scan-reports/rustice-rootfs.tar -C scan-reports/image-rootfs
+          file_count="$(find scan-reports/image-rootfs -type f | wc -l)"
+          echo "Exported rootfs file count: ${file_count}"
+          test "$file_count" -gt 0
 
       - name: Install ClamAV
         run: |
@@ -115,10 +123,10 @@ jobs:
       - name: Run ClamAV malware scan
         run: |
           clamscan \
+            --recursive \
             --infected \
-            --leave-temps \
             --log=scan-reports/clamav-rustice-image.log \
-            scan-reports/rustice-image.tar
+            scan-reports/image-rootfs
 
       - name: Upload image security reports
         if: always()
