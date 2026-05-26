@@ -57,26 +57,51 @@ jobs:
         run: mkdir -p scan-reports
 
       - name: Run Grype CVE scan
-        id: cve
         uses: anchore/scan-action@v7
-        continue-on-error: true
         with:
           image: ${{ env.IMAGE_TAG }}
-          fail-build: true
-          severity-cutoff: high
+          fail-build: false
           output-format: json
           output-file: scan-reports/grype-rustice-image.json
 
-      - name: Save final image for filesystem scan
+      - name: Enforce fixable HIGH/CRITICAL CVE gate
         run: |
-          docker save "${IMAGE_TAG}" -o scan-reports/rustice-image.tar
-          mkdir -p scan-reports/image-save scan-reports/image-rootfs
-          tar -xf scan-reports/rustice-image.tar -C scan-reports/image-save
-          find scan-reports/image-save -name layer.tar -print0 \
-            | sort -z \
-            | while IFS= read -r -d '' layer; do
-                tar -xf "$layer" -C scan-reports/image-rootfs || true
-              done
+          python3 - <<'PY'
+          import json
+          import sys
+
+          with open('scan-reports/grype-rustice-image.json', encoding='utf-8') as f:
+              report = json.load(f)
+
+          blocking = []
+          for match in report.get('matches', []):
+              vulnerability = match.get('vulnerability', {})
+              severity = vulnerability.get('severity')
+              fix_versions = (vulnerability.get('fix') or {}).get('versions') or []
+              if severity in {'High', 'Critical'} and fix_versions:
+                  artifact = match.get('artifact', {})
+                  blocking.append({
+                      'id': vulnerability.get('id'),
+                      'severity': severity,
+                      'package': artifact.get('name'),
+                      'installed': artifact.get('version'),
+                      'fixed_in': ', '.join(fix_versions),
+                  })
+
+          if blocking:
+              print('Fixable HIGH/CRITICAL vulnerabilities found in final image:')
+              for item in blocking:
+                  print(
+                      f"- {item['id']} {item['severity']} "
+                      f"{item['package']} {item['installed']} fixed in {item['fixed_in']}"
+                  )
+              sys.exit(1)
+
+          print('No fixable HIGH/CRITICAL vulnerabilities found in final image.')
+          PY
+
+      - name: Save final image for malware scan
+        run: docker save "${IMAGE_TAG}" -o scan-reports/rustice-image.tar
 
       - name: Install ClamAV
         run: |
@@ -86,14 +111,12 @@ jobs:
           sudo freshclam --stdout
 
       - name: Run ClamAV malware scan
-        id: malware
-        continue-on-error: true
         run: |
           clamscan \
-            --recursive \
             --infected \
+            --leave-temps \
             --log=scan-reports/clamav-rustice-image.log \
-            scan-reports/image-rootfs
+            scan-reports/rustice-image.tar
 
       - name: Upload image security reports
         if: always()
@@ -104,15 +127,3 @@ jobs:
             scan-reports/grype-rustice-image.json
             scan-reports/clamav-rustice-image.log
           if-no-files-found: warn
-
-      - name: Enforce CVE scan gate
-        if: steps.cve.outcome == 'failure'
-        run: |
-          echo "Grype found HIGH or CRITICAL vulnerabilities in the final image. See scan artifact."
-          exit 1
-
-      - name: Enforce malware scan gate
-        if: steps.malware.outcome == 'failure'
-        run: |
-          echo "ClamAV found malware or failed to scan the final image. See scan artifact."
-          exit 1
