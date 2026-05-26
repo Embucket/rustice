@@ -8,6 +8,7 @@ on:
   push:
     branches: [main]
     paths:
+      - SECURITY.md
       - Dockerfile
       - Cargo.toml
       - Cargo.lock
@@ -16,6 +17,7 @@ on:
       - .github/workflows/image-security.yml
   pull_request:
     paths:
+      - SECURITY.md
       - Dockerfile
       - Cargo.toml
       - Cargo.lock
