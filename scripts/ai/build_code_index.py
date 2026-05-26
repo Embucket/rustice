@@ -459,7 +459,7 @@ def render_code_index(
             f"- Regenerate this file with `python3 {SCRIPT_PATH.as_posix()}`.",
             f"- Check freshness with `python3 {SCRIPT_PATH.as_posix()} --check`.",
             "- Use crate-local `AGENTS.md` files for ownership and boundary notes before editing a crate.",
-            "- Use `docs/testing/test-matrix.md` for change-specific local verification choices.",
+            "- Use `ai/testing/test-matrix.md` for change-specific local verification choices.",
             "- Prefer crate-level `cargo test -p ...` commands before wider workspace loops.",
         ]
     )
