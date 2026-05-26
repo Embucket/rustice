@@ -14,4 +14,4 @@ Check whether it is current with:
 python3 scripts/ai/build_code_index.py --check
 ```
 
-The generator uses Python 3.11+ standard-library `tomllib` and does not require extra Python dependencies.
+The generator uses Python 3.11+ standard-library `tomllib` and does not require extra Python dependencies. These files are repo-internal agent context, not part of the public Starlight docs site under `docs/`.

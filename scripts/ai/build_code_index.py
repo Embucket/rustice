@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate docs/ai/code-index.md from the Rust workspace.
+"""Generate ai/code-index.md from the Rust workspace.
 
 Run from the repository root. Requires Python 3.11 or newer for tomllib.
 """
@@ -23,7 +23,7 @@ except ModuleNotFoundError:  # pragma: no cover - depends on interpreter version
 
 
 ROOT = Path.cwd()
-OUTPUT_PATH = Path("docs/ai/code-index.md")
+OUTPUT_PATH = Path("ai/code-index.md")
 SCRIPT_PATH = Path("scripts/ai/build_code_index.py")
 DEPENDENCY_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
 
@@ -493,7 +493,7 @@ def main() -> int:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="fail if docs/ai/code-index.md is missing or stale",
+        help="fail if ai/code-index.md is missing or stale",
     )
     args = parser.parse_args()
 
