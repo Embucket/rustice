@@ -59,6 +59,19 @@ Trust boundaries:
   results are returned to the caller; operational logs remain in Snowflake
   service logs.
 
+## Security Review Evidence
+
+Security policy and Native App questionnaire evidence are documented in:
+
+- `../../SECURITY.md`
+- `SECURITY.md`
+
+The image security workflow builds the final runtime image, scans it for
+`HIGH` and `CRITICAL` CVEs with Grype, scans the extracted image filesystem for
+malware with ClamAV, and uploads both reports as workflow artifacts:
+
+- `.github/workflows/image-security.yml`
+
 ## Provider Setup
 
 Create a provider-side image repository outside the application package and
