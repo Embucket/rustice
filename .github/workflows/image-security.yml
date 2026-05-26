@@ -1,0 +1,117 @@
+name: image-security-scan
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - deploy/native-app/**
+      - .github/workflows/image-security.yml
+  pull_request:
+    paths:
+      - Dockerfile
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - deploy/native-app/**
+      - .github/workflows/image-security.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_TAG: rustice-security-scan:${{ github.sha }}
+
+jobs:
+  image-security:
+    name: final image CVE and malware scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build final runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE_TAG }}
+          push: false
+          load: true
+
+      - name: Prepare scan report directory
+        run: mkdir -p scan-reports
+
+      - name: Run Grype CVE scan
+        id: cve
+        uses: anchore/scan-action@v7
+        continue-on-error: true
+        with:
+          image: ${{ env.IMAGE_TAG }}
+          fail-build: true
+          severity-cutoff: high
+          output-format: json
+          output-file: scan-reports/grype-rustice-image.json
+
+      - name: Save final image for filesystem scan
+        run: |
+          docker save "${IMAGE_TAG}" -o scan-reports/rustice-image.tar
+          mkdir -p scan-reports/image-save scan-reports/image-rootfs
+          tar -xf scan-reports/rustice-image.tar -C scan-reports/image-save
+          find scan-reports/image-save -name layer.tar -print0 \
+            | sort -z \
+            | while IFS= read -r -d '' layer; do
+                tar -xf "$layer" -C scan-reports/image-rootfs || true
+              done
+
+      - name: Install ClamAV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clamav
+          sudo freshclam --stdout
+
+      - name: Run ClamAV malware scan
+        id: malware
+        continue-on-error: true
+        run: |
+          clamscan \
+            --recursive \
+            --infected \
+            --log=scan-reports/clamav-rustice-image.log \
+            scan-reports/image-rootfs
+
+      - name: Upload image security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustice-image-security-reports
+          path: |
+            scan-reports/grype-rustice-image.json
+            scan-reports/clamav-rustice-image.log
+          if-no-files-found: warn
+
+      - name: Enforce CVE scan gate
+        if: steps.cve.outcome == 'failure'
+        run: |
+          echo "Grype found HIGH or CRITICAL vulnerabilities in the final image. See scan artifact."
+          exit 1
+
+      - name: Enforce malware scan gate
+        if: steps.malware.outcome == 'failure'
+        run: |
+          echo "ClamAV found malware or failed to scan the final image. See scan artifact."
+          exit 1
