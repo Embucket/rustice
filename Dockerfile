@@ -25,10 +25,9 @@ RUN if [ "$ENABLE_EXPERIMENTAL" = "true" ]; then \
     fi
 
 # Stage 4: Final runtime image
-FROM gcr.io/distroless/cc-debian12 AS runtime
+FROM gcr.io/distroless/cc-debian13:nonroot AS runtime
 
 # Set working directory
-USER nonroot:nonroot
 WORKDIR /app
 
 # Copy the binary and required files
