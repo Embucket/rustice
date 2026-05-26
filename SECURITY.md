@@ -29,8 +29,8 @@ Rustice maintainers use the following controls for code and Native App changes:
 - CI runs formatting, linting, and Rust test workflows on relevant changes.
 - Rust static analysis is performed through `cargo clippy`.
 - The Native App container image is built from a multi-stage Dockerfile and uses
-  a distroless runtime image.
-- The runtime container runs as `nonroot:nonroot`.
+  a Debian 13 distroless runtime image.
+- The runtime container runs as `nonroot`.
 - The runtime image does not download or execute additional application code at
   startup.
 - Native App credentials are provided by Snowflake secrets or references at
