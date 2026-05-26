@@ -43,6 +43,31 @@ struct Cli {
     /// List the files that would run and exit.
     #[arg(long)]
     list: bool,
+
+    /// Write a markdown report of the run to this path.
+    #[arg(long, value_name = "PATH")]
+    report: Option<PathBuf>,
+
+    // Libtest-compatible no-op flags so `cargo test -- --nocapture` works.
+    // Output already streams to stderr because the harness uses `harness = false`.
+    #[arg(long, hide = true)]
+    nocapture: bool,
+    #[arg(long, hide = true)]
+    show_output: bool,
+    #[arg(long, hide = true)]
+    exact: bool,
+    #[arg(long, hide = true)]
+    quiet: bool,
+    #[arg(long, hide = true)]
+    include_ignored: bool,
+    #[arg(long, hide = true)]
+    ignored: bool,
+    #[arg(long, hide = true, value_name = "WHEN")]
+    color: Option<String>,
+    #[arg(long, hide = true, value_name = "FORMAT")]
+    format: Option<String>,
+    #[arg(long, hide = true, value_name = "PATTERN")]
+    skip: Vec<String>,
 }
 
 fn default_threads() -> usize {
@@ -105,6 +130,8 @@ async fn run(cli: Cli) -> i32 {
         });
     }));
 
+    let total = files.len();
+    let progress_root = slt_root.clone();
     let outcomes: Vec<FileOutcome> = futures::stream::iter(files)
         .map(|path| {
             let path_for_panic = path.clone();
@@ -127,13 +154,119 @@ async fn run(cli: Cli) -> i32 {
                 })
         })
         .buffer_unordered(cli.test_threads)
+        .enumerate()
+        .map(|(idx, outcome)| {
+            let rel = outcome
+                .path
+                .strip_prefix(&progress_root)
+                .unwrap_or(&outcome.path)
+                .display();
+            let status = if outcome.errors.is_empty() {
+                "PASS".to_string()
+            } else {
+                format!("FAIL ({} err)", outcome.errors.len())
+            };
+            eprintln!(
+                "[{:>4}/{:<4}] {:<14} {} ({} ms)",
+                idx + 1,
+                total,
+                status,
+                rel,
+                outcome.duration_ms
+            );
+            outcome
+        })
         .collect()
         .await;
 
     print_summary(&slt_root, &outcomes);
 
+    if let Some(report_path) = cli.report.as_ref() {
+        match write_report(report_path, &slt_root, &outcomes) {
+            Ok(()) => eprintln!("\nreport written to {}", report_path.display()),
+            Err(e) => eprintln!("\nfailed to write report to {}: {e}", report_path.display()),
+        }
+    }
+
     let failures = outcomes.iter().filter(|o| !o.errors.is_empty()).count();
     if cli.strict && failures > 0 { 1 } else { 0 }
+}
+
+fn write_report(path: &Path, slt_root: &Path, outcomes: &[FileOutcome]) -> std::io::Result<()> {
+    use std::fmt::Write as _;
+
+    let mut by_dir: BTreeMap<PathBuf, (usize, usize)> = BTreeMap::new();
+    let mut total_pass = 0usize;
+    let mut total_fail = 0usize;
+    let mut total_ms = 0u128;
+
+    for outcome in outcomes {
+        total_ms += outcome.duration_ms;
+        let dir = outcome
+            .path
+            .parent()
+            .and_then(|p| p.strip_prefix(slt_root).ok())
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let entry = by_dir.entry(dir).or_default();
+        if outcome.errors.is_empty() {
+            entry.0 += 1;
+            total_pass += 1;
+        } else {
+            entry.1 += 1;
+            total_fail += 1;
+        }
+    }
+
+    let mut buf = String::new();
+    let _ = writeln!(buf, "# sqllogictest report");
+    let _ = writeln!(buf);
+    let _ = writeln!(
+        buf,
+        "**Total:** {} pass, {} fail ({} ms)",
+        total_pass, total_fail, total_ms
+    );
+    let _ = writeln!(buf);
+    let _ = writeln!(buf, "## Per-directory");
+    let _ = writeln!(buf);
+    let _ = writeln!(buf, "| Directory | Pass | Fail |");
+    let _ = writeln!(buf, "|---|---:|---:|");
+    for (dir, (pass, fail)) in &by_dir {
+        let dir_str = if dir.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            dir.display().to_string()
+        };
+        let _ = writeln!(buf, "| `{dir_str}` | {pass} | {fail} |");
+    }
+
+    if total_fail > 0 {
+        let _ = writeln!(buf);
+        let _ = writeln!(buf, "## Failing files");
+        let _ = writeln!(buf);
+        for outcome in outcomes.iter().filter(|o| !o.errors.is_empty()) {
+            let rel = outcome
+                .path
+                .strip_prefix(slt_root)
+                .unwrap_or(&outcome.path)
+                .display();
+            let _ = writeln!(buf, "### `{}` ({} error(s))", rel, outcome.errors.len());
+            let _ = writeln!(buf);
+            let _ = writeln!(buf, "```");
+            for err in &outcome.errors {
+                let _ = writeln!(buf, "{err}");
+            }
+            let _ = writeln!(buf, "```");
+            let _ = writeln!(buf);
+        }
+    }
+
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, buf)
 }
 
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -282,8 +415,9 @@ fn print_summary(slt_root: &Path, outcomes: &[FileOutcome]) {
         eprintln!();
         eprintln!("--- failing files ---");
         for outcome in outcomes.iter().filter(|o| !o.errors.is_empty()) {
+            eprintln!();
             eprintln!(
-                "  {} ({} error(s))",
+                "===== {} ({} error(s)) =====",
                 outcome
                     .path
                     .strip_prefix(slt_root)
@@ -291,11 +425,11 @@ fn print_summary(slt_root: &Path, outcomes: &[FileOutcome]) {
                     .display(),
                 outcome.errors.len()
             );
-            for err in outcome.errors.iter().take(3) {
-                eprintln!("    - {}", err.lines().next().unwrap_or(""));
-            }
-            if outcome.errors.len() > 3 {
-                eprintln!("    ... ({} more)", outcome.errors.len() - 3);
+            for (i, err) in outcome.errors.iter().enumerate() {
+                eprintln!("--- error {} ---", i + 1);
+                for line in err.lines() {
+                    eprintln!("  {line}");
+                }
             }
         }
     }

@@ -29,10 +29,14 @@ cargo test -p embucket-sqllogictest -- --include-databend
 
 # Tune parallelism (defaults to logical CPU count).
 cargo test -p embucket-sqllogictest -- --test-threads 4
+
+# Write a markdown report of the run (per-directory table + full diffs).
+cargo test -p embucket-sqllogictest -- --report /tmp/slt.md
 ```
 
-Output ends with a per-directory pass/fail summary followed by a list of
-failing files (truncated to the first three error lines each):
+Each file emits a `[N/total] PASS|FAIL` line as it completes, and the run
+ends with a per-directory pass/fail summary followed by full error bodies
+for every failing file (SQL + expected/actual diff):
 
 ```
 ===== sqllogictest summary =====
