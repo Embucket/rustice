@@ -1,53 +1,72 @@
 # functions
 
-Defines and registers various functions to extend the capabilities of the DataFusion query engine used within Embucket.
+Defines and registers Snowflake-compatible SQL functions that extend the DataFusion query
+engine used within Embucket.
 
 ## Purpose
 
-This crate enhances the DataFusion query engine with Embucket-specific or commonly needed SQL functions that are not part of the standard DataFusion distribution.
+This crate implements scalar, aggregate, window, and table functions that match Snowflake
+semantics (signatures, type coercion, return types) and are not part of the standard
+DataFusion distribution.
 
 ## For Contributors
 
-📖 **[Functions Implementation Guide](docs/function_implementation_guide)** - Complete guide for implementing functions in Embucket
+📖 **[Functions Implementation Guide](docs/function_implementation_guide.md)** — complete guide for implementing functions in Embucket
 
-🔧 **[Function Template](src/scalar_template.rs)** - Ready-to-use template for creating new scalar functions
+🔧 **[Function Template](src/scalar_template.rs)** — ready-to-use template for creating new scalar functions
+
+## Registration
+
+Functions are registered into a DataFusion `FunctionRegistry` from `executor`'s session
+setup (`crates/executor/src/session.rs`):
+
+- `register_udfs(registry, session_params)` — scalar UDFs for every enabled category (`src/lib.rs:53`).
+- `register_udafs(registry)` — aggregate UDFs (re-exported from `aggregate`).
+- `register_udtfs(&ctx)` — table functions (`functions::table`, currently `FLATTEN`).
+- `window::register_udwfs(registry)` — window UDFs.
+
+Scalar/aggregate singletons are built with the `make_udf_function!` / `make_udaf_function!`
+macros; `expr_planner.rs` adds custom expression planning (e.g. `SUBSTRING` → `SUBSTR`).
 
 ## Categories
 
-The functions are organized into the following categories:
+Each category is a module under `src/`. The following are **registered and active**:
 
-1. **Numeric Functions** (`numeric_functions`)
-    - Mathematical operations like ABS, COS, SIN, LOG, etc.
+| Category | Module | Examples |
+|----------|--------|----------|
+| Conditional | `conditional` | IFF, EQUAL_NULL, NULLIFZERO, ZEROIFNULL, BOOLAND/BOOLOR/BOOLXOR |
+| Conversion | `conversion` | TO_VARIANT, TO_DECIMAL, TO_DATE, TO_TIMESTAMP*, TO_VARCHAR (+ `try_*`) |
+| Crypto | `crypto` | MD5 |
+| Date & Time | `datetime` | DATE_ADD, DATE_DIFF, *_FROM_PARTS, CONVERT_TIMEZONE, LAST_DAY |
+| Numeric | `numeric` | DIV0, TRY_DIV0 |
+| Encryption | `encryption` | ENCRYPT_RAW, DECRYPT_RAW |
+| String & Binary | `string-binary` | LENGTH, SUBSTR, SPLIT, SHA2, HEX_ENCODE/DECODE, PARSE_IP, JAROWINKLER_SIMILARITY |
+| RegExp | `regexp` | REGEXP_SUBSTR, REGEXP_REPLACE, REGEXP_INSTR, REGEXP_LIKE |
+| Semi-structured | `semi-structured` | ARRAY_*, OBJECT_*, VARIANT, PARSE_JSON, GET, GET_PATH, TYPEOF (largest category) |
+| Session / Context | `session` | CURRENT_DATABASE, CURRENT_SCHEMA, CURRENT_WAREHOUSE, CURRENT_ROLE, LAST_QUERY_ID |
+| System | `system` | TYPEOF, SYSTEM$CANCEL_QUERY, SLEEP |
+| Aggregate | `aggregate` | LISTAGG, OBJECT_AGG, BOOLAND_AGG, PERCENTILE_CONT, ARRAY_*_AGG |
+| Window | `window` | CONDITIONAL_TRUE_EVENT |
+| Table | `table` | FLATTEN |
 
-2. **String & Binary Functions** (`string_binary_functions`)
-    - String manipulation like CONCAT, SUBSTR, TRIM, etc.
-    - Regular expression functions (subcategory: "regex")
+JSON functions are provided via the `datafusion-functions-json` fork and registered
+alongside the above.
 
-3. **Date & Time Functions** (`date_time_functions`)
-    - Date/time operations like DATEADD, EXTRACT, etc.
+### Not implemented / disabled
 
-4. **Semi-structured Functions** (`semi_structured_functions`)
-    - Array functions (subcategory: "array")
-    - Object functions (subcategory: "object")
-    - JSON functions (subcategory: "json")
+- **Geospatial** (`src/geospatial/`) is present but **disabled** in `src/lib.rs` (commented
+  out as a workaround for a non-working dependency under `cargo test --all-features`).
+- Large parts of the Snowflake catalog are **not yet implemented** — notably most system,
+  file/stage, notification, generation, vector, bitwise, and information-schema functions.
 
-5. **Aggregate Functions** (`aggregate_functions`)
-    - SUM, AVG, COUNT, etc.
+## Snowflake coverage tracking
 
-6. **Window Functions** (`window_functions`)
-    - ROW_NUMBER, RANK, etc.
+`src/visitors/unimplemented/` enumerates the full Snowflake function catalog (~500 functions)
+by category in `generated_snowflake_functions.rs`, and `functions_checker.rs` /
+`functions_list.rs` drive gap analysis between that catalog and what this crate implements
+(roughly ~130 functions today). `to_snowflake_datatype()` (`src/lib.rs`) maps Arrow types to
+Snowflake type names for result metadata.
 
-7. **Conditional Functions** (`conditional_functions`)
-    - CASE, COALESCE, IFF, etc.
+## Testing
 
-8. **Conversion Functions** (`conversion_functions`)
-    - CAST, TO_CHAR, TO_DATE, etc.
-
-9. **Context Functions** (`context_functions`)
-    - CURRENT_USER, CURRENT_TIMESTAMP, etc.
-
-10. **System Functions** (`system_functions`)
-    - System-level operations
-
-11. **Additional Categories**
-    - Geospatial, Hash, Encryption, File, Notification, Generation, Vector, etc.
+Functions use snapshot tests via the `test_query!` macro (`src/tests/`).

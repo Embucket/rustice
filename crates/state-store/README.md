@@ -2,6 +2,35 @@
 
 Utilities and models for persisting Embucket state into DynamoDB.
 
+> Note: this crate is **not** currently a workspace member (it is absent from the root
+> `Cargo.toml` `members` list); only `executor` tests reference it via the generated
+> `MockStateStore`. Treat it as in-development / off the live request path.
+
+## Models & API
+
+`StateStore` (async trait, `#[mockall::automock]`) is implemented by `DynamoDbStateStore`
+and covers three record types:
+
+- `SessionRecord` — session id, TTL, session variables, views, timestamps.
+- `ViewRecord` — `database.schema.name`, SQL definition, owner, TTL.
+- `Query` — query id, request id, session id, SQL, start/end time, `ExecutionStatus`
+  (`Running` / `Success` / `Fail` / `Incident`), and `QueryMetric`s.
+
+## Single-table design
+
+All three entity types share **one** DynamoDB table to keep related state co-located and
+queryable in a single round trip:
+
+- **Partition key (`PK`)** — `SESSION#{session_id}` for session/view records, `QUERY#{date}`
+  for query records (so a day's queries share a partition).
+- **Sort key (`SK`)** — the session id, or the query's `timestamp_millis`.
+- **GSIs** — `GSI_QUERY_ID_INDEX`, `GSI_REQUEST_ID_INDEX`, `GSI_SESSION_ID_INDEX` allow
+  looking queries up by id / request id / session id. These attributes are projected only
+  onto query records.
+
+Records are marshalled with `serde` + `serde_dynamo`; configuration comes from `STATESTORE_*`
+and `AWS_DDB_*` environment variables (`config.rs`).
+
 ## Local DynamoDB setup
 
 ### Run DynamoDB Local
