@@ -38,8 +38,8 @@ Containers:
 
 - One container named `rustice` running the `embucketd` Rust binary.
 - The image is built from a multi-stage Dockerfile.
-- The runtime stage uses `gcr.io/distroless/cc-debian12`.
-- The runtime container runs as `nonroot:nonroot`.
+- The runtime stage uses `gcr.io/distroless/cc-debian13:nonroot`.
+- The runtime container runs as `nonroot`.
 
 Public endpoints:
 
