@@ -82,6 +82,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clamav
+          sudo systemctl stop clamav-freshclam || true
           sudo freshclam --stdout
 
       - name: Run ClamAV malware scan
