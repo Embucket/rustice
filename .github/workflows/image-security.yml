@@ -1,0 +1,139 @@
+name: image-security-scan
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - SECURITY.md
+      - Dockerfile
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - deploy/native-app/**
+      - .github/workflows/image-security.yml
+  pull_request:
+    paths:
+      - SECURITY.md
+      - Dockerfile
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - deploy/native-app/**
+      - .github/workflows/image-security.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_TAG: rustice-security-scan:${{ github.sha }}
+
+jobs:
+  image-security:
+    name: final image CVE and malware scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build final runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE_TAG }}
+          push: false
+          load: true
+
+      - name: Prepare scan report directory
+        run: mkdir -p scan-reports
+
+      - name: Run Grype CVE scan
+        uses: anchore/scan-action@v7
+        with:
+          image: ${{ env.IMAGE_TAG }}
+          fail-build: false
+          output-format: json
+          output-file: scan-reports/grype-rustice-image.json
+
+      - name: Enforce HIGH/CRITICAL CVE gate
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+
+          with open('scan-reports/grype-rustice-image.json', encoding='utf-8') as f:
+              report = json.load(f)
+
+          blocking = []
+          for match in report.get('matches', []):
+              vulnerability = match.get('vulnerability', {})
+              severity = vulnerability.get('severity')
+              if severity in {'High', 'Critical'}:
+                  artifact = match.get('artifact', {})
+                  fix_versions = (vulnerability.get('fix') or {}).get('versions') or []
+                  blocking.append({
+                      'id': vulnerability.get('id'),
+                      'severity': severity,
+                      'package': artifact.get('name'),
+                      'installed': artifact.get('version'),
+                      'fixed_in': ', '.join(fix_versions) or 'not reported',
+                  })
+
+          if blocking:
+              print('HIGH/CRITICAL vulnerabilities found in final image:')
+              for item in blocking:
+                  print(
+                      f"- {item['id']} {item['severity']} "
+                      f"{item['package']} {item['installed']} fixed in {item['fixed_in']}"
+                  )
+              sys.exit(1)
+
+          print('No HIGH/CRITICAL vulnerabilities found in final image.')
+          PY
+
+      - name: Export final image rootfs for malware scan
+        run: |
+          mkdir -p scan-reports/image-rootfs
+          container_id="$(docker create "${IMAGE_TAG}")"
+          docker export "$container_id" -o scan-reports/rustice-rootfs.tar
+          docker rm "$container_id"
+          tar -xf scan-reports/rustice-rootfs.tar -C scan-reports/image-rootfs
+          file_count="$(find scan-reports/image-rootfs -type f | wc -l)"
+          echo "Exported rootfs file count: ${file_count}"
+          test "$file_count" -gt 0
+
+      - name: Install ClamAV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clamav
+          sudo systemctl stop clamav-freshclam || true
+          sudo freshclam --stdout
+
+      - name: Run ClamAV malware scan
+        run: |
+          clamscan \
+            --recursive \
+            --infected \
+            --log=scan-reports/clamav-rustice-image.log \
+            scan-reports/image-rootfs
+
+      - name: Upload image security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustice-image-security-reports
+          path: |
+            scan-reports/grype-rustice-image.json
+            scan-reports/clamav-rustice-image.log
+          if-no-files-found: warn

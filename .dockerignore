@@ -1,1 +1,3 @@
 target
+deploy/native-app/output
+deploy/spcs/generated
