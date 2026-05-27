@@ -38,7 +38,7 @@ The function name defaults to `embucket-lambda` but can be overridden:
 
 ### Manual Commands
 
-All commands should be run from the **workspace root** (`/Users/ramp/vcs/embucket`):
+All commands should be run from the **workspace root** (the repository root containing the top-level `Cargo.toml`):
 
 ```bash
 # Build the Lambda function

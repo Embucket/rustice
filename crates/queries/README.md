@@ -2,6 +2,24 @@
 
 Package is responsible for the abstraction and interaction with the underlying queries storage system. Defines data models and traits for queries storage operations.
 
+## Data model & API
+
+The `Queries` trait (implemented by `QueriesDb`, backed by Postgres via Diesel /
+`diesel-async` / `deadpool`) persists query-history records:
+
+- `add(Query)`, `update(Query)`, `delete(id)`, `list(ListParams)`.
+
+A `Query` carries SQL text, timing (`queued_at` / `running_at` / `finished_at` /
+`duration_ms`), `rows_count`, and:
+
+- `QueryStatus` — `Created → Queued → Running → Successful | Failed | Cancelled | TimedOut | LimitExceeded`.
+- `QuerySource` — `SnowflakeRestApi` (1) or `UiRestApi` (2).
+- `ResultFormat` — `Json` or `Arrow`.
+
+`ListParams` supports filtering (status, source, format, SQL, error) and ordering. This crate
+records query outcomes only; it does not route or execute queries, and has no
+Snowflake-specific logic.
+
 ## Development setup
 ``` bash
 docker run -d \
