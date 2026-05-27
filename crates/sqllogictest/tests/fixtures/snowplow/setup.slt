@@ -179,7 +179,7 @@ control substitution on
 # `\\` → `\`, yielding `'\t'` post-substitution.
 statement ok
 COPY INTO embucket.public_snowplow_manifest_scratch.enriched_raw
-FROM 'file://${CRATE_ROOT}/tests/fixtures/snowplow/events.tsv'
+FROM 'file://${CRATE_ROOT}/tests/fixtures/snowplow/events.csv'
 FILE_FORMAT = ( TYPE = 'CSV' FIELD_DELIMITER = '\\t' SKIP_HEADER = 0 );
 
 control substitution off
@@ -737,10 +737,10 @@ with base_query as (
         3,
         a.dvce_created_tstamp
         )
-        and a.collector_tstamp >= 
-        cast('2026-04-29 21:04:22.898084' as timestamp)
-        and a.collector_tstamp <= 
-        cast('2026-04-29 23:51:02.898084' as timestamp)
+        and a.collector_tstamp >=
+        cast('2026-04-29 15:00:00' as timestamp)
+        and a.collector_tstamp <=
+        cast('2026-04-29 19:00:00' as timestamp)
         and a.collector_tstamp >= b.start_tstamp -- deal with late loading events
         and true
         qualify row_number() over (partition by a.event_id order by a.collector_tstamp, a.dvce_created_tstamp) = 1

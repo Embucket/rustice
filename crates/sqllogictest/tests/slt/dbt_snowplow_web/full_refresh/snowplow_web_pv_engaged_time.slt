@@ -18,3 +18,22 @@ from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run
 where ev.event_name = 'page_ping'
 and ev.page_view_id is not null
 group by 1 , 2 
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query TI
+select page_view_id, engaged_time_in_s from embucket.public_snowplow_manifest_scratch.snowplow_web_pv_engaged_time order by page_view_id limit 10
+----
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO

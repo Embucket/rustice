@@ -42,3 +42,22 @@ select
   cast(round(100*(greatest(vmin, 0)/cast(doc_height as float))) as float) as relative_vmin,
   cast(round(100*(least(vmax + br_viewheight, doc_height)/cast(doc_height as float))) as float) as relative_vmax -- not zero when a user hasn't scrolled because it includes the non-zero viewheight
 from prep
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query TIIII
+select page_view_id, doc_width, doc_height, hmax, vmax from embucket.public_snowplow_manifest_scratch.snowplow_web_pv_scroll_depth order by page_view_id limit 10
+----
+TODO	TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO	TODO

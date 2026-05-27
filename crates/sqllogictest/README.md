@@ -215,7 +215,8 @@ Each leaf `.slt` does `include ../../../fixtures/snowplow/setup.slt`; the
 upstream parser resolves relative include paths against the including
 file's directory automatically. `setup.header.slt` wraps its `COPY INTO`
 with `control substitution on/off` and reads the TSV via
-`'file://${CRATE_ROOT}/tests/fixtures/snowplow/events.tsv'`.
+`'file://${CRATE_ROOT}/tests/fixtures/snowplow/events.csv'` (tab-delimited
+content; the `.csv` extension is required for the listing-table filter).
 
 `setup.slt` materialises the dbt-snowplow-web DAG by, for each of the 18
 models in dependency order, running its full-refresh SQL as `CREATE TABLE AS`

@@ -179,7 +179,7 @@ control substitution on
 # `\\` → `\`, yielding `'\t'` post-substitution.
 statement ok
 COPY INTO embucket.public_snowplow_manifest_scratch.enriched_raw
-FROM 'file://${CRATE_ROOT}/tests/fixtures/snowplow/events.tsv'
+FROM 'file://${CRATE_ROOT}/tests/fixtures/snowplow/events.csv'
 FILE_FORMAT = ( TYPE = 'CSV' FIELD_DELIMITER = '\\t' SKIP_HEADER = 0 );
 
 control substitution off

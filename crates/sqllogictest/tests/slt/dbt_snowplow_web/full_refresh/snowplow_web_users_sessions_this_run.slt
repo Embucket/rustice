@@ -10,3 +10,22 @@ select
   max(a.end_tstamp) over(partition by a.domain_userid) as user_end_tstamp
 from embucket.public_snowplow_manifest_derived.snowplow_web_sessions a
 where exists (select 1 from embucket.public_snowplow_manifest_scratch.snowplow_web_base_sessions_this_run b where a.domain_userid = b.user_identifier)
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query TTII
+select domain_sessionid, domain_userid, page_views, engaged_time_in_s from embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run order by domain_sessionid limit 10
+----
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO

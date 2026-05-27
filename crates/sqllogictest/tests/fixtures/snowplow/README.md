@@ -5,11 +5,14 @@ Fixture data and setup SQL for the `dbt_snowplow_web` sqllogictest suite
 
 ## Files
 
-- **`events.tsv`** — First 200 rows of the canonical Snowplow enriched-events
+- **`events.csv`** — First 200 rows of the canonical Snowplow enriched-events
   TSV at `snowplow-events-parquet/runs/20260429T184310Z/tsv/enriched/enriched_0001`.
-  No header row. 131 columns. Empty string encodes NULL.
+  No header row. 131 columns. Tab-delimited (despite the `.csv` extension —
+  the COPY INTO sets `FIELD_DELIMITER = '\t'`). Empty string encodes NULL.
+  Named `.csv` because `ListingOptions::with_file_extension` defaults to
+  `.csv` for `CsvFormat`; a `.tsv` filename is silently filtered out.
 - **`setup.header.slt`** — Hand-maintained bootstrap: schemas, the
-  `enriched_raw` staging table + `COPY INTO` of `events.tsv`, the typed
+  `enriched_raw` staging table + `COPY INTO` of `events.csv`, the typed
   `events` CTAS (mirroring `snowplow-events-parquet/sql/tsv_to_parquet.sql.tmpl`),
   and empty stubs for the three dim seeds (`snowplow_web_dim_*`). Column shapes
   for the dim stubs match the headers of the dbt package's seed CSVs at
@@ -52,7 +55,7 @@ control substitution on
 
 statement ok
 COPY INTO embucket.public_snowplow_manifest_scratch.enriched_raw
-FROM 'file://${CRATE_ROOT}/tests/fixtures/snowplow/events.tsv'
+FROM 'file://${CRATE_ROOT}/tests/fixtures/snowplow/events.csv'
 FILE_FORMAT = ( TYPE = 'CSV' FIELD_DELIMITER = '\\t' SKIP_HEADER = 0 );
 
 control substitution off
@@ -101,7 +104,7 @@ If a model's `target/run/.../<model>.sql` is missing or doesn't contain
 ```bash
 head -200 \
   /home/work/workspace/github/snowplow-events-parquet/runs/20260429T184310Z/tsv/enriched/enriched_0001 \
-  > crates/sqllogictest/tests/fixtures/snowplow/events.tsv
+  > crates/sqllogictest/tests/fixtures/snowplow/events.csv
 ```
 
 200 rows ≈ 600 KB. Increase only if a model needs more than ~10 distinct

@@ -47,3 +47,13 @@ select
   a.domain_userid as original_domain_userid,
   a.* exclude(contexts_com_snowplowanalytics_snowplow_web_page_1, domain_sessionid, domain_userid)
 from base_query a
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query IIII
+select count(*), count(distinct event_id), count(distinct domain_sessionid), count(distinct domain_userid) from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run
+----
+TODO	TODO	TODO	TODO

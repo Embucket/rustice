@@ -389,3 +389,22 @@ select
   pve.operating_system_name_version,
   pve.operating_system_version
 from page_view_events pve
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query TTT
+select page_view_id, domain_sessionid, domain_userid from embucket.public_snowplow_manifest_scratch.snowplow_web_page_views_this_run order by page_view_id limit 10
+----
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO

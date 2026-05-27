@@ -361,3 +361,22 @@ left join
     session_lasts b on a.domain_sessionid = b.domain_sessionid
 left join
     session_aggs c on a.domain_sessionid = c.domain_sessionid
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query TTII
+select domain_sessionid, domain_userid, page_views, engaged_time_in_s from embucket.public_snowplow_manifest_scratch.snowplow_web_sessions_this_run order by domain_sessionid limit 10
+----
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO

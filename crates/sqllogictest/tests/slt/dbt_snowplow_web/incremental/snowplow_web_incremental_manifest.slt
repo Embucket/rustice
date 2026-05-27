@@ -14,3 +14,13 @@ statement ok
         select *
         from prep
         where false
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query I
+select count(*) from embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_incremental_manifest
+----
+TODO

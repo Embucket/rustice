@@ -23,3 +23,22 @@ select
 from embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run a
 inner join embucket.public_snowplow_manifest_scratch.snowplow_web_users_aggs b
 on a.domain_sessionid = b.last_domain_sessionid
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query TTT
+select domain_userid, last_page_urlhost, last_geo_country from embucket.public_snowplow_manifest_scratch.snowplow_web_users_lasts order by domain_userid limit 10
+----
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO

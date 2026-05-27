@@ -385,7 +385,7 @@ async fn run_file(path: PathBuf) -> FileOutcome {
     runner.add_label("embucket");
     runner.with_validator(embucket_validator);
     // Published for `control substitution on` blocks (e.g. snowplow setup
-    // referencing `${CRATE_ROOT}/tests/fixtures/snowplow/events.tsv`).
+    // referencing `${CRATE_ROOT}/tests/fixtures/snowplow/events.csv`).
     // Harmless for files that don't reference the variable.
     runner.set_var(
         "CRATE_ROOT".to_string(),

@@ -18,3 +18,22 @@ select
   sum(engaged_time_in_s) as engaged_time_in_s
 from embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run
 group by 1,2,3
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query TIII
+select domain_userid, page_views, sessions, engaged_time_in_s from embucket.public_snowplow_manifest_scratch.snowplow_web_users_aggs order by domain_userid limit 10
+----
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
+TODO	TODO	TODO	TODO
