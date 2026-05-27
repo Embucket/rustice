@@ -1,4 +1,4 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET TIMEZONE = 'America/Los_Angeles';
 
@@ -22,7 +22,7 @@ SELECT TO_TIMESTAMP_TZ('04/05/2024 01:02:03', 'dd/mm/yyyy hh24:mi:ss')
 ----
 '2024-05-04T01:02:03-07:00'
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET TIMESTAMP_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF9 TZH:TZM';
 

@@ -1,0 +1,363 @@
+# dbt-snowplow-web: full_refresh/snowplow_web_sessions_this_run
+# Source: test-dbt-snowplow-web/queries/full-refresh/sessions/scratch/snowflake/snowplow_web_sessions_this_run.sql
+
+include ../../../fixtures/snowplow/setup.slt
+
+statement ok
+with session_firsts as (
+    select
+        -- app id
+        app_id as app_id,
+        platform,
+        -- session fields
+        domain_sessionid,
+        original_domain_sessionid,
+        domain_sessionidx,
+    convert_timezone('UTC', convert_timezone('UTC', current_timestamp()))::timestamp
+ as model_tstamp,
+        -- user fields
+        user_id,
+        domain_userid,
+        original_domain_userid,
+            -- updated with mapping as part of post hook on derived sessions table
+            cast(domain_userid as TEXT) as stitched_user_id,
+        network_userid as network_userid,
+        -- first page fields
+        page_title as first_page_title,
+        page_url as first_page_url,
+        page_urlscheme as first_page_urlscheme,
+        page_urlhost as first_page_urlhost,
+        page_urlpath as first_page_urlpath,
+        page_urlquery as first_page_urlquery,
+        page_urlfragment as first_page_urlfragment,
+        -- referrer fields
+        page_referrer as referrer,
+        refr_urlscheme as refr_urlscheme,
+        refr_urlhost as refr_urlhost,
+        refr_urlpath as refr_urlpath,
+        refr_urlquery as refr_urlquery,
+        refr_urlfragment as refr_urlfragment,
+        refr_medium as refr_medium,
+        refr_source as refr_source,
+        refr_term as refr_term,
+        -- marketing fields
+        mkt_medium as mkt_medium,
+        mkt_source as mkt_source,
+        mkt_term as mkt_term,
+        mkt_content as mkt_content,
+        mkt_campaign as mkt_campaign,
+        mkt_clickid as mkt_clickid,
+        mkt_network as mkt_network,
+        regexp_substr(page_urlquery, 'utm_source_platform=([^?&#]*)', 1, 1, 'e') as mkt_source_platform,
+case
+   when lower(trim(mkt_source)) = '(direct)' and lower(trim(mkt_medium)) in ('(not set)', '(none)') then 'Direct'
+   when lower(trim(mkt_medium)) like '%cross-network%' then 'Cross-network'
+   when regexp_like(lower(trim(mkt_medium)), '^(.*cp.*|ppc|retargeting|paid.*)$') then
+      case
+         when upper(source_category) = 'SOURCE_CATEGORY_SHOPPING'
+            or regexp_like(lower(trim(mkt_campaign)), '^(.*(([^a-df-z]|^)shop|shopping).*)$') then 'Paid Shopping'
+         when upper(source_category) = 'SOURCE_CATEGORY_SEARCH' then 'Paid Search'
+         when upper(source_category) = 'SOURCE_CATEGORY_SOCIAL' then 'Paid Social'
+         when upper(source_category) = 'SOURCE_CATEGORY_VIDEO' then 'Paid Video'
+         else 'Paid Other'
+      end
+   when lower(trim(mkt_medium)) in ('display', 'banner', 'expandable', 'intersitial', 'cpm') then 'Display'
+   when upper(source_category) = 'SOURCE_CATEGORY_SHOPPING'
+      or regexp_like(lower(trim(mkt_campaign)), '^(.*(([^a-df-z]|^)shop|shopping).*)$') then 'Organic Shopping'
+   when upper(source_category) = 'SOURCE_CATEGORY_SOCIAL' or lower(trim(mkt_medium)) in ('social', 'social-network', 'sm', 'social network', 'social media') then 'Organic Social'
+   when upper(source_category) = 'SOURCE_CATEGORY_VIDEO'
+      or regexp_like(lower(trim(mkt_medium)), '^(.*video.*)$') then 'Organic Video'
+   when upper(source_category) = 'SOURCE_CATEGORY_SEARCH' or lower(trim(mkt_medium)) = 'organic' then 'Organic Search'
+   when lower(trim(mkt_medium)) in ('referral', 'app', 'link') then 'Referral'
+   when lower(trim(mkt_source)) in ('email', 'e-mail', 'e_mail', 'e mail') or lower(trim(mkt_medium)) in ('email', 'e-mail', 'e_mail', 'e mail') then 'Email'
+   when lower(trim(mkt_medium)) = 'affiliate' then 'Affiliates'
+   when lower(trim(mkt_medium)) = 'audio' then 'Audio'
+   when lower(trim(mkt_source)) = 'sms' or lower(trim(mkt_medium)) = 'sms' then 'SMS'
+   when lower(trim(mkt_medium)) like '%push' or regexp_like(lower(trim(mkt_medium)), '.*(mobile|notification).*') or lower(trim(mkt_source)) = 'firebase' then 'Mobile Push Notifications'
+   else 'Unassigned'
+end
+ as default_channel_group,
+        -- geo fields
+        geo_country as geo_country,
+        geo_region as geo_region,
+        geo_region_name as geo_region_name,
+        geo_city as geo_city,
+        geo_zipcode as geo_zipcode,
+        geo_latitude as geo_latitude,
+        geo_longitude as geo_longitude,
+        geo_timezone as geo_timezone,
+        g.name as geo_country_name,
+        g.region as geo_continent,
+        -- ip address
+        user_ipaddress as user_ipaddress,
+        -- user agent
+        useragent as useragent,
+        dvce_screenwidth || 'x' || dvce_screenheight as screen_resolution,
+        br_renderengine as br_renderengine,
+        br_lang as br_lang,
+        l.name as br_lang_name,
+        os_timezone as os_timezone,
+        -- optional fields, only populated if enabled.
+        -- iab enrichment fields
+        cast(null as TEXT) as category,
+        cast(null as TEXT) as primary_impact,
+        cast(null as TEXT) as reason,
+        cast(null as boolean) as spider_or_robot,
+        -- ua parser enrichment fields
+        cast(null as TEXT) as useragent_family,
+        cast(null as TEXT) as useragent_major,
+        cast(null as TEXT) as useragent_minor,
+        cast(null as TEXT) as useragent_patch,
+        cast(null as TEXT) as useragent_version,
+        cast(null as TEXT) as os_family,
+        cast(null as TEXT) as os_major,
+        cast(null as TEXT) as os_minor,
+        cast(null as TEXT) as os_patch,
+        cast(null as TEXT) as os_patch_minor,
+        cast(null as TEXT) as os_version,
+        cast(null as TEXT) as device_family
+,
+        -- yauaa enrichment fields
+        cast(null as TEXT) as device_class,
+        cast(null as TEXT) as agent_class,
+        cast(null as TEXT) as agent_name,
+        cast(null as TEXT) as agent_name_version,
+        cast(null as TEXT) as agent_name_version_major,
+        cast(null as TEXT) as agent_version,
+        cast(null as TEXT) as agent_version_major,
+        cast(null as TEXT) as device_brand,
+        cast(null as TEXT) as device_name,
+        cast(null as TEXT) as device_version,
+        cast(null as TEXT) as layout_engine_class,
+        cast(null as TEXT) as layout_engine_name,
+        cast(null as TEXT) as layout_engine_name_version,
+        cast(null as TEXT) as layout_engine_name_version_major,
+        cast(null as TEXT) as layout_engine_version,
+        cast(null as TEXT) as layout_engine_version_major,
+        cast(null as TEXT) as operating_system_class,
+        cast(null as TEXT) as operating_system_name,
+        cast(null as TEXT) as operating_system_name_version,
+        cast(null as TEXT) as operating_system_version,
+        -- event name for use later
+        event_name
+    from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run ev
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_ga4_source_categories c on lower(trim(ev.mkt_source)) = lower(c.source)
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_rfc_5646_language_mapping l on lower(ev.br_lang) = lower(l.lang_tag)
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_geo_country_mapping g on lower(ev.geo_country) = lower(g.alpha_2)
+    where
+        event_name in ('page_ping', 'page_view')
+        and page_view_id is not null
+  and not rlike(lower(useragent), '.*(bot|crawl|slurp|spider|archiv|spinn|sniff|seo|audit|survey|pingdom|worm|capture|(browser|screen)shots|analyz|index|thumb|check|facebook|pingdombot|phantomjs|yandexbot|twitterbot|a_archiver|facebookexternalhit|bingbot|bingpreview|googlebot|baiduspider|360(spider|user-agent)|semalt).*')
+    qualify row_number() over (partition by domain_sessionid order by derived_tstamp, dvce_created_tstamp, event_id) = 1
+)
+, session_lasts as (
+    select
+        domain_sessionid,
+        page_title as last_page_title,
+        page_url as last_page_url,
+        page_urlscheme as last_page_urlscheme,
+        page_urlhost as last_page_urlhost,
+        page_urlpath as last_page_urlpath,
+        page_urlquery as last_page_urlquery,
+        page_urlfragment as last_page_urlfragment,
+        geo_country as last_geo_country,
+        geo_city as last_geo_city,
+        geo_region_name as last_geo_region_name,
+        g.name as last_geo_country_name,
+        g.region as last_geo_continent,
+        br_lang as last_br_lang,
+        l.name as last_br_lang_name
+    from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run ev
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_rfc_5646_language_mapping l on lower(ev.br_lang) = lower(l.lang_tag)
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_geo_country_mapping g on lower(ev.geo_country) = lower(g.alpha_2)
+    where
+        event_name = 'page_view'
+        and page_view_id is not null
+  and not rlike(lower(useragent), '.*(bot|crawl|slurp|spider|archiv|spinn|sniff|seo|audit|survey|pingdom|worm|capture|(browser|screen)shots|analyz|index|thumb|check|facebook|pingdombot|phantomjs|yandexbot|twitterbot|a_archiver|facebookexternalhit|bingbot|bingpreview|googlebot|baiduspider|360(spider|user-agent)|semalt).*')
+    qualify row_number() over (partition by domain_sessionid order by derived_tstamp desc, dvce_created_tstamp desc, event_id) = 1
+)
+, session_aggs as (
+    select
+        domain_sessionid
+        , min(derived_tstamp) as start_tstamp
+        , max(derived_tstamp) as end_tstamp
+        , count(*) as total_events
+        -- engagement fields
+        , count(distinct case when event_name in ('page_ping', 'page_view') and page_view_id is not null then page_view_id else null end) as page_views
+            -- (hb * (#page pings - # distinct page view ids ON page pings)) + (# distinct page view ids ON page pings * min visit length)
+        , (10 * (
+                -- number of (unqiue in heartbeat increment) pages pings following a page ping (gap of heartbeat)
+                count(distinct case
+                        when event_name = 'page_ping' and page_view_id is not null then
+                        -- need to get a unique list of floored time PER page view, so create a dummy surrogate key...
+                            page_view_id || cast(floor(date_part('epoch_seconds', dvce_created_tstamp)/10) as TEXT)
+                        else
+                            null end) -
+                    count(distinct case when event_name = 'page_ping' and page_view_id is not null then page_view_id else null end)
+                ))  +
+            -- number of page pings following a page view (or no event) (gap of min visit length)
+            (count(distinct case when event_name = 'page_ping' and page_view_id is not null then page_view_id else null end) * 5) as engaged_time_in_s
+        , datediff(
+        second,
+        min(derived_tstamp),
+        max(derived_tstamp)
+        ) as absolute_time_in_s
+    from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run
+    where
+        1 = 1
+  and not rlike(lower(useragent), '.*(bot|crawl|slurp|spider|archiv|spinn|sniff|seo|audit|survey|pingdom|worm|capture|(browser|screen)shots|analyz|index|thumb|check|facebook|pingdombot|phantomjs|yandexbot|twitterbot|a_archiver|facebookexternalhit|bingbot|bingpreview|googlebot|baiduspider|360(spider|user-agent)|semalt).*')
+    group by
+        domain_sessionid
+)
+select
+    -- app id
+    a.app_id,
+    a.platform,
+    -- session fields
+    a.domain_sessionid,
+    a.original_domain_sessionid,
+    a.domain_sessionidx,
+    -- when the session starts with a ping we need to add the min visit length to get when the session actually started
+    case when a.event_name = 'page_ping' then
+    dateadd(
+        second,
+        -5,
+        c.start_tstamp
+        )
+    else c.start_tstamp end as start_tstamp,
+    c.end_tstamp,
+    a.model_tstamp,
+    -- user fields
+    a.user_id,
+    a.domain_userid,
+    a.original_domain_userid,
+    a.stitched_user_id,
+    a.network_userid,
+    -- engagement fields
+    c.page_views,
+    c.engaged_time_in_s,
+    c.total_events,
+    page_views >= 2 or engaged_time_in_s / 10 >= 2
+ as is_engaged,
+    -- when the session starts with a ping we need to add the min visit length to get when the session actually started
+    c.absolute_time_in_s + case when a.event_name = 'page_ping' then 5 else 0 end as absolute_time_in_s,
+    -- first page fields
+    a.first_page_title,
+    a.first_page_url,
+    a.first_page_urlscheme,
+    a.first_page_urlhost,
+    a.first_page_urlpath,
+    a.first_page_urlquery,
+    a.first_page_urlfragment,
+    -- only take the first value when the last is genuinely missing (base on url as has to always be populated)
+    case when b.last_page_url is null then coalesce(b.last_page_title, a.first_page_title) else b.last_page_title end as last_page_title,
+    case when b.last_page_url is null then coalesce(b.last_page_url, a.first_page_url) else b.last_page_url end as last_page_url,
+    case when b.last_page_url is null then coalesce(b.last_page_urlscheme, a.first_page_urlscheme) else b.last_page_urlscheme end as last_page_urlscheme,
+    case when b.last_page_url is null then coalesce(b.last_page_urlhost, a.first_page_urlhost) else b.last_page_urlhost end as last_page_urlhost,
+    case when b.last_page_url is null then coalesce(b.last_page_urlpath, a.first_page_urlpath) else b.last_page_urlpath end as last_page_urlpath,
+    case when b.last_page_url is null then coalesce(b.last_page_urlquery, a.first_page_urlquery) else b.last_page_urlquery end as last_page_urlquery,
+    case when b.last_page_url is null then coalesce(b.last_page_urlfragment, a.first_page_urlfragment) else b.last_page_urlfragment end as last_page_urlfragment,
+    -- referrer fields
+    a.referrer,
+    a.refr_urlscheme,
+    a.refr_urlhost,
+    a.refr_urlpath,
+    a.refr_urlquery,
+    a.refr_urlfragment,
+    a.refr_medium,
+    a.refr_source,
+    a.refr_term,
+    -- marketing fields
+    a.mkt_medium,
+    a.mkt_source,
+    a.mkt_term,
+    a.mkt_content,
+    a.mkt_campaign,
+    a.mkt_clickid,
+    a.mkt_network,
+    a.mkt_source_platform,
+    a.default_channel_group,
+    -- geo fields
+    a.geo_country,
+    a.geo_region,
+    a.geo_region_name,
+    a.geo_city,
+    a.geo_zipcode,
+    a.geo_latitude,
+    a.geo_longitude,
+    a.geo_timezone,
+    a.geo_country_name,
+    a.geo_continent,
+    case when b.last_geo_country is null then coalesce(b.last_geo_country, a.geo_country) else b.last_geo_country end as last_geo_country,
+    case when b.last_geo_country is null then coalesce(b.last_geo_region_name, a.geo_region_name) else b.last_geo_region_name end as last_geo_region_name,
+    case when b.last_geo_country is null then coalesce(b.last_geo_city, a.geo_city) else b.last_geo_city end as last_geo_city,
+    case when b.last_geo_country is null then coalesce(b.last_geo_country_name,a.geo_country_name) else b.last_geo_country_name end as last_geo_country_name,
+    case when b.last_geo_country is null then coalesce(b.last_geo_continent, a.geo_continent) else b.last_geo_continent end as last_geo_continent,
+    -- ip address
+    a.user_ipaddress,
+    -- user agent
+    a.useragent,
+    a.br_renderengine,
+    a.br_lang,
+    a.br_lang_name,
+    case when b.last_br_lang is null then coalesce(b.last_br_lang, a.br_lang) else b.last_br_lang end as last_br_lang,
+    case when b.last_br_lang is null then coalesce(b.last_br_lang_name, a.br_lang_name) else b.last_br_lang_name end as last_br_lang_name,
+    a.os_timezone,
+    -- optional fields, only populated if enabled.
+    -- iab enrichment fields
+    a.category,
+    a.primary_impact,
+    a.reason,
+    a.spider_or_robot,
+    -- ua parser enrichment fields
+    a.useragent_family,
+    a.useragent_major,
+    a.useragent_minor,
+    a.useragent_patch,
+    a.useragent_version,
+    a.os_family,
+    a.os_major,
+    a.os_minor,
+    a.os_patch,
+    a.os_patch_minor,
+    a.os_version,
+    a.device_family,
+    -- yauaa enrichment fields
+    a.device_class,
+    case when a.device_class = 'Desktop' THEN 'Desktop'
+        when a.device_class = 'Phone' then 'Mobile'
+        when a.device_class = 'Tablet' then 'Tablet'
+        else 'Other' end as device_category,
+    a.screen_resolution,
+    a.agent_class,
+    a.agent_name,
+    a.agent_name_version,
+    a.agent_name_version_major,
+    a.agent_version,
+    a.agent_version_major,
+    a.device_brand,
+    a.device_name,
+    a.device_version,
+    a.layout_engine_class,
+    a.layout_engine_name,
+    a.layout_engine_name_version,
+    a.layout_engine_name_version_major,
+    a.layout_engine_version,
+    a.layout_engine_version_major,
+    a.operating_system_class,
+    a.operating_system_name,
+    a.operating_system_name_version,
+    a.operating_system_version
+    -- conversion fields
+    -- passthrough fields
+from
+    session_firsts a
+left join
+    session_lasts b on a.domain_sessionid = b.domain_sessionid
+left join
+    session_aggs c on a.domain_sessionid = c.domain_sessionid

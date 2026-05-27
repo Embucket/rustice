@@ -1,8 +1,8 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE qt (i INTEGER, p CHAR(1), o INTEGER);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO qt (i, p, o) VALUES
     (1, 'A', 1),
@@ -49,11 +49,11 @@ SELECT i, p, o, ROW_NUMBER() OVER (PARTITION BY p ORDER BY o) AS row_num
 
 # Test QUALIFY without any window function (should error)
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE qual_test(x INT);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO qual_test VALUES (1),(2);
 

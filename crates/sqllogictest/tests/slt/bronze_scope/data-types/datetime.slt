@@ -7,7 +7,7 @@ CREATE OR REPLACE TABLE test_date (
     event_date DATE
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_date VALUES 
     (1, '2023-01-01'),
@@ -38,7 +38,7 @@ CREATE OR REPLACE TABLE test_time (
     event_time TIME(3)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_time VALUES 
     (1, '12:34:56.789'),
@@ -65,7 +65,7 @@ CREATE OR REPLACE TABLE test_time_default (
     simple_time TIME
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_time_default VALUES 
     (1, '12:34:56'),
@@ -88,7 +88,7 @@ CREATE OR REPLACE TABLE test_timestamp_ntz (
     event_timestamp TIMESTAMP_NTZ
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_timestamp_ntz VALUES
     (1, '2023-01-01 12:34:56'),
@@ -115,7 +115,7 @@ CREATE OR REPLACE TABLE test_timestamp_ltz (
     event_timestamp TIMESTAMP_LTZ
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_timestamp_ltz VALUES
     (1, '2023-01-01 12:34:56'),
@@ -138,7 +138,7 @@ CREATE OR REPLACE TABLE test_timestamp_tz (
     event_timestamp TIMESTAMP_TZ
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_timestamp_tz VALUES
     (1, '2023-01-01 12:34:56 +0000'),
@@ -163,7 +163,7 @@ CREATE OR REPLACE TABLE test_datetime (
     event_datetime DATETIME
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_datetime VALUES 
     (1, '2023-01-01 12:34:56'),
@@ -319,30 +319,30 @@ SELECT
 PASS
 
 # Cleanup
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_date;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_time;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_time_default;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_timestamp_ntz;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_timestamp_ltz;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_timestamp_tz;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_datetime;

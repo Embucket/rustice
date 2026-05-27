@@ -1,0 +1,9 @@
+# dbt-snowplow-web: full_refresh/snowplow_web_users
+# Source: test-dbt-snowplow-web/queries/full-refresh/users/snowplow_web_users.sql
+
+include ../../../fixtures/snowplow/setup.slt
+
+statement ok
+select *
+from embucket.public_snowplow_manifest_scratch.snowplow_web_users_this_run
+where True --returns false if run doesn't contain new events.

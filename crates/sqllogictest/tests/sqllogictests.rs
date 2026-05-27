@@ -1,8 +1,11 @@
 //! Embucket SQL Logic Test harness binary.
 //!
-//! Discovers `.slt` files under `tests/slt/`, pre-processes embucket-specific
-//! directives, then runs each file against a fresh in-memory rustice session
-//! via the upstream `sqllogictest` `Runner`.
+//! Discovers `.slt` files under `tests/slt/` and runs each one against a fresh
+//! in-memory rustice session via the upstream `sqllogictest` `Runner`.
+//! Parsing (including glob-based `include` resolution) is delegated to
+//! `sqllogictest::parse_file`. The `${CRATE_ROOT}` variable is published to
+//! the runner via `set_var` so corpora can reach committed fixtures with
+//! `control substitution on` scoped substitution.
 //!
 //! Failure mode is soft by default: errors are aggregated into a per-directory
 //! summary and the process exits 0 unless `--strict` is passed.
@@ -12,10 +15,9 @@
 use clap::Parser;
 use embucket_sqllogictest::embucket_validator;
 use embucket_sqllogictest::engine::EmbucketSession;
-use embucket_sqllogictest::preprocessor::strip_custom_directives;
 use executor::test_helpers::create_df_session_with_catalog_url;
 use futures::{FutureExt, StreamExt};
-use sqllogictest::{Runner, parse_with_name};
+use sqllogictest::{Runner, parse_file};
 use std::collections::BTreeMap;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
@@ -35,10 +37,6 @@ struct Cli {
     /// Exit non-zero if any file fails (default: always exit 0).
     #[arg(long)]
     strict: bool,
-
-    /// Also run files under `tests/slt/databend/`. Excluded by default.
-    #[arg(long)]
-    include_databend: bool,
 
     /// List the files that would run and exit.
     #[arg(long)]
@@ -87,6 +85,41 @@ struct FileOutcome {
     path: PathBuf,
     errors: Vec<String>,
     duration_ms: u128,
+    // Per-file Iceberg catalog tempdir. Held until the outcome is consumed so
+    // the directory survives every query the runner executed against it.
+    _catalog_tempdir: Option<tempfile::TempDir>,
+}
+
+/// Suite directories whose `.slt` files require a real filesystem-backed
+/// `file://` Iceberg catalog instead of the in-memory `/dev` default. They
+/// typically need `COPY INTO file://` to reach committed fixture data.
+const FILE_CATALOG_SUITES: &[&str] = &["dbt_snowplow_web"];
+
+/// Per-file configuration derived from the `.slt` path.
+struct FileProfile {
+    /// Catalog URL passed to `create_df_session_with_catalog_url`.
+    catalog_url: String,
+    /// Tempdir backing `catalog_url` for `file://` suites. Kept alive on the
+    /// `FileOutcome` so it survives every query the runner runs.
+    catalog_tempdir: Option<tempfile::TempDir>,
+}
+
+fn profile_for(path: &Path) -> std::io::Result<FileProfile> {
+    let needs_file_catalog = path
+        .components()
+        .any(|c| FILE_CATALOG_SUITES.iter().any(|s| c.as_os_str() == *s));
+    if needs_file_catalog {
+        let td = tempfile::tempdir()?;
+        Ok(FileProfile {
+            catalog_url: format!("file://{}", td.path().display()),
+            catalog_tempdir: Some(td),
+        })
+    } else {
+        Ok(FileProfile {
+            catalog_url: "/dev".to_string(),
+            catalog_tempdir: None,
+        })
+    }
 }
 
 fn main() {
@@ -149,6 +182,7 @@ async fn run(cli: Cli) -> i32 {
                             path: path_for_panic,
                             errors: vec![format!("panicked: {msg}")],
                             duration_ms: start.elapsed().as_millis(),
+                            _catalog_tempdir: None,
                         }
                     }
                 })
@@ -285,9 +319,6 @@ fn collect_files(root: &Path, cli: &Cli) -> Vec<PathBuf> {
         walk(root, &mut acc);
     }
     acc.retain(|p| p.extension().is_some_and(|e| e == "slt"));
-    if !cli.include_databend {
-        acc.retain(|p| !p.components().any(|c| c.as_os_str() == "databend"));
-    }
     if !cli.filters.is_empty() {
         acc.retain(|p| {
             let s = p.to_string_lossy();
@@ -316,35 +347,35 @@ async fn run_file(path: PathBuf) -> FileOutcome {
     let start = Instant::now();
     let mut errors = Vec::new();
 
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
+    let profile = match profile_for(&path) {
+        Ok(p) => p,
         Err(e) => {
             return FileOutcome {
                 path,
-                errors: vec![format!("read error: {e}")],
+                errors: vec![format!("tempdir error: {e}")],
                 duration_ms: start.elapsed().as_millis(),
+                _catalog_tempdir: None,
             };
         }
     };
+    let FileProfile {
+        catalog_url,
+        catalog_tempdir,
+    } = profile;
 
-    let cleaned = strip_custom_directives(&raw);
-    let file_name = path.to_string_lossy().to_string();
-
-    let records = match parse_with_name::<embucket_sqllogictest::output::DFColumnType>(
-        &cleaned,
-        file_name.as_str(),
-    ) {
+    let records = match parse_file::<embucket_sqllogictest::output::DFColumnType>(&path) {
         Ok(r) => r,
         Err(e) => {
             return FileOutcome {
                 path,
                 errors: vec![format!("parse error: {e}")],
                 duration_ms: start.elapsed().as_millis(),
+                _catalog_tempdir: catalog_tempdir,
             };
         }
     };
 
-    let session = create_df_session_with_catalog_url("/dev").await;
+    let session = create_df_session_with_catalog_url(&catalog_url).await;
     let make_session = move || {
         let session = Arc::clone(&session);
         async move { Ok::<_, embucket_sqllogictest::error::Error>(EmbucketSession::new(session)) }
@@ -353,6 +384,13 @@ async fn run_file(path: PathBuf) -> FileOutcome {
     let mut runner = Runner::new(make_session);
     runner.add_label("embucket");
     runner.with_validator(embucket_validator);
+    // Published for `control substitution on` blocks (e.g. snowplow setup
+    // referencing `${CRATE_ROOT}/tests/fixtures/snowplow/events.tsv`).
+    // Harmless for files that don't reference the variable.
+    runner.set_var(
+        "CRATE_ROOT".to_string(),
+        env!("CARGO_MANIFEST_DIR").to_string(),
+    );
 
     for record in records {
         if errors.len() >= ERRS_PER_FILE_LIMIT {
@@ -370,6 +408,7 @@ async fn run_file(path: PathBuf) -> FileOutcome {
         path,
         errors,
         duration_ms: start.elapsed().as_millis(),
+        _catalog_tempdir: catalog_tempdir,
     }
 }
 

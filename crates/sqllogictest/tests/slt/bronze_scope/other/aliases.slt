@@ -29,7 +29,7 @@ SELECT 'test' AS MyAlias, myalias AS lower_ref
 test	test
 
 # Setup test tables for more complex alias scenarios
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE employees (
     id INTEGER,
@@ -38,7 +38,7 @@ CREATE OR REPLACE TABLE employees (
     salary INTEGER
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO employees VALUES
     (1, 'Alice', 'Engineering', 75000),
@@ -46,14 +46,14 @@ INSERT INTO employees VALUES
     (3, 'Charlie', 'Engineering', 80000),
     (4, 'Diana', 'Marketing', 65000);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE departments (
     dept_name VARCHAR,
     budget INTEGER
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO departments VALUES
     ('Engineering', 500000),

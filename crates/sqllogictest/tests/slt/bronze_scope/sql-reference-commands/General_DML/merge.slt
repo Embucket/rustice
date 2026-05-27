@@ -1,22 +1,22 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE target_table (ID INTEGER, description VARCHAR);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE source_table (ID INTEGER, description VARCHAR);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO target_table (ID, description) VALUES
     (10, 'To be updated (this is the old value)');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO source_table (ID, description) VALUES
     (10, 'To be updated (this is the new value)');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 MERGE INTO target_table USING source_table 
     ON target_table.id = source_table.id
@@ -29,21 +29,21 @@ SELECT * FROM target_table;
 10	To be updated (this is the new value)
 
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE target_table (ID INTEGER, description VARCHAR);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE source_table (ID INTEGER, description VARCHAR);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO source_table (ID, description) VALUES
     (50, 'This is a duplicate in the source and has no match in target'),
     (50, 'This is a duplicate in the source and has no match in target');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 MERGE INTO target_table USING source_table 
     ON target_table.id = source_table.id
@@ -58,23 +58,23 @@ SELECT ID FROM target_table;
 50
 50
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE target_orig (k NUMBER, v NUMBER);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO target_orig VALUES (0, 10);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE src (k NUMBER, v NUMBER);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO src VALUES (0, 11), (0, 12), (0, 13);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE target AS (SELECT * from target_orig);
 
@@ -83,7 +83,7 @@ MERGE INTO target
   USING src ON target.k = src.k
   WHEN MATCHED THEN UPDATE SET target.v = src.v;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE target AS (SELECT * from target_orig);
 
@@ -93,7 +93,7 @@ MERGE INTO target
   WHEN MATCHED AND src.v = 11 THEN DELETE
   WHEN MATCHED THEN UPDATE SET target.v = src.v;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE target AS (SELECT * from target_orig);
 
@@ -102,7 +102,7 @@ MERGE INTO target
   USING src ON target.k = src.k
   WHEN MATCHED AND src.v <= 12 THEN DELETE;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE target AS (SELECT * from target_orig);
 
@@ -111,7 +111,7 @@ MERGE INTO target
   USING src ON target.k = src.k
   WHEN MATCHED AND src.v = 11 THEN UPDATE SET target.v = src.v;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE target AS (SELECT * from target_orig);
 

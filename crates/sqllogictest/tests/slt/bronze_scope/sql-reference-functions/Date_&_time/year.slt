@@ -5,7 +5,7 @@ SELECT
 ----
 '2013-05-08T23:39:20.123000'	2013
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET WEEK_OF_YEAR_POLICY = 1;
 
@@ -20,11 +20,11 @@ SELECT
 ----
 '2016-01-02T23:39:20.123000'	1	53	1	2016	2015
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET WEEK_OF_YEAR_POLICY = 0;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET WEEK_START = 7;
 
@@ -36,7 +36,7 @@ SELECT
 ----
 '2016-01-02T23:39:20.123000'	7	6
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET WEEK_START = 0;
 
@@ -83,7 +83,7 @@ ORDER BY
 '2017-12-30'	Sat	6	'2017-12-31'	Sun	52
 '2017-12-31'	Sun	0	'2017-12-31'	Sun	52
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET WEEK_START = 1;
 
@@ -130,7 +130,7 @@ ORDER BY
 '2017-12-30'	Sat	6	'2017-12-31'	Sun	52
 '2017-12-31'	Sun	7	'2017-12-31'	Sun	52
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET WEEK_START = 3;
 
@@ -177,7 +177,7 @@ ORDER BY
 '2017-12-30'	Sat	4	'2018-01-02'	Tue	52
 '2017-12-31'	Sun	5	'2018-01-02'	Tue	52
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET WEEK_OF_YEAR_POLICY=0, WEEK_START=0;
 
@@ -217,7 +217,7 @@ ORDER BY
 '2017-12-30'	Sat	52	52	2017	2017
 '2017-12-31'	Sun	52	52	2017	2017
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET WEEK_OF_YEAR_POLICY=0, WEEK_START=3;
 
@@ -257,7 +257,7 @@ ORDER BY
 '2017-12-30'	Sat	52	52	2017	2017
 '2017-12-31'	Sun	52	52	2017	2017
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET WEEK_OF_YEAR_POLICY=1, WEEK_START=1;
 
@@ -297,7 +297,7 @@ ORDER BY
 '2017-12-30'	Sat	53	52	2017	2017
 '2017-12-31'	Sun	53	52	2017	2017
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET week_of_year_policy=1, week_start=3;
 

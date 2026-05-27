@@ -7,7 +7,7 @@ CREATE OR REPLACE TABLE test_varchar (
     name VARCHAR(10)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_varchar VALUES
     (1, 'abc'),
@@ -34,7 +34,7 @@ CREATE OR REPLACE TABLE test_char (
     code CHAR(5)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_char VALUES 
     (1, 'ABC'),     -- Should be padded to 5 chars
@@ -57,7 +57,7 @@ CREATE OR REPLACE TABLE test_string (
     content STRING
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_string VALUES
     (1, 'Short string'),
@@ -86,7 +86,7 @@ CREATE OR REPLACE TABLE test_text (
     description TEXT
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_text VALUES 
     (1, 'This is a text field'),
@@ -107,7 +107,7 @@ CREATE OR REPLACE TABLE test_nvarchar (
     unicode_text NVARCHAR(50)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_nvarchar VALUES
     (1, 'English text'),
@@ -134,7 +134,7 @@ CREATE OR REPLACE TABLE test_nchar (
     fixed_unicode NCHAR(10)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_nchar VALUES
     (1, 'ABC'),
@@ -211,7 +211,7 @@ CREATE OR REPLACE TABLE test_like (
     text_val VARCHAR(50)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_like VALUES 
     (1, 'apple'),
@@ -241,30 +241,30 @@ SELECT
 PASS
 
 # Cleanup
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_varchar;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_char;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_string;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_text;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_nvarchar;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_nchar;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_like;

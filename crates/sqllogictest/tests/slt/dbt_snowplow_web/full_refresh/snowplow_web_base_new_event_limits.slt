@@ -1,0 +1,18 @@
+# dbt-snowplow-web: full_refresh/snowplow_web_base_new_event_limits
+# Source: test-dbt-snowplow-web/queries/full-refresh/base/scratch/snowplow_web_base_new_event_limits.sql
+
+include ../../../fixtures/snowplow/setup.slt
+
+statement ok
+      select 
+        cast('2026-04-01' as timestamp)
+     as lower_limit,
+              least(
+    dateadd(
+        day,
+        60,
+        cast('2026-04-01' as timestamp)
+        )
+,
+    convert_timezone('UTC', convert_timezone('UTC', current_timestamp()))::timestamp
+) as upper_limit

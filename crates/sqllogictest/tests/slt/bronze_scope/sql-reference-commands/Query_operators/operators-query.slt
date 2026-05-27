@@ -1,44 +1,44 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE sales_office_zip_example(
   office_name VARCHAR,
   zip VARCHAR);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO sales_office_zip_example VALUES ('sales1', '94061');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO sales_office_zip_example VALUES ('sales2', '94070');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO sales_office_zip_example VALUES ('sales3', '98116');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO sales_office_zip_example VALUES ('sales4', '98005');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE customer_zip_example(
   customer VARCHAR,
   zip VARCHAR);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO customer_zip_example VALUES ('customer1', '94066');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO customer_zip_example VALUES ('customer2', '94061');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO customer_zip_example VALUES ('customer3', '98444');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO customer_zip_example VALUES ('customer4', '98005');
 
@@ -81,19 +81,19 @@ customer4	98005
 sales3	98116
 customer3	98444
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE union_test1 (v VARCHAR);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE union_test2 (i INTEGER);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO union_test1 (v) VALUES ('Adams, Douglas');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO union_test2 (i) VALUES (42);
 
@@ -115,11 +115,11 @@ Adams, Douglas
 
 # Test that UNION with mismatched column counts fails
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE u1(a INT);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE u2(a INT, b INT);
 

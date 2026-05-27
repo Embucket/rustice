@@ -1,4 +1,4 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE employee_table (
     employee_ID INTEGER,
@@ -7,21 +7,21 @@ CREATE OR REPLACE TABLE employee_table (
     department_ID INTEGER
     );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE department_table (
     department_ID INTEGER,
     department_name VARCHAR
     );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO employee_table (employee_ID, last_name, first_name, department_ID) VALUES
     (101, 'Montgomery', 'Pat', 1),
     (102, 'Levine', 'Terry', 2),
     (103, 'Comstock', 'Dana', 2);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO department_table (department_ID, department_name) VALUES
     (1, 'Engineering'),
@@ -151,11 +151,11 @@ SELECT pi() * 2.0 * 2.0 AS area_of_circle
 ----
 12.566370614359172
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE table1 (product_id NUMBER);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE table2 (prod_id NUMBER);
 
@@ -177,11 +177,11 @@ SELECT 42;
 
 # Test SELECT with an alias used in ORDER BY
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE sel_test(val INT);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO sel_test VALUES (2),(1);
 

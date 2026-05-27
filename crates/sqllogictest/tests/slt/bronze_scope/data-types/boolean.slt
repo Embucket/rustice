@@ -7,7 +7,7 @@ CREATE OR REPLACE TABLE test_boolean (
     flag BOOLEAN
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_boolean VALUES 
     (1, TRUE),
@@ -29,7 +29,7 @@ CREATE OR REPLACE TABLE test_boolean_strings (
     bool_value BOOLEAN
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_boolean_strings VALUES 
     (1, 'true', 'true'::BOOLEAN),
@@ -69,7 +69,7 @@ CREATE OR REPLACE TABLE test_boolean_numbers (
     bool_value BOOLEAN
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_boolean_numbers VALUES 
     (1, 1, 1::BOOLEAN),
@@ -214,7 +214,7 @@ CREATE OR REPLACE TABLE test_boolean_where (
     name VARCHAR(50)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_boolean_where VALUES 
     (1, TRUE, 'Active User'),
@@ -310,18 +310,18 @@ TRUE
 NULL
 
 # Cleanup
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_boolean;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_boolean_strings;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_boolean_numbers;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_boolean_where;

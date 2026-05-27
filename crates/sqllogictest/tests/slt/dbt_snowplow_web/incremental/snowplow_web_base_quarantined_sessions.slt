@@ -1,0 +1,15 @@
+# dbt-snowplow-web: incremental/snowplow_web_base_quarantined_sessions
+# Source: test-dbt-snowplow-web/queries/incremental/base/manifest/snowplow_web_base_quarantined_sessions.sql
+
+include ../../../fixtures/snowplow/setup.slt
+
+statement ok
+        with prep as (
+        select
+                cast(null as 
+    TEXT
+) session_identifier
+        )
+        select *
+        from prep
+        where false

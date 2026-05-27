@@ -79,11 +79,11 @@ NULL
 
 # Test ORDER BY with an alias to ensure correct sorting
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE ord_test(val INT);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO ord_test VALUES (2),(1);
 

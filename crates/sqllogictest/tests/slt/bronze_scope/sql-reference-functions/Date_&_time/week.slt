@@ -1,4 +1,4 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET WEEK_OF_YEAR_POLICY = 1;
 

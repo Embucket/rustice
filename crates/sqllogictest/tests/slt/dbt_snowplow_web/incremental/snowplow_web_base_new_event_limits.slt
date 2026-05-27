@@ -1,0 +1,22 @@
+# dbt-snowplow-web: incremental/snowplow_web_base_new_event_limits
+# Source: test-dbt-snowplow-web/queries/incremental/base/scratch/snowplow_web_base_new_event_limits.sql
+
+include ../../../fixtures/snowplow/setup.slt
+
+statement ok
+      select
+    dateadd(
+        hour,
+        -6,
+        cast('2026-04-29 23:59:47.620621' as timestamp)
+        )
+ as lower_limit,
+        least(
+    dateadd(
+        day,
+        60,
+        cast('2026-04-29 23:59:47.620621' as timestamp)
+        )
+,
+    convert_timezone('UTC', convert_timezone('UTC', current_timestamp()))::timestamp
+) as upper_limit

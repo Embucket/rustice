@@ -10,7 +10,7 @@ SELECT TO_DATE('2022-05-08') AS original_date,
 ----
 '2022-05-08'	'2020-05-08'
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET TIMESTAMP_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF9';
 

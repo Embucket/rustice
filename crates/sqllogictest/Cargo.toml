@@ -21,6 +21,7 @@ half = "2"
 itertools = "0.13"
 regex = { workspace = true }
 sqllogictest = "0.29"
+tempfile = { workspace = true }
 thiserror = "2"
 tokio = { workspace = true }
 

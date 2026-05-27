@@ -1,0 +1,2823 @@
+# Shared setup for the dbt_snowplow_web sqllogictest suite — static header.
+#
+# This file is concatenated by dev/regen-snowplow-setup.sh into the generated
+# setup.slt; do not include it directly from leaf .slt files.
+#
+# It creates the schemas, loads the canonical Snowplow events table from a
+# committed TSV slice (mirroring snowplow-events-parquet/sql/tsv_to_parquet.sql.tmpl),
+# and stubs the three dim seeds. Everything else in the dbt-snowplow-web DAG
+# is materialised by the generated tail (full-refresh CTAS + incremental INSERT
+# per model, in dependency order).
+#
+# The `COPY INTO` below uses `${CRATE_ROOT}` to reach the committed TSV. The
+# harness sets that variable via `Runner::set_var` to the crate's absolute
+# manifest directory. Substitution is bracketed with `control substitution
+# on/off` so the surrounding dbt-compiled SQL (which contains literal `$`
+# references) is unaffected.
+
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS embucket.public_snowplow_manifest;
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS embucket.public_snowplow_manifest_scratch;
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS embucket.public_snowplow_manifest_snowplow_manifest;
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS embucket.public_snowplow_manifest_derived;
+
+# ---------------------------------------------------------------------------
+# Stage the raw TSV as an all-VARCHAR staging table, then CTAS to the typed
+# events table. Mirrors snowplow-events-parquet/sql/tsv_to_parquet.sql.tmpl.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.enriched_raw (
+  app_id                   VARCHAR,
+  platform                 VARCHAR,
+  etl_tstamp               VARCHAR,
+  collector_tstamp         VARCHAR,
+  dvce_created_tstamp      VARCHAR,
+  event                    VARCHAR,
+  event_id                 VARCHAR,
+  txn_id                   VARCHAR,
+  name_tracker             VARCHAR,
+  v_tracker                VARCHAR,
+  v_collector              VARCHAR,
+  v_etl                    VARCHAR,
+  user_id                  VARCHAR,
+  user_ipaddress           VARCHAR,
+  user_fingerprint         VARCHAR,
+  domain_userid            VARCHAR,
+  domain_sessionidx        VARCHAR,
+  network_userid           VARCHAR,
+  geo_country              VARCHAR,
+  geo_region               VARCHAR,
+  geo_city                 VARCHAR,
+  geo_zipcode              VARCHAR,
+  geo_latitude             VARCHAR,
+  geo_longitude            VARCHAR,
+  geo_region_name          VARCHAR,
+  ip_isp                   VARCHAR,
+  ip_organization          VARCHAR,
+  ip_domain                VARCHAR,
+  ip_netspeed              VARCHAR,
+  page_url                 VARCHAR,
+  page_title               VARCHAR,
+  page_referrer            VARCHAR,
+  page_urlscheme           VARCHAR,
+  page_urlhost             VARCHAR,
+  page_urlport             VARCHAR,
+  page_urlpath             VARCHAR,
+  page_urlquery            VARCHAR,
+  page_urlfragment         VARCHAR,
+  refr_urlscheme           VARCHAR,
+  refr_urlhost             VARCHAR,
+  refr_urlport             VARCHAR,
+  refr_urlpath             VARCHAR,
+  refr_urlquery            VARCHAR,
+  refr_urlfragment         VARCHAR,
+  refr_medium              VARCHAR,
+  refr_source              VARCHAR,
+  refr_term                VARCHAR,
+  mkt_medium               VARCHAR,
+  mkt_source               VARCHAR,
+  mkt_term                 VARCHAR,
+  mkt_content              VARCHAR,
+  mkt_campaign             VARCHAR,
+  contexts                 VARCHAR,
+  se_category              VARCHAR,
+  se_action                VARCHAR,
+  se_label                 VARCHAR,
+  se_property              VARCHAR,
+  se_value                 VARCHAR,
+  unstruct_event           VARCHAR,
+  tr_orderid               VARCHAR,
+  tr_affiliation           VARCHAR,
+  tr_total                 VARCHAR,
+  tr_tax                   VARCHAR,
+  tr_shipping              VARCHAR,
+  tr_city                  VARCHAR,
+  tr_state                 VARCHAR,
+  tr_country               VARCHAR,
+  ti_orderid               VARCHAR,
+  ti_sku                   VARCHAR,
+  ti_name                  VARCHAR,
+  ti_category              VARCHAR,
+  ti_price                 VARCHAR,
+  ti_quantity              VARCHAR,
+  pp_xoffset_min           VARCHAR,
+  pp_xoffset_max           VARCHAR,
+  pp_yoffset_min           VARCHAR,
+  pp_yoffset_max           VARCHAR,
+  useragent                VARCHAR,
+  br_name                  VARCHAR,
+  br_family                VARCHAR,
+  br_version               VARCHAR,
+  br_type                  VARCHAR,
+  br_renderengine          VARCHAR,
+  br_lang                  VARCHAR,
+  br_features_pdf          VARCHAR,
+  br_features_flash        VARCHAR,
+  br_features_java         VARCHAR,
+  br_features_director     VARCHAR,
+  br_features_quicktime    VARCHAR,
+  br_features_realplayer   VARCHAR,
+  br_features_windowsmedia VARCHAR,
+  br_features_gears        VARCHAR,
+  br_features_silverlight  VARCHAR,
+  br_cookies               VARCHAR,
+  br_colordepth            VARCHAR,
+  br_viewwidth             VARCHAR,
+  br_viewheight            VARCHAR,
+  os_name                  VARCHAR,
+  os_family                VARCHAR,
+  os_manufacturer          VARCHAR,
+  os_timezone              VARCHAR,
+  dvce_type                VARCHAR,
+  dvce_ismobile            VARCHAR,
+  dvce_screenwidth         VARCHAR,
+  dvce_screenheight        VARCHAR,
+  doc_charset              VARCHAR,
+  doc_width                VARCHAR,
+  doc_height               VARCHAR,
+  tr_currency              VARCHAR,
+  tr_total_base            VARCHAR,
+  tr_tax_base              VARCHAR,
+  tr_shipping_base         VARCHAR,
+  ti_currency              VARCHAR,
+  ti_price_base            VARCHAR,
+  base_currency            VARCHAR,
+  geo_timezone             VARCHAR,
+  mkt_clickid              VARCHAR,
+  mkt_network              VARCHAR,
+  etl_tags                 VARCHAR,
+  dvce_sent_tstamp         VARCHAR,
+  refr_domain_userid       VARCHAR,
+  refr_dvce_tstamp         VARCHAR,
+  derived_contexts         VARCHAR,
+  domain_sessionid         VARCHAR,
+  derived_tstamp           VARCHAR,
+  event_vendor             VARCHAR,
+  event_name               VARCHAR,
+  event_format             VARCHAR,
+  event_version            VARCHAR,
+  event_fingerprint        VARCHAR,
+  true_tstamp              VARCHAR
+);
+
+control substitution on
+
+# Note: with substitution enabled, the `subst` crate parses backslash
+# escapes. The literal `\t` we want the SQL engine to see as
+# `FIELD_DELIMITER` must be written as `\\t` here — `subst` collapses
+# `\\` → `\`, yielding `'\t'` post-substitution.
+statement ok
+COPY INTO embucket.public_snowplow_manifest_scratch.enriched_raw
+FROM 'file://${CRATE_ROOT}/tests/fixtures/snowplow/events.tsv'
+FILE_FORMAT = ( TYPE = 'CSV' FIELD_DELIMITER = '\\t' SKIP_HEADER = 0 );
+
+control substitution off
+
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest.events AS
+SELECT
+    NULLIF(app_id, '')                                          AS app_id,
+    NULLIF(platform, '')                                        AS platform,
+    CAST(NULLIF(etl_tstamp, '')               AS TIMESTAMP)     AS etl_tstamp,
+    CAST(NULLIF(collector_tstamp, '')         AS TIMESTAMP)     AS collector_tstamp,
+    CAST(NULLIF(dvce_created_tstamp, '')      AS TIMESTAMP)     AS dvce_created_tstamp,
+    NULLIF(event, '')                                           AS event,
+    NULLIF(event_id, '')                                        AS event_id,
+    CAST(NULLIF(txn_id, '')                   AS INT)           AS txn_id,
+    NULLIF(name_tracker, '')                                    AS name_tracker,
+    NULLIF(v_tracker, '')                                       AS v_tracker,
+    NULLIF(v_collector, '')                                     AS v_collector,
+    NULLIF(v_etl, '')                                           AS v_etl,
+    NULLIF(user_id, '')                                         AS user_id,
+    NULLIF(user_ipaddress, '')                                  AS user_ipaddress,
+    NULLIF(user_fingerprint, '')                                AS user_fingerprint,
+    NULLIF(domain_userid, '')                                   AS domain_userid,
+    CAST(NULLIF(domain_sessionidx, '')        AS INT)           AS domain_sessionidx,
+    NULLIF(network_userid, '')                                  AS network_userid,
+    NULLIF(geo_country, '')                                     AS geo_country,
+    NULLIF(geo_region, '')                                      AS geo_region,
+    NULLIF(geo_city, '')                                        AS geo_city,
+    NULLIF(geo_zipcode, '')                                     AS geo_zipcode,
+    CAST(NULLIF(geo_latitude, '')             AS DOUBLE)        AS geo_latitude,
+    CAST(NULLIF(geo_longitude, '')            AS DOUBLE)        AS geo_longitude,
+    NULLIF(geo_region_name, '')                                 AS geo_region_name,
+    NULLIF(ip_isp, '')                                          AS ip_isp,
+    NULLIF(ip_organization, '')                                 AS ip_organization,
+    NULLIF(ip_domain, '')                                       AS ip_domain,
+    NULLIF(ip_netspeed, '')                                     AS ip_netspeed,
+    NULLIF(page_url, '')                                        AS page_url,
+    NULLIF(page_title, '')                                      AS page_title,
+    NULLIF(page_referrer, '')                                   AS page_referrer,
+    NULLIF(page_urlscheme, '')                                  AS page_urlscheme,
+    NULLIF(page_urlhost, '')                                    AS page_urlhost,
+    CAST(NULLIF(page_urlport, '')             AS INT)           AS page_urlport,
+    NULLIF(page_urlpath, '')                                    AS page_urlpath,
+    NULLIF(page_urlquery, '')                                   AS page_urlquery,
+    NULLIF(page_urlfragment, '')                                AS page_urlfragment,
+    NULLIF(refr_urlscheme, '')                                  AS refr_urlscheme,
+    NULLIF(refr_urlhost, '')                                    AS refr_urlhost,
+    CAST(NULLIF(refr_urlport, '')             AS INT)           AS refr_urlport,
+    NULLIF(refr_urlpath, '')                                    AS refr_urlpath,
+    NULLIF(refr_urlquery, '')                                   AS refr_urlquery,
+    NULLIF(refr_urlfragment, '')                                AS refr_urlfragment,
+    NULLIF(refr_medium, '')                                     AS refr_medium,
+    NULLIF(refr_source, '')                                     AS refr_source,
+    NULLIF(refr_term, '')                                       AS refr_term,
+    NULLIF(mkt_medium, '')                                      AS mkt_medium,
+    NULLIF(mkt_source, '')                                      AS mkt_source,
+    NULLIF(mkt_term, '')                                        AS mkt_term,
+    NULLIF(mkt_content, '')                                     AS mkt_content,
+    NULLIF(mkt_campaign, '')                                    AS mkt_campaign,
+    NULLIF(contexts, '')                                        AS contexts,
+    -- Per-schema split-out for the web_page context (mimics RDB Loader output).
+    -- Snowplow web_page.data only carries `id`, so capturing the uuid via
+    -- REGEXP_SUBSTR's `'e'` (extract group) parameter with group_num=1 is
+    -- reliable for the generator's canonical SDK JSON. Stored as a JSON string
+    -- `[{"id":"<uuid>"}]`; rustice's ARRAY is internally a Utf8 column holding
+    -- JSON, so dbt-snowplow-web's `[0]:id::varchar` access compiles into
+    -- `variant_element(...)` against this string.
+    CASE
+      WHEN REGEXP_SUBSTR(contexts, '"iglu:com\\.snowplowanalytics\\.snowplow/web_page/jsonschema/1-0-0","data":\\{"id":"([^"]+)"', 1, 1, 'e', 1) IS NOT NULL THEN
+        '[{"id":"' || REGEXP_SUBSTR(contexts, '"iglu:com\\.snowplowanalytics\\.snowplow/web_page/jsonschema/1-0-0","data":\\{"id":"([^"]+)"', 1, 1, 'e', 1) || '"}]'
+      ELSE NULL
+    END                                                         AS contexts_com_snowplowanalytics_snowplow_web_page_1,
+    NULLIF(se_category, '')                                     AS se_category,
+    NULLIF(se_action, '')                                       AS se_action,
+    NULLIF(se_label, '')                                        AS se_label,
+    NULLIF(se_property, '')                                     AS se_property,
+    CAST(NULLIF(se_value, '')                 AS DOUBLE)        AS se_value,
+    NULLIF(unstruct_event, '')                                  AS unstruct_event,
+    NULLIF(tr_orderid, '')                                      AS tr_orderid,
+    NULLIF(tr_affiliation, '')                                  AS tr_affiliation,
+    CAST(NULLIF(tr_total, '')                 AS DOUBLE)        AS tr_total,
+    CAST(NULLIF(tr_tax, '')                   AS DOUBLE)        AS tr_tax,
+    CAST(NULLIF(tr_shipping, '')              AS DOUBLE)        AS tr_shipping,
+    NULLIF(tr_city, '')                                         AS tr_city,
+    NULLIF(tr_state, '')                                        AS tr_state,
+    NULLIF(tr_country, '')                                      AS tr_country,
+    NULLIF(ti_orderid, '')                                      AS ti_orderid,
+    NULLIF(ti_sku, '')                                          AS ti_sku,
+    NULLIF(ti_name, '')                                         AS ti_name,
+    NULLIF(ti_category, '')                                     AS ti_category,
+    CAST(NULLIF(ti_price, '')                 AS DOUBLE)        AS ti_price,
+    CAST(NULLIF(ti_quantity, '')              AS INT)           AS ti_quantity,
+    CAST(NULLIF(pp_xoffset_min, '')           AS INT)           AS pp_xoffset_min,
+    CAST(NULLIF(pp_xoffset_max, '')           AS INT)           AS pp_xoffset_max,
+    CAST(NULLIF(pp_yoffset_min, '')           AS INT)           AS pp_yoffset_min,
+    CAST(NULLIF(pp_yoffset_max, '')           AS INT)           AS pp_yoffset_max,
+    NULLIF(useragent, '')                                       AS useragent,
+    NULLIF(br_name, '')                                         AS br_name,
+    NULLIF(br_family, '')                                       AS br_family,
+    NULLIF(br_version, '')                                      AS br_version,
+    NULLIF(br_type, '')                                         AS br_type,
+    NULLIF(br_renderengine, '')                                 AS br_renderengine,
+    NULLIF(br_lang, '')                                         AS br_lang,
+    CAST(NULLIF(br_features_pdf, '')          AS BOOLEAN)       AS br_features_pdf,
+    CAST(NULLIF(br_features_flash, '')        AS BOOLEAN)       AS br_features_flash,
+    CAST(NULLIF(br_features_java, '')         AS BOOLEAN)       AS br_features_java,
+    CAST(NULLIF(br_features_director, '')     AS BOOLEAN)       AS br_features_director,
+    CAST(NULLIF(br_features_quicktime, '')    AS BOOLEAN)       AS br_features_quicktime,
+    CAST(NULLIF(br_features_realplayer, '')   AS BOOLEAN)       AS br_features_realplayer,
+    CAST(NULLIF(br_features_windowsmedia, '') AS BOOLEAN)       AS br_features_windowsmedia,
+    CAST(NULLIF(br_features_gears, '')        AS BOOLEAN)       AS br_features_gears,
+    CAST(NULLIF(br_features_silverlight, '')  AS BOOLEAN)       AS br_features_silverlight,
+    CAST(NULLIF(br_cookies, '')               AS BOOLEAN)       AS br_cookies,
+    NULLIF(br_colordepth, '')                                   AS br_colordepth,
+    CAST(NULLIF(br_viewwidth, '')             AS INT)           AS br_viewwidth,
+    CAST(NULLIF(br_viewheight, '')            AS INT)           AS br_viewheight,
+    NULLIF(os_name, '')                                         AS os_name,
+    NULLIF(os_family, '')                                       AS os_family,
+    NULLIF(os_manufacturer, '')                                 AS os_manufacturer,
+    NULLIF(os_timezone, '')                                     AS os_timezone,
+    NULLIF(dvce_type, '')                                       AS dvce_type,
+    CAST(NULLIF(dvce_ismobile, '')            AS BOOLEAN)       AS dvce_ismobile,
+    CAST(NULLIF(dvce_screenwidth, '')         AS INT)           AS dvce_screenwidth,
+    CAST(NULLIF(dvce_screenheight, '')        AS INT)           AS dvce_screenheight,
+    NULLIF(doc_charset, '')                                     AS doc_charset,
+    CAST(NULLIF(doc_width, '')                AS INT)           AS doc_width,
+    CAST(NULLIF(doc_height, '')               AS INT)           AS doc_height,
+    NULLIF(tr_currency, '')                                     AS tr_currency,
+    CAST(NULLIF(tr_total_base, '')            AS DOUBLE)        AS tr_total_base,
+    CAST(NULLIF(tr_tax_base, '')              AS DOUBLE)        AS tr_tax_base,
+    CAST(NULLIF(tr_shipping_base, '')         AS DOUBLE)        AS tr_shipping_base,
+    NULLIF(ti_currency, '')                                     AS ti_currency,
+    CAST(NULLIF(ti_price_base, '')            AS DOUBLE)        AS ti_price_base,
+    NULLIF(base_currency, '')                                   AS base_currency,
+    NULLIF(geo_timezone, '')                                    AS geo_timezone,
+    NULLIF(mkt_clickid, '')                                     AS mkt_clickid,
+    NULLIF(mkt_network, '')                                     AS mkt_network,
+    NULLIF(etl_tags, '')                                        AS etl_tags,
+    CAST(NULLIF(dvce_sent_tstamp, '')         AS TIMESTAMP)     AS dvce_sent_tstamp,
+    NULLIF(refr_domain_userid, '')                              AS refr_domain_userid,
+    CAST(NULLIF(refr_dvce_tstamp, '')         AS TIMESTAMP)     AS refr_dvce_tstamp,
+    NULLIF(derived_contexts, '')                                AS derived_contexts,
+    NULLIF(domain_sessionid, '')                                AS domain_sessionid,
+    CAST(NULLIF(derived_tstamp, '')           AS TIMESTAMP)     AS derived_tstamp,
+    NULLIF(event_vendor, '')                                    AS event_vendor,
+    NULLIF(event_name, '')                                      AS event_name,
+    NULLIF(event_format, '')                                    AS event_format,
+    NULLIF(event_version, '')                                   AS event_version,
+    NULLIF(event_fingerprint, '')                               AS event_fingerprint,
+    CAST(NULLIF(true_tstamp, '')              AS TIMESTAMP)     AS true_tstamp,
+    CAST(current_timestamp() AS TIMESTAMP)                      AS load_tstamp
+FROM embucket.public_snowplow_manifest_scratch.enriched_raw;
+
+# ---------------------------------------------------------------------------
+# Dimension seeds shipped by dbt-snowplow-web. Columns match the headers of
+# the package's seed CSVs (dbt_packages/snowplow_web/seeds/*.csv). Stubs are
+# empty for now; populating them only affects output values, not planning.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_ga4_source_categories (
+    source VARCHAR,
+    source_category VARCHAR
+);
+
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_rfc_5646_language_mapping (
+    lang_tag VARCHAR,
+    name VARCHAR
+);
+
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_geo_country_mapping (
+    name VARCHAR,
+    alpha_2 VARCHAR,
+    alpha_3 VARCHAR,
+    country_code VARCHAR,
+    iso_3166_2 VARCHAR,
+    region VARCHAR,
+    sub_region VARCHAR,
+    intermediate_region VARCHAR,
+    region_code VARCHAR,
+    sub_region_code VARCHAR,
+    intermediate_region_code VARCHAR
+);
+
+# ---------------------------------------------------------------------------
+# DAG materialisation: for each model, run its full-refresh SQL as
+# CREATE TABLE AS to lay down the schema. Then either INSERT INTO (for
+# `+materialized: table` models) or materialise a `<model>__dbt_tmp`
+# scratch table from the incremental SELECT and run the verbatim MERGE
+# extracted from dbt-snowflake target/run/.../<model>.sql (for the 4
+# canonical `+materialized: incremental` derived models). Mirrors how
+# dbt-snowplow-web boots a cold warehouse and then runs an incremental
+# cycle. Generated by dev/regen-snowplow-setup.sh.
+# ---------------------------------------------------------------------------
+
+# snowplow_web_incremental_manifest
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/base/manifest/snowplow_web_incremental_manifest.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_incremental_manifest AS
+        with prep as (
+        select
+            cast(null as 
+    TEXT
+) model,
+            cast('1970-01-01' as timestamp) as last_success
+        )
+        select *
+        from prep
+        where false
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/base/manifest/snowplow_web_incremental_manifest.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_incremental_manifest
+        with prep as (
+        select
+            cast(null as 
+    TEXT
+) model,
+            cast('1970-01-01' as timestamp) as last_success
+        )
+        select *
+        from prep
+        where false
+;
+
+# snowplow_web_base_quarantined_sessions
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/base/manifest/snowplow_web_base_quarantined_sessions.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_base_quarantined_sessions AS
+        with prep as (
+        select
+                cast(null as 
+    TEXT
+) session_identifier
+        )
+        select *
+        from prep
+        where false
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/base/manifest/snowplow_web_base_quarantined_sessions.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_base_quarantined_sessions
+        with prep as (
+        select
+                cast(null as 
+    TEXT
+) session_identifier
+        )
+        select *
+        from prep
+        where false
+;
+
+# snowplow_web_base_new_event_limits
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/base/scratch/snowplow_web_base_new_event_limits.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.snowplow_web_base_new_event_limits AS
+      select 
+        cast('2026-04-01' as timestamp)
+     as lower_limit,
+              least(
+    dateadd(
+        day,
+        60,
+        cast('2026-04-01' as timestamp)
+        )
+,
+    convert_timezone('UTC', convert_timezone('UTC', current_timestamp()))::timestamp
+) as upper_limit
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/base/scratch/snowplow_web_base_new_event_limits.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_scratch.snowplow_web_base_new_event_limits
+      select
+    dateadd(
+        hour,
+        -6,
+        cast('2026-04-29 23:59:47.620621' as timestamp)
+        )
+ as lower_limit,
+        least(
+    dateadd(
+        day,
+        60,
+        cast('2026-04-29 23:59:47.620621' as timestamp)
+        )
+,
+    convert_timezone('UTC', convert_timezone('UTC', current_timestamp()))::timestamp
+) as upper_limit
+;
+
+# snowplow_web_base_sessions_lifecycle_manifest
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/base/manifest/snowplow_web_base_sessions_lifecycle_manifest.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_base_sessions_lifecycle_manifest AS
+        with new_events_session_ids_init as (
+            select
+                COALESCE(
+                    e.domain_sessionid,NULL
+                ) as session_identifier,
+                max(
+                    COALESCE(
+                        e.domain_userid,NULL
+                    )
+                ) as user_identifier, -- Edge case 1: Arbitary selection to avoid window function like first_value.
+                min(collector_tstamp) as start_tstamp,
+                max(collector_tstamp) as end_tstamp
+            from embucket.public_snowplow_manifest.events e
+            where
+                dvce_sent_tstamp <= 
+    dateadd(
+        day,
+        3,
+        dvce_created_tstamp
+        )
+ -- don't process data that's too late
+                and collector_tstamp >= 
+        cast('9999-01-01 00:00:00' as timestamp)
+                and collector_tstamp <= 
+        cast('9999-01-01 00:00:00' as timestamp)
+                and true
+                and True --don't reprocess sessions that have already been processed.
+            group by 1
+        ), new_events_session_ids as (
+            select *
+            from new_events_session_ids_init e
+                where session_identifier is not null
+                and not exists (select 1 from embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_base_quarantined_sessions as a where a.session_identifier = e.session_identifier) -- don't continue processing v.long sessions
+        )
+        , session_lifecycle as (
+        select * from new_events_session_ids
+        )
+        select
+        sl.session_identifier,
+        sl.user_identifier,
+        sl.start_tstamp,
+        least(
+    dateadd(
+        day,
+        3,
+        sl.start_tstamp
+        )
+, sl.end_tstamp) as end_tstamp -- limit session length to max_session_days
+        from session_lifecycle sl
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/base/manifest/snowplow_web_base_sessions_lifecycle_manifest.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_base_sessions_lifecycle_manifest
+        with new_events_session_ids_init as (
+            select
+                COALESCE(
+                    e.domain_sessionid,NULL
+                ) as session_identifier,
+                max(
+                    COALESCE(
+                        e.domain_userid,NULL
+                    )
+                ) as user_identifier, -- Edge case 1: Arbitary selection to avoid window function like first_value.
+                min(collector_tstamp) as start_tstamp,
+                max(collector_tstamp) as end_tstamp
+            from embucket.public_snowplow_manifest.events e
+            where
+                dvce_sent_tstamp <= 
+    dateadd(
+        day,
+        3,
+        dvce_created_tstamp
+        )
+ -- don't process data that's too late
+                and collector_tstamp >= 
+        cast('2026-04-01 00:00:00' as timestamp)
+                and collector_tstamp <= 
+        cast('2026-04-30 05:17:54' as timestamp)
+                and true
+                and True --don't reprocess sessions that have already been processed.
+            group by 1
+        ), new_events_session_ids as (
+            select *
+            from new_events_session_ids_init e
+                where session_identifier is not null
+                and not exists (select 1 from embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_base_quarantined_sessions as a where a.session_identifier = e.session_identifier) -- don't continue processing v.long sessions
+        )
+        , session_lifecycle as (
+        select * from new_events_session_ids
+        )
+        select
+        sl.session_identifier,
+        sl.user_identifier,
+        sl.start_tstamp,
+        least(
+    dateadd(
+        day,
+        3,
+        sl.start_tstamp
+        )
+, sl.end_tstamp) as end_tstamp -- limit session length to max_session_days
+        from session_lifecycle sl
+;
+
+# snowplow_web_base_sessions_this_run
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/base/scratch/snowplow_web_base_sessions_this_run.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.snowplow_web_base_sessions_this_run AS
+        select
+        s.session_identifier,
+        s.user_identifier,
+        s.start_tstamp,
+        -- end_tstamp used in next step to limit events. When backfilling, set end_tstamp to upper_limit if end_tstamp > upper_limit.
+        -- This ensures we don't accidentally process events after upper_limit
+        case when s.end_tstamp > 
+        cast('9999-01-01 00:00:00' as timestamp)
+     then 
+        cast('9999-01-01 00:00:00' as timestamp)
+     else s.end_tstamp end as end_tstamp
+        from embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_base_sessions_lifecycle_manifest s
+        where
+        -- General window of start_tstamps to limit table scans. Logic complicated by backfills.
+        -- To be within the run, session start_tstamp must be >= lower_limit - max_session_days as we limit end_tstamp in manifest to start_tstamp + max_session_days
+        s.start_tstamp >= 
+        cast('9999-01-01 00:00:00' as timestamp)
+        and s.start_tstamp <= 
+        cast('9999-01-01 00:00:00' as timestamp)
+        -- Select sessions within window that either; start or finish between lower & upper limit, start and finish outside of lower and upper limits
+        and not (s.start_tstamp > 
+        cast('9999-01-01 00:00:00' as timestamp)
+     or s.end_tstamp < 
+        cast('9999-01-01 00:00:00' as timestamp)
+    )
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/base/scratch/snowplow_web_base_sessions_this_run.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_scratch.snowplow_web_base_sessions_this_run
+        select
+        s.session_identifier,
+        s.user_identifier,
+        s.start_tstamp,
+        -- end_tstamp used in next step to limit events. When backfilling, set end_tstamp to upper_limit if end_tstamp > upper_limit.
+        -- This ensures we don't accidentally process events after upper_limit
+        case when s.end_tstamp > 
+        cast('2026-04-30 05:17:54' as timestamp)
+     then 
+        cast('2026-04-30 05:17:54' as timestamp)
+     else s.end_tstamp end as end_tstamp
+        from embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_base_sessions_lifecycle_manifest s
+        where
+        -- General window of start_tstamps to limit table scans. Logic complicated by backfills.
+        -- To be within the run, session start_tstamp must be >= lower_limit - max_session_days as we limit end_tstamp in manifest to start_tstamp + max_session_days
+        s.start_tstamp >= 
+        cast('2026-03-29 00:00:00' as timestamp)
+        and s.start_tstamp <= 
+        cast('2026-04-30 05:17:54' as timestamp)
+        -- Select sessions within window that either; start or finish between lower & upper limit, start and finish outside of lower and upper limits
+        and not (s.start_tstamp > 
+        cast('2026-04-30 05:17:54' as timestamp)
+     or s.end_tstamp < 
+        cast('2026-04-01 00:00:00' as timestamp)
+    )
+;
+
+# snowplow_web_base_events_this_run
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/base/scratch/snowflake/snowplow_web_base_events_this_run.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run AS
+with base_query as (
+        with identified_events AS (
+            select
+                COALESCE(
+                        e.domain_sessionid,NULL
+                    ) as session_identifier,
+                e.*
+            from embucket.public_snowplow_manifest.events e
+        )
+        select
+            a.*,
+            b.user_identifier -- take user_identifier from manifest. This ensures only 1 domain_userid per session.
+        from identified_events as a
+        inner join embucket.public_snowplow_manifest_scratch.snowplow_web_base_sessions_this_run as b
+        on a.session_identifier = b.session_identifier
+        where a.collector_tstamp <= 
+    dateadd(
+        day,
+        3,
+        b.start_tstamp
+        )
+        and a.dvce_sent_tstamp <= 
+    dateadd(
+        day,
+        3,
+        a.dvce_created_tstamp
+        )
+        and a.collector_tstamp >= 
+        cast('9999-01-01 00:00:00' as timestamp)
+        and a.collector_tstamp <= 
+        cast('9999-01-01 00:00:00' as timestamp)
+        and a.collector_tstamp >= b.start_tstamp -- deal with late loading events
+        and true
+        qualify row_number() over (partition by a.event_id order by a.collector_tstamp, a.dvce_created_tstamp) = 1
+)
+select
+  a.contexts_com_snowplowanalytics_snowplow_web_page_1[0]:id::varchar as page_view_id,
+  a.session_identifier as domain_sessionid,
+  a.domain_sessionid as original_domain_sessionid,
+  a.user_identifier as domain_userid,
+  a.domain_userid as original_domain_userid,
+  a.* exclude(contexts_com_snowplowanalytics_snowplow_web_page_1, domain_sessionid, domain_userid)
+from base_query a
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/base/scratch/snowflake/snowplow_web_base_events_this_run.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run
+with base_query as (
+        with identified_events AS (
+            select
+                COALESCE(
+                        e.domain_sessionid,NULL
+                    ) as session_identifier,
+                e.*
+            from embucket.public_snowplow_manifest.events e
+        )
+        select
+            a.*,
+            b.user_identifier -- take user_identifier from manifest. This ensures only 1 domain_userid per session.
+        from identified_events as a
+        inner join embucket.public_snowplow_manifest_scratch.snowplow_web_base_sessions_this_run as b
+        on a.session_identifier = b.session_identifier
+        where a.collector_tstamp <= 
+    dateadd(
+        day,
+        3,
+        b.start_tstamp
+        )
+        and a.dvce_sent_tstamp <= 
+    dateadd(
+        day,
+        3,
+        a.dvce_created_tstamp
+        )
+        and a.collector_tstamp >= 
+        cast('2026-04-29 21:04:22.898084' as timestamp)
+        and a.collector_tstamp <= 
+        cast('2026-04-29 23:51:02.898084' as timestamp)
+        and a.collector_tstamp >= b.start_tstamp -- deal with late loading events
+        and true
+        qualify row_number() over (partition by a.event_id order by a.collector_tstamp, a.dvce_created_tstamp) = 1
+)
+select
+  a.contexts_com_snowplowanalytics_snowplow_web_page_1[0]:id::varchar as page_view_id,
+  a.session_identifier as domain_sessionid,
+  a.domain_sessionid as original_domain_sessionid,
+  a.user_identifier as domain_userid,
+  a.domain_userid as original_domain_userid,
+  a.* exclude(contexts_com_snowplowanalytics_snowplow_web_page_1, domain_sessionid, domain_userid)
+from base_query a
+;
+
+# snowplow_web_pv_engaged_time
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/page_views/scratch/snowplow_web_pv_engaged_time.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.snowplow_web_pv_engaged_time AS
+select
+  ev.page_view_id,
+  ev.domain_sessionid,
+  max(ev.derived_tstamp) as end_tstamp,
+  -- aggregate pings:
+    -- divides epoch tstamps by snowplow__heartbeat to get distinct intervals
+    -- floor rounds to nearest integer - duplicates all evaluate to the same number
+    -- count(distinct) counts duplicates only once
+    -- adding snowplow__min_visit_length accounts for the page view event itself.
+  10 * (count(distinct(floor(date_part('epoch_seconds', ev.dvce_created_tstamp)/10))) - 1) + 5 as engaged_time_in_s
+from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run as ev
+where ev.event_name = 'page_ping'
+and ev.page_view_id is not null
+group by 1 , 2 
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/page_views/scratch/snowplow_web_pv_engaged_time.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_scratch.snowplow_web_pv_engaged_time
+select
+  ev.page_view_id,
+  ev.domain_sessionid,
+  max(ev.derived_tstamp) as end_tstamp,
+  -- aggregate pings:
+    -- divides epoch tstamps by snowplow__heartbeat to get distinct intervals
+    -- floor rounds to nearest integer - duplicates all evaluate to the same number
+    -- count(distinct) counts duplicates only once
+    -- adding snowplow__min_visit_length accounts for the page view event itself.
+  10 * (count(distinct(floor(date_part('epoch_seconds', ev.dvce_created_tstamp)/10))) - 1) + 5 as engaged_time_in_s
+from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run as ev
+where ev.event_name = 'page_ping'
+and ev.page_view_id is not null
+group by 1 , 2 
+;
+
+# snowplow_web_pv_scroll_depth
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/page_views/scratch/snowplow_web_pv_scroll_depth.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.snowplow_web_pv_scroll_depth AS
+with prep as (
+  select
+    ev.page_view_id,
+    ev.domain_sessionid,
+    max(ev.doc_width) as doc_width,
+    max(ev.doc_height) as doc_height,
+    max(ev.br_viewwidth) as br_viewwidth,
+    max(ev.br_viewheight) as br_viewheight,
+    -- coalesce replaces null with 0 (because the page view event does send an offset)
+    -- greatest prevents outliers (negative offsets)
+    -- least also prevents outliers (offsets greater than the docwidth or docheight)
+    least(greatest(min(coalesce(ev.pp_xoffset_min, 0)), 0), max(ev.doc_width)) as hmin, -- should be zero
+    least(greatest(max(coalesce(ev.pp_xoffset_max, 0)), 0), max(ev.doc_width)) as hmax,
+    least(greatest(min(coalesce(ev.pp_yoffset_min, 0)), 0), max(ev.doc_height)) as vmin, -- should be zero (edge case: not zero because the pv event is missing)
+    least(greatest(max(coalesce(ev.pp_yoffset_max, 0)), 0), max(ev.doc_height)) as vmax
+  from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run as ev
+  where ev.event_name in ('page_view', 'page_ping')
+    and ev.page_view_id is not null
+    and ev.doc_height > 0 -- exclude problematic (but rare) edge case
+    and ev.doc_width > 0 -- exclude problematic (but rare) edge case
+  group by 1 , 2 
+)
+select
+  page_view_id,
+  domain_sessionid,
+  doc_width,
+  doc_height,
+  br_viewwidth,
+  br_viewheight,
+  hmin,
+  hmax,
+  vmin,
+  vmax,
+  cast(round(100*(greatest(hmin, 0)/cast(doc_width as float))) as float) as relative_hmin, -- brackets matter: because hmin is of type int, we need to divide before we multiply by 100 or we risk an overflow
+  cast(round(100*(least(hmax + br_viewwidth, doc_width)/cast(doc_width as float))) as float) as relative_hmax,
+  cast(round(100*(greatest(vmin, 0)/cast(doc_height as float))) as float) as relative_vmin,
+  cast(round(100*(least(vmax + br_viewheight, doc_height)/cast(doc_height as float))) as float) as relative_vmax -- not zero when a user hasn't scrolled because it includes the non-zero viewheight
+from prep
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/page_views/scratch/snowplow_web_pv_scroll_depth.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_scratch.snowplow_web_pv_scroll_depth
+with prep as (
+  select
+    ev.page_view_id,
+    ev.domain_sessionid,
+    max(ev.doc_width) as doc_width,
+    max(ev.doc_height) as doc_height,
+    max(ev.br_viewwidth) as br_viewwidth,
+    max(ev.br_viewheight) as br_viewheight,
+    -- coalesce replaces null with 0 (because the page view event does send an offset)
+    -- greatest prevents outliers (negative offsets)
+    -- least also prevents outliers (offsets greater than the docwidth or docheight)
+    least(greatest(min(coalesce(ev.pp_xoffset_min, 0)), 0), max(ev.doc_width)) as hmin, -- should be zero
+    least(greatest(max(coalesce(ev.pp_xoffset_max, 0)), 0), max(ev.doc_width)) as hmax,
+    least(greatest(min(coalesce(ev.pp_yoffset_min, 0)), 0), max(ev.doc_height)) as vmin, -- should be zero (edge case: not zero because the pv event is missing)
+    least(greatest(max(coalesce(ev.pp_yoffset_max, 0)), 0), max(ev.doc_height)) as vmax
+  from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run as ev
+  where ev.event_name in ('page_view', 'page_ping')
+    and ev.page_view_id is not null
+    and ev.doc_height > 0 -- exclude problematic (but rare) edge case
+    and ev.doc_width > 0 -- exclude problematic (but rare) edge case
+  group by 1 , 2 
+)
+select
+  page_view_id,
+  domain_sessionid,
+  doc_width,
+  doc_height,
+  br_viewwidth,
+  br_viewheight,
+  hmin,
+  hmax,
+  vmin,
+  vmax,
+  cast(round(100*(greatest(hmin, 0)/cast(doc_width as float))) as float) as relative_hmin, -- brackets matter: because hmin is of type int, we need to divide before we multiply by 100 or we risk an overflow
+  cast(round(100*(least(hmax + br_viewwidth, doc_width)/cast(doc_width as float))) as float) as relative_hmax,
+  cast(round(100*(greatest(vmin, 0)/cast(doc_height as float))) as float) as relative_vmin,
+  cast(round(100*(least(vmax + br_viewheight, doc_height)/cast(doc_height as float))) as float) as relative_vmax -- not zero when a user hasn't scrolled because it includes the non-zero viewheight
+from prep
+;
+
+# snowplow_web_user_mapping
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/user_mapping/snowplow_web_user_mapping.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_derived.snowplow_web_user_mapping AS
+select distinct
+  domain_userid,
+  last_value(user_id) over(
+    partition by domain_userid
+    order by collector_tstamp
+    rows between unbounded preceding and unbounded following
+  ) as user_id,
+  max(collector_tstamp) over (partition by domain_userid) as end_tstamp
+from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run
+where True --returns false if run doesn't contain new events.
+and user_id is not null
+and domain_userid is not null
+;
+
+# Incremental upsert phase 1 of 2: build the dbt temp source table.
+#   ← incremental/user_mapping/snowplow_web_user_mapping.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_derived.snowplow_web_user_mapping__dbt_tmp AS
+select distinct
+  domain_userid,
+  last_value(user_id) over(
+    partition by domain_userid
+    order by collector_tstamp
+    rows between unbounded preceding and unbounded following
+  ) as user_id,
+  max(collector_tstamp) over (partition by domain_userid) as end_tstamp
+from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run
+where True --returns false if run doesn't contain new events.
+and user_id is not null
+and domain_userid is not null
+;
+
+# Incremental upsert phase 2 of 2: MERGE INTO the persistent table,
+# verbatim from dbt's incremental materialisation output.
+#   ← target/run/.../user_mapping/snowplow_web_user_mapping.sql
+statement ok
+    merge into embucket.public_snowplow_manifest_derived.snowplow_web_user_mapping as DBT_INTERNAL_DEST
+        using embucket.public_snowplow_manifest_derived.snowplow_web_user_mapping__dbt_tmp as DBT_INTERNAL_SOURCE
+        on ((DBT_INTERNAL_SOURCE.domain_userid = DBT_INTERNAL_DEST.domain_userid))
+    when matched then update set
+        "domain_userid" = DBT_INTERNAL_SOURCE."domain_userid","user_id" = DBT_INTERNAL_SOURCE."user_id","end_tstamp" = DBT_INTERNAL_SOURCE."end_tstamp"
+    when not matched then insert
+        ("domain_userid", "user_id", "end_tstamp")
+    values
+        ("domain_userid", "user_id", "end_tstamp")
+;
+
+# snowplow_web_sessions_this_run
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/sessions/scratch/snowflake/snowplow_web_sessions_this_run.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.snowplow_web_sessions_this_run AS
+with session_firsts as (
+    select
+        -- app id
+        app_id as app_id,
+        platform,
+        -- session fields
+        domain_sessionid,
+        original_domain_sessionid,
+        domain_sessionidx,
+    convert_timezone('UTC', convert_timezone('UTC', current_timestamp()))::timestamp
+ as model_tstamp,
+        -- user fields
+        user_id,
+        domain_userid,
+        original_domain_userid,
+            -- updated with mapping as part of post hook on derived sessions table
+            cast(domain_userid as TEXT) as stitched_user_id,
+        network_userid as network_userid,
+        -- first page fields
+        page_title as first_page_title,
+        page_url as first_page_url,
+        page_urlscheme as first_page_urlscheme,
+        page_urlhost as first_page_urlhost,
+        page_urlpath as first_page_urlpath,
+        page_urlquery as first_page_urlquery,
+        page_urlfragment as first_page_urlfragment,
+        -- referrer fields
+        page_referrer as referrer,
+        refr_urlscheme as refr_urlscheme,
+        refr_urlhost as refr_urlhost,
+        refr_urlpath as refr_urlpath,
+        refr_urlquery as refr_urlquery,
+        refr_urlfragment as refr_urlfragment,
+        refr_medium as refr_medium,
+        refr_source as refr_source,
+        refr_term as refr_term,
+        -- marketing fields
+        mkt_medium as mkt_medium,
+        mkt_source as mkt_source,
+        mkt_term as mkt_term,
+        mkt_content as mkt_content,
+        mkt_campaign as mkt_campaign,
+        mkt_clickid as mkt_clickid,
+        mkt_network as mkt_network,
+        regexp_substr(page_urlquery, 'utm_source_platform=([^?&#]*)', 1, 1, 'e') as mkt_source_platform,
+case
+   when lower(trim(mkt_source)) = '(direct)' and lower(trim(mkt_medium)) in ('(not set)', '(none)') then 'Direct'
+   when lower(trim(mkt_medium)) like '%cross-network%' then 'Cross-network'
+   when regexp_like(lower(trim(mkt_medium)), '^(.*cp.*|ppc|retargeting|paid.*)$') then
+      case
+         when upper(source_category) = 'SOURCE_CATEGORY_SHOPPING'
+            or regexp_like(lower(trim(mkt_campaign)), '^(.*(([^a-df-z]|^)shop|shopping).*)$') then 'Paid Shopping'
+         when upper(source_category) = 'SOURCE_CATEGORY_SEARCH' then 'Paid Search'
+         when upper(source_category) = 'SOURCE_CATEGORY_SOCIAL' then 'Paid Social'
+         when upper(source_category) = 'SOURCE_CATEGORY_VIDEO' then 'Paid Video'
+         else 'Paid Other'
+      end
+   when lower(trim(mkt_medium)) in ('display', 'banner', 'expandable', 'intersitial', 'cpm') then 'Display'
+   when upper(source_category) = 'SOURCE_CATEGORY_SHOPPING'
+      or regexp_like(lower(trim(mkt_campaign)), '^(.*(([^a-df-z]|^)shop|shopping).*)$') then 'Organic Shopping'
+   when upper(source_category) = 'SOURCE_CATEGORY_SOCIAL' or lower(trim(mkt_medium)) in ('social', 'social-network', 'sm', 'social network', 'social media') then 'Organic Social'
+   when upper(source_category) = 'SOURCE_CATEGORY_VIDEO'
+      or regexp_like(lower(trim(mkt_medium)), '^(.*video.*)$') then 'Organic Video'
+   when upper(source_category) = 'SOURCE_CATEGORY_SEARCH' or lower(trim(mkt_medium)) = 'organic' then 'Organic Search'
+   when lower(trim(mkt_medium)) in ('referral', 'app', 'link') then 'Referral'
+   when lower(trim(mkt_source)) in ('email', 'e-mail', 'e_mail', 'e mail') or lower(trim(mkt_medium)) in ('email', 'e-mail', 'e_mail', 'e mail') then 'Email'
+   when lower(trim(mkt_medium)) = 'affiliate' then 'Affiliates'
+   when lower(trim(mkt_medium)) = 'audio' then 'Audio'
+   when lower(trim(mkt_source)) = 'sms' or lower(trim(mkt_medium)) = 'sms' then 'SMS'
+   when lower(trim(mkt_medium)) like '%push' or regexp_like(lower(trim(mkt_medium)), '.*(mobile|notification).*') or lower(trim(mkt_source)) = 'firebase' then 'Mobile Push Notifications'
+   else 'Unassigned'
+end
+ as default_channel_group,
+        -- geo fields
+        geo_country as geo_country,
+        geo_region as geo_region,
+        geo_region_name as geo_region_name,
+        geo_city as geo_city,
+        geo_zipcode as geo_zipcode,
+        geo_latitude as geo_latitude,
+        geo_longitude as geo_longitude,
+        geo_timezone as geo_timezone,
+        g.name as geo_country_name,
+        g.region as geo_continent,
+        -- ip address
+        user_ipaddress as user_ipaddress,
+        -- user agent
+        useragent as useragent,
+        dvce_screenwidth || 'x' || dvce_screenheight as screen_resolution,
+        br_renderengine as br_renderengine,
+        br_lang as br_lang,
+        l.name as br_lang_name,
+        os_timezone as os_timezone,
+        -- optional fields, only populated if enabled.
+        -- iab enrichment fields
+        cast(null as TEXT) as category,
+        cast(null as TEXT) as primary_impact,
+        cast(null as TEXT) as reason,
+        cast(null as boolean) as spider_or_robot,
+        -- ua parser enrichment fields
+        cast(null as TEXT) as useragent_family,
+        cast(null as TEXT) as useragent_major,
+        cast(null as TEXT) as useragent_minor,
+        cast(null as TEXT) as useragent_patch,
+        cast(null as TEXT) as useragent_version,
+        cast(null as TEXT) as os_family,
+        cast(null as TEXT) as os_major,
+        cast(null as TEXT) as os_minor,
+        cast(null as TEXT) as os_patch,
+        cast(null as TEXT) as os_patch_minor,
+        cast(null as TEXT) as os_version,
+        cast(null as TEXT) as device_family
+,
+        -- yauaa enrichment fields
+        cast(null as TEXT) as device_class,
+        cast(null as TEXT) as agent_class,
+        cast(null as TEXT) as agent_name,
+        cast(null as TEXT) as agent_name_version,
+        cast(null as TEXT) as agent_name_version_major,
+        cast(null as TEXT) as agent_version,
+        cast(null as TEXT) as agent_version_major,
+        cast(null as TEXT) as device_brand,
+        cast(null as TEXT) as device_name,
+        cast(null as TEXT) as device_version,
+        cast(null as TEXT) as layout_engine_class,
+        cast(null as TEXT) as layout_engine_name,
+        cast(null as TEXT) as layout_engine_name_version,
+        cast(null as TEXT) as layout_engine_name_version_major,
+        cast(null as TEXT) as layout_engine_version,
+        cast(null as TEXT) as layout_engine_version_major,
+        cast(null as TEXT) as operating_system_class,
+        cast(null as TEXT) as operating_system_name,
+        cast(null as TEXT) as operating_system_name_version,
+        cast(null as TEXT) as operating_system_version,
+        -- event name for use later
+        event_name
+    from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run ev
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_ga4_source_categories c on lower(trim(ev.mkt_source)) = lower(c.source)
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_rfc_5646_language_mapping l on lower(ev.br_lang) = lower(l.lang_tag)
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_geo_country_mapping g on lower(ev.geo_country) = lower(g.alpha_2)
+    where
+        event_name in ('page_ping', 'page_view')
+        and page_view_id is not null
+  and not rlike(lower(useragent), '.*(bot|crawl|slurp|spider|archiv|spinn|sniff|seo|audit|survey|pingdom|worm|capture|(browser|screen)shots|analyz|index|thumb|check|facebook|pingdombot|phantomjs|yandexbot|twitterbot|a_archiver|facebookexternalhit|bingbot|bingpreview|googlebot|baiduspider|360(spider|user-agent)|semalt).*')
+    qualify row_number() over (partition by domain_sessionid order by derived_tstamp, dvce_created_tstamp, event_id) = 1
+)
+, session_lasts as (
+    select
+        domain_sessionid,
+        page_title as last_page_title,
+        page_url as last_page_url,
+        page_urlscheme as last_page_urlscheme,
+        page_urlhost as last_page_urlhost,
+        page_urlpath as last_page_urlpath,
+        page_urlquery as last_page_urlquery,
+        page_urlfragment as last_page_urlfragment,
+        geo_country as last_geo_country,
+        geo_city as last_geo_city,
+        geo_region_name as last_geo_region_name,
+        g.name as last_geo_country_name,
+        g.region as last_geo_continent,
+        br_lang as last_br_lang,
+        l.name as last_br_lang_name
+    from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run ev
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_rfc_5646_language_mapping l on lower(ev.br_lang) = lower(l.lang_tag)
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_geo_country_mapping g on lower(ev.geo_country) = lower(g.alpha_2)
+    where
+        event_name = 'page_view'
+        and page_view_id is not null
+  and not rlike(lower(useragent), '.*(bot|crawl|slurp|spider|archiv|spinn|sniff|seo|audit|survey|pingdom|worm|capture|(browser|screen)shots|analyz|index|thumb|check|facebook|pingdombot|phantomjs|yandexbot|twitterbot|a_archiver|facebookexternalhit|bingbot|bingpreview|googlebot|baiduspider|360(spider|user-agent)|semalt).*')
+    qualify row_number() over (partition by domain_sessionid order by derived_tstamp desc, dvce_created_tstamp desc, event_id) = 1
+)
+, session_aggs as (
+    select
+        domain_sessionid
+        , min(derived_tstamp) as start_tstamp
+        , max(derived_tstamp) as end_tstamp
+        , count(*) as total_events
+        -- engagement fields
+        , count(distinct case when event_name in ('page_ping', 'page_view') and page_view_id is not null then page_view_id else null end) as page_views
+            -- (hb * (#page pings - # distinct page view ids ON page pings)) + (# distinct page view ids ON page pings * min visit length)
+        , (10 * (
+                -- number of (unqiue in heartbeat increment) pages pings following a page ping (gap of heartbeat)
+                count(distinct case
+                        when event_name = 'page_ping' and page_view_id is not null then
+                        -- need to get a unique list of floored time PER page view, so create a dummy surrogate key...
+                            page_view_id || cast(floor(date_part('epoch_seconds', dvce_created_tstamp)/10) as TEXT)
+                        else
+                            null end) -
+                    count(distinct case when event_name = 'page_ping' and page_view_id is not null then page_view_id else null end)
+                ))  +
+            -- number of page pings following a page view (or no event) (gap of min visit length)
+            (count(distinct case when event_name = 'page_ping' and page_view_id is not null then page_view_id else null end) * 5) as engaged_time_in_s
+        , datediff(
+        second,
+        min(derived_tstamp),
+        max(derived_tstamp)
+        ) as absolute_time_in_s
+    from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run
+    where
+        1 = 1
+  and not rlike(lower(useragent), '.*(bot|crawl|slurp|spider|archiv|spinn|sniff|seo|audit|survey|pingdom|worm|capture|(browser|screen)shots|analyz|index|thumb|check|facebook|pingdombot|phantomjs|yandexbot|twitterbot|a_archiver|facebookexternalhit|bingbot|bingpreview|googlebot|baiduspider|360(spider|user-agent)|semalt).*')
+    group by
+        domain_sessionid
+)
+select
+    -- app id
+    a.app_id,
+    a.platform,
+    -- session fields
+    a.domain_sessionid,
+    a.original_domain_sessionid,
+    a.domain_sessionidx,
+    -- when the session starts with a ping we need to add the min visit length to get when the session actually started
+    case when a.event_name = 'page_ping' then
+    dateadd(
+        second,
+        -5,
+        c.start_tstamp
+        )
+    else c.start_tstamp end as start_tstamp,
+    c.end_tstamp,
+    a.model_tstamp,
+    -- user fields
+    a.user_id,
+    a.domain_userid,
+    a.original_domain_userid,
+    a.stitched_user_id,
+    a.network_userid,
+    -- engagement fields
+    c.page_views,
+    c.engaged_time_in_s,
+    c.total_events,
+    page_views >= 2 or engaged_time_in_s / 10 >= 2
+ as is_engaged,
+    -- when the session starts with a ping we need to add the min visit length to get when the session actually started
+    c.absolute_time_in_s + case when a.event_name = 'page_ping' then 5 else 0 end as absolute_time_in_s,
+    -- first page fields
+    a.first_page_title,
+    a.first_page_url,
+    a.first_page_urlscheme,
+    a.first_page_urlhost,
+    a.first_page_urlpath,
+    a.first_page_urlquery,
+    a.first_page_urlfragment,
+    -- only take the first value when the last is genuinely missing (base on url as has to always be populated)
+    case when b.last_page_url is null then coalesce(b.last_page_title, a.first_page_title) else b.last_page_title end as last_page_title,
+    case when b.last_page_url is null then coalesce(b.last_page_url, a.first_page_url) else b.last_page_url end as last_page_url,
+    case when b.last_page_url is null then coalesce(b.last_page_urlscheme, a.first_page_urlscheme) else b.last_page_urlscheme end as last_page_urlscheme,
+    case when b.last_page_url is null then coalesce(b.last_page_urlhost, a.first_page_urlhost) else b.last_page_urlhost end as last_page_urlhost,
+    case when b.last_page_url is null then coalesce(b.last_page_urlpath, a.first_page_urlpath) else b.last_page_urlpath end as last_page_urlpath,
+    case when b.last_page_url is null then coalesce(b.last_page_urlquery, a.first_page_urlquery) else b.last_page_urlquery end as last_page_urlquery,
+    case when b.last_page_url is null then coalesce(b.last_page_urlfragment, a.first_page_urlfragment) else b.last_page_urlfragment end as last_page_urlfragment,
+    -- referrer fields
+    a.referrer,
+    a.refr_urlscheme,
+    a.refr_urlhost,
+    a.refr_urlpath,
+    a.refr_urlquery,
+    a.refr_urlfragment,
+    a.refr_medium,
+    a.refr_source,
+    a.refr_term,
+    -- marketing fields
+    a.mkt_medium,
+    a.mkt_source,
+    a.mkt_term,
+    a.mkt_content,
+    a.mkt_campaign,
+    a.mkt_clickid,
+    a.mkt_network,
+    a.mkt_source_platform,
+    a.default_channel_group,
+    -- geo fields
+    a.geo_country,
+    a.geo_region,
+    a.geo_region_name,
+    a.geo_city,
+    a.geo_zipcode,
+    a.geo_latitude,
+    a.geo_longitude,
+    a.geo_timezone,
+    a.geo_country_name,
+    a.geo_continent,
+    case when b.last_geo_country is null then coalesce(b.last_geo_country, a.geo_country) else b.last_geo_country end as last_geo_country,
+    case when b.last_geo_country is null then coalesce(b.last_geo_region_name, a.geo_region_name) else b.last_geo_region_name end as last_geo_region_name,
+    case when b.last_geo_country is null then coalesce(b.last_geo_city, a.geo_city) else b.last_geo_city end as last_geo_city,
+    case when b.last_geo_country is null then coalesce(b.last_geo_country_name,a.geo_country_name) else b.last_geo_country_name end as last_geo_country_name,
+    case when b.last_geo_country is null then coalesce(b.last_geo_continent, a.geo_continent) else b.last_geo_continent end as last_geo_continent,
+    -- ip address
+    a.user_ipaddress,
+    -- user agent
+    a.useragent,
+    a.br_renderengine,
+    a.br_lang,
+    a.br_lang_name,
+    case when b.last_br_lang is null then coalesce(b.last_br_lang, a.br_lang) else b.last_br_lang end as last_br_lang,
+    case when b.last_br_lang is null then coalesce(b.last_br_lang_name, a.br_lang_name) else b.last_br_lang_name end as last_br_lang_name,
+    a.os_timezone,
+    -- optional fields, only populated if enabled.
+    -- iab enrichment fields
+    a.category,
+    a.primary_impact,
+    a.reason,
+    a.spider_or_robot,
+    -- ua parser enrichment fields
+    a.useragent_family,
+    a.useragent_major,
+    a.useragent_minor,
+    a.useragent_patch,
+    a.useragent_version,
+    a.os_family,
+    a.os_major,
+    a.os_minor,
+    a.os_patch,
+    a.os_patch_minor,
+    a.os_version,
+    a.device_family,
+    -- yauaa enrichment fields
+    a.device_class,
+    case when a.device_class = 'Desktop' THEN 'Desktop'
+        when a.device_class = 'Phone' then 'Mobile'
+        when a.device_class = 'Tablet' then 'Tablet'
+        else 'Other' end as device_category,
+    a.screen_resolution,
+    a.agent_class,
+    a.agent_name,
+    a.agent_name_version,
+    a.agent_name_version_major,
+    a.agent_version,
+    a.agent_version_major,
+    a.device_brand,
+    a.device_name,
+    a.device_version,
+    a.layout_engine_class,
+    a.layout_engine_name,
+    a.layout_engine_name_version,
+    a.layout_engine_name_version_major,
+    a.layout_engine_version,
+    a.layout_engine_version_major,
+    a.operating_system_class,
+    a.operating_system_name,
+    a.operating_system_name_version,
+    a.operating_system_version
+    -- conversion fields
+    -- passthrough fields
+from
+    session_firsts a
+left join
+    session_lasts b on a.domain_sessionid = b.domain_sessionid
+left join
+    session_aggs c on a.domain_sessionid = c.domain_sessionid
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/sessions/scratch/snowflake/snowplow_web_sessions_this_run.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_scratch.snowplow_web_sessions_this_run
+with session_firsts as (
+    select
+        -- app id
+        app_id as app_id,
+        platform,
+        -- session fields
+        domain_sessionid,
+        original_domain_sessionid,
+        domain_sessionidx,
+    convert_timezone('UTC', convert_timezone('UTC', current_timestamp()))::timestamp
+ as model_tstamp,
+        -- user fields
+        user_id,
+        domain_userid,
+        original_domain_userid,
+            -- updated with mapping as part of post hook on derived sessions table
+            cast(domain_userid as TEXT) as stitched_user_id,
+        network_userid as network_userid,
+        -- first page fields
+        page_title as first_page_title,
+        page_url as first_page_url,
+        page_urlscheme as first_page_urlscheme,
+        page_urlhost as first_page_urlhost,
+        page_urlpath as first_page_urlpath,
+        page_urlquery as first_page_urlquery,
+        page_urlfragment as first_page_urlfragment,
+        -- referrer fields
+        page_referrer as referrer,
+        refr_urlscheme as refr_urlscheme,
+        refr_urlhost as refr_urlhost,
+        refr_urlpath as refr_urlpath,
+        refr_urlquery as refr_urlquery,
+        refr_urlfragment as refr_urlfragment,
+        refr_medium as refr_medium,
+        refr_source as refr_source,
+        refr_term as refr_term,
+        -- marketing fields
+        mkt_medium as mkt_medium,
+        mkt_source as mkt_source,
+        mkt_term as mkt_term,
+        mkt_content as mkt_content,
+        mkt_campaign as mkt_campaign,
+        mkt_clickid as mkt_clickid,
+        mkt_network as mkt_network,
+        regexp_substr(page_urlquery, 'utm_source_platform=([^?&#]*)', 1, 1, 'e') as mkt_source_platform,
+case
+   when lower(trim(mkt_source)) = '(direct)' and lower(trim(mkt_medium)) in ('(not set)', '(none)') then 'Direct'
+   when lower(trim(mkt_medium)) like '%cross-network%' then 'Cross-network'
+   when regexp_like(lower(trim(mkt_medium)), '^(.*cp.*|ppc|retargeting|paid.*)$') then
+      case
+         when upper(source_category) = 'SOURCE_CATEGORY_SHOPPING'
+            or regexp_like(lower(trim(mkt_campaign)), '^(.*(([^a-df-z]|^)shop|shopping).*)$') then 'Paid Shopping'
+         when upper(source_category) = 'SOURCE_CATEGORY_SEARCH' then 'Paid Search'
+         when upper(source_category) = 'SOURCE_CATEGORY_SOCIAL' then 'Paid Social'
+         when upper(source_category) = 'SOURCE_CATEGORY_VIDEO' then 'Paid Video'
+         else 'Paid Other'
+      end
+   when lower(trim(mkt_medium)) in ('display', 'banner', 'expandable', 'intersitial', 'cpm') then 'Display'
+   when upper(source_category) = 'SOURCE_CATEGORY_SHOPPING'
+      or regexp_like(lower(trim(mkt_campaign)), '^(.*(([^a-df-z]|^)shop|shopping).*)$') then 'Organic Shopping'
+   when upper(source_category) = 'SOURCE_CATEGORY_SOCIAL' or lower(trim(mkt_medium)) in ('social', 'social-network', 'sm', 'social network', 'social media') then 'Organic Social'
+   when upper(source_category) = 'SOURCE_CATEGORY_VIDEO'
+      or regexp_like(lower(trim(mkt_medium)), '^(.*video.*)$') then 'Organic Video'
+   when upper(source_category) = 'SOURCE_CATEGORY_SEARCH' or lower(trim(mkt_medium)) = 'organic' then 'Organic Search'
+   when lower(trim(mkt_medium)) in ('referral', 'app', 'link') then 'Referral'
+   when lower(trim(mkt_source)) in ('email', 'e-mail', 'e_mail', 'e mail') or lower(trim(mkt_medium)) in ('email', 'e-mail', 'e_mail', 'e mail') then 'Email'
+   when lower(trim(mkt_medium)) = 'affiliate' then 'Affiliates'
+   when lower(trim(mkt_medium)) = 'audio' then 'Audio'
+   when lower(trim(mkt_source)) = 'sms' or lower(trim(mkt_medium)) = 'sms' then 'SMS'
+   when lower(trim(mkt_medium)) like '%push' or regexp_like(lower(trim(mkt_medium)), '.*(mobile|notification).*') or lower(trim(mkt_source)) = 'firebase' then 'Mobile Push Notifications'
+   else 'Unassigned'
+end
+ as default_channel_group,
+        -- geo fields
+        geo_country as geo_country,
+        geo_region as geo_region,
+        geo_region_name as geo_region_name,
+        geo_city as geo_city,
+        geo_zipcode as geo_zipcode,
+        geo_latitude as geo_latitude,
+        geo_longitude as geo_longitude,
+        geo_timezone as geo_timezone,
+        g.name as geo_country_name,
+        g.region as geo_continent,
+        -- ip address
+        user_ipaddress as user_ipaddress,
+        -- user agent
+        useragent as useragent,
+        dvce_screenwidth || 'x' || dvce_screenheight as screen_resolution,
+        br_renderengine as br_renderengine,
+        br_lang as br_lang,
+        l.name as br_lang_name,
+        os_timezone as os_timezone,
+        -- optional fields, only populated if enabled.
+        -- iab enrichment fields
+        cast(null as TEXT) as category,
+        cast(null as TEXT) as primary_impact,
+        cast(null as TEXT) as reason,
+        cast(null as boolean) as spider_or_robot,
+        -- ua parser enrichment fields
+        cast(null as TEXT) as useragent_family,
+        cast(null as TEXT) as useragent_major,
+        cast(null as TEXT) as useragent_minor,
+        cast(null as TEXT) as useragent_patch,
+        cast(null as TEXT) as useragent_version,
+        cast(null as TEXT) as os_family,
+        cast(null as TEXT) as os_major,
+        cast(null as TEXT) as os_minor,
+        cast(null as TEXT) as os_patch,
+        cast(null as TEXT) as os_patch_minor,
+        cast(null as TEXT) as os_version,
+        cast(null as TEXT) as device_family
+,
+        -- yauaa enrichment fields
+        cast(null as TEXT) as device_class,
+        cast(null as TEXT) as agent_class,
+        cast(null as TEXT) as agent_name,
+        cast(null as TEXT) as agent_name_version,
+        cast(null as TEXT) as agent_name_version_major,
+        cast(null as TEXT) as agent_version,
+        cast(null as TEXT) as agent_version_major,
+        cast(null as TEXT) as device_brand,
+        cast(null as TEXT) as device_name,
+        cast(null as TEXT) as device_version,
+        cast(null as TEXT) as layout_engine_class,
+        cast(null as TEXT) as layout_engine_name,
+        cast(null as TEXT) as layout_engine_name_version,
+        cast(null as TEXT) as layout_engine_name_version_major,
+        cast(null as TEXT) as layout_engine_version,
+        cast(null as TEXT) as layout_engine_version_major,
+        cast(null as TEXT) as operating_system_class,
+        cast(null as TEXT) as operating_system_name,
+        cast(null as TEXT) as operating_system_name_version,
+        cast(null as TEXT) as operating_system_version,
+        -- event name for use later
+        event_name
+    from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run ev
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_ga4_source_categories c on lower(trim(ev.mkt_source)) = lower(c.source)
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_rfc_5646_language_mapping l on lower(ev.br_lang) = lower(l.lang_tag)
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_geo_country_mapping g on lower(ev.geo_country) = lower(g.alpha_2)
+    where
+        event_name in ('page_ping', 'page_view')
+        and page_view_id is not null
+  and not rlike(lower(useragent), '.*(bot|crawl|slurp|spider|archiv|spinn|sniff|seo|audit|survey|pingdom|worm|capture|(browser|screen)shots|analyz|index|thumb|check|facebook|pingdombot|phantomjs|yandexbot|twitterbot|a_archiver|facebookexternalhit|bingbot|bingpreview|googlebot|baiduspider|360(spider|user-agent)|semalt).*')
+    qualify row_number() over (partition by domain_sessionid order by derived_tstamp, dvce_created_tstamp, event_id) = 1
+)
+, session_lasts as (
+    select
+        domain_sessionid,
+        page_title as last_page_title,
+        page_url as last_page_url,
+        page_urlscheme as last_page_urlscheme,
+        page_urlhost as last_page_urlhost,
+        page_urlpath as last_page_urlpath,
+        page_urlquery as last_page_urlquery,
+        page_urlfragment as last_page_urlfragment,
+        geo_country as last_geo_country,
+        geo_city as last_geo_city,
+        geo_region_name as last_geo_region_name,
+        g.name as last_geo_country_name,
+        g.region as last_geo_continent,
+        br_lang as last_br_lang,
+        l.name as last_br_lang_name
+    from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run ev
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_rfc_5646_language_mapping l on lower(ev.br_lang) = lower(l.lang_tag)
+    left join
+        embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_geo_country_mapping g on lower(ev.geo_country) = lower(g.alpha_2)
+    where
+        event_name = 'page_view'
+        and page_view_id is not null
+  and not rlike(lower(useragent), '.*(bot|crawl|slurp|spider|archiv|spinn|sniff|seo|audit|survey|pingdom|worm|capture|(browser|screen)shots|analyz|index|thumb|check|facebook|pingdombot|phantomjs|yandexbot|twitterbot|a_archiver|facebookexternalhit|bingbot|bingpreview|googlebot|baiduspider|360(spider|user-agent)|semalt).*')
+    qualify row_number() over (partition by domain_sessionid order by derived_tstamp desc, dvce_created_tstamp desc, event_id) = 1
+)
+, session_aggs as (
+    select
+        domain_sessionid
+        , min(derived_tstamp) as start_tstamp
+        , max(derived_tstamp) as end_tstamp
+        , count(*) as total_events
+        -- engagement fields
+        , count(distinct case when event_name in ('page_ping', 'page_view') and page_view_id is not null then page_view_id else null end) as page_views
+            -- (hb * (#page pings - # distinct page view ids ON page pings)) + (# distinct page view ids ON page pings * min visit length)
+        , (10 * (
+                -- number of (unqiue in heartbeat increment) pages pings following a page ping (gap of heartbeat)
+                count(distinct case
+                        when event_name = 'page_ping' and page_view_id is not null then
+                        -- need to get a unique list of floored time PER page view, so create a dummy surrogate key...
+                            page_view_id || cast(floor(date_part('epoch_seconds', dvce_created_tstamp)/10) as TEXT)
+                        else
+                            null end) -
+                    count(distinct case when event_name = 'page_ping' and page_view_id is not null then page_view_id else null end)
+                ))  +
+            -- number of page pings following a page view (or no event) (gap of min visit length)
+            (count(distinct case when event_name = 'page_ping' and page_view_id is not null then page_view_id else null end) * 5) as engaged_time_in_s
+        , datediff(
+        second,
+        min(derived_tstamp),
+        max(derived_tstamp)
+        ) as absolute_time_in_s
+    from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run
+    where
+        1 = 1
+  and not rlike(lower(useragent), '.*(bot|crawl|slurp|spider|archiv|spinn|sniff|seo|audit|survey|pingdom|worm|capture|(browser|screen)shots|analyz|index|thumb|check|facebook|pingdombot|phantomjs|yandexbot|twitterbot|a_archiver|facebookexternalhit|bingbot|bingpreview|googlebot|baiduspider|360(spider|user-agent)|semalt).*')
+    group by
+        domain_sessionid
+)
+select
+    -- app id
+    a.app_id,
+    a.platform,
+    -- session fields
+    a.domain_sessionid,
+    a.original_domain_sessionid,
+    a.domain_sessionidx,
+    -- when the session starts with a ping we need to add the min visit length to get when the session actually started
+    case when a.event_name = 'page_ping' then
+    dateadd(
+        second,
+        -5,
+        c.start_tstamp
+        )
+    else c.start_tstamp end as start_tstamp,
+    c.end_tstamp,
+    a.model_tstamp,
+    -- user fields
+    a.user_id,
+    a.domain_userid,
+    a.original_domain_userid,
+    a.stitched_user_id,
+    a.network_userid,
+    -- engagement fields
+    c.page_views,
+    c.engaged_time_in_s,
+    c.total_events,
+    page_views >= 2 or engaged_time_in_s / 10 >= 2
+ as is_engaged,
+    -- when the session starts with a ping we need to add the min visit length to get when the session actually started
+    c.absolute_time_in_s + case when a.event_name = 'page_ping' then 5 else 0 end as absolute_time_in_s,
+    -- first page fields
+    a.first_page_title,
+    a.first_page_url,
+    a.first_page_urlscheme,
+    a.first_page_urlhost,
+    a.first_page_urlpath,
+    a.first_page_urlquery,
+    a.first_page_urlfragment,
+    -- only take the first value when the last is genuinely missing (base on url as has to always be populated)
+    case when b.last_page_url is null then coalesce(b.last_page_title, a.first_page_title) else b.last_page_title end as last_page_title,
+    case when b.last_page_url is null then coalesce(b.last_page_url, a.first_page_url) else b.last_page_url end as last_page_url,
+    case when b.last_page_url is null then coalesce(b.last_page_urlscheme, a.first_page_urlscheme) else b.last_page_urlscheme end as last_page_urlscheme,
+    case when b.last_page_url is null then coalesce(b.last_page_urlhost, a.first_page_urlhost) else b.last_page_urlhost end as last_page_urlhost,
+    case when b.last_page_url is null then coalesce(b.last_page_urlpath, a.first_page_urlpath) else b.last_page_urlpath end as last_page_urlpath,
+    case when b.last_page_url is null then coalesce(b.last_page_urlquery, a.first_page_urlquery) else b.last_page_urlquery end as last_page_urlquery,
+    case when b.last_page_url is null then coalesce(b.last_page_urlfragment, a.first_page_urlfragment) else b.last_page_urlfragment end as last_page_urlfragment,
+    -- referrer fields
+    a.referrer,
+    a.refr_urlscheme,
+    a.refr_urlhost,
+    a.refr_urlpath,
+    a.refr_urlquery,
+    a.refr_urlfragment,
+    a.refr_medium,
+    a.refr_source,
+    a.refr_term,
+    -- marketing fields
+    a.mkt_medium,
+    a.mkt_source,
+    a.mkt_term,
+    a.mkt_content,
+    a.mkt_campaign,
+    a.mkt_clickid,
+    a.mkt_network,
+    a.mkt_source_platform,
+    a.default_channel_group,
+    -- geo fields
+    a.geo_country,
+    a.geo_region,
+    a.geo_region_name,
+    a.geo_city,
+    a.geo_zipcode,
+    a.geo_latitude,
+    a.geo_longitude,
+    a.geo_timezone,
+    a.geo_country_name,
+    a.geo_continent,
+    case when b.last_geo_country is null then coalesce(b.last_geo_country, a.geo_country) else b.last_geo_country end as last_geo_country,
+    case when b.last_geo_country is null then coalesce(b.last_geo_region_name, a.geo_region_name) else b.last_geo_region_name end as last_geo_region_name,
+    case when b.last_geo_country is null then coalesce(b.last_geo_city, a.geo_city) else b.last_geo_city end as last_geo_city,
+    case when b.last_geo_country is null then coalesce(b.last_geo_country_name,a.geo_country_name) else b.last_geo_country_name end as last_geo_country_name,
+    case when b.last_geo_country is null then coalesce(b.last_geo_continent, a.geo_continent) else b.last_geo_continent end as last_geo_continent,
+    -- ip address
+    a.user_ipaddress,
+    -- user agent
+    a.useragent,
+    a.br_renderengine,
+    a.br_lang,
+    a.br_lang_name,
+    case when b.last_br_lang is null then coalesce(b.last_br_lang, a.br_lang) else b.last_br_lang end as last_br_lang,
+    case when b.last_br_lang is null then coalesce(b.last_br_lang_name, a.br_lang_name) else b.last_br_lang_name end as last_br_lang_name,
+    a.os_timezone,
+    -- optional fields, only populated if enabled.
+    -- iab enrichment fields
+    a.category,
+    a.primary_impact,
+    a.reason,
+    a.spider_or_robot,
+    -- ua parser enrichment fields
+    a.useragent_family,
+    a.useragent_major,
+    a.useragent_minor,
+    a.useragent_patch,
+    a.useragent_version,
+    a.os_family,
+    a.os_major,
+    a.os_minor,
+    a.os_patch,
+    a.os_patch_minor,
+    a.os_version,
+    a.device_family,
+    -- yauaa enrichment fields
+    a.device_class,
+    case when a.device_class = 'Desktop' THEN 'Desktop'
+        when a.device_class = 'Phone' then 'Mobile'
+        when a.device_class = 'Tablet' then 'Tablet'
+        else 'Other' end as device_category,
+    a.screen_resolution,
+    a.agent_class,
+    a.agent_name,
+    a.agent_name_version,
+    a.agent_name_version_major,
+    a.agent_version,
+    a.agent_version_major,
+    a.device_brand,
+    a.device_name,
+    a.device_version,
+    a.layout_engine_class,
+    a.layout_engine_name,
+    a.layout_engine_name_version,
+    a.layout_engine_name_version_major,
+    a.layout_engine_version,
+    a.layout_engine_version_major,
+    a.operating_system_class,
+    a.operating_system_name,
+    a.operating_system_name_version,
+    a.operating_system_version
+    -- conversion fields
+    -- passthrough fields
+from
+    session_firsts a
+left join
+    session_lasts b on a.domain_sessionid = b.domain_sessionid
+left join
+    session_aggs c on a.domain_sessionid = c.domain_sessionid
+;
+
+# snowplow_web_page_views_this_run
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/page_views/scratch/snowflake/snowplow_web_page_views_this_run.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.snowplow_web_page_views_this_run AS
+with prep as (
+select
+  ev.page_view_id,
+  ev.event_id,
+  ev.app_id,
+  ev.platform,
+  -- user fields
+  ev.user_id,
+  ev.domain_userid,
+  ev.original_domain_userid,
+    cast(null as TEXT) as stitched_user_id,
+  ev.network_userid,
+  -- session fields
+  ev.domain_sessionid,
+  ev.original_domain_sessionid,
+  ev.domain_sessionidx,
+  -- timestamp fields
+  ev.dvce_created_tstamp,
+  ev.collector_tstamp,
+  ev.derived_tstamp,
+  ev.derived_tstamp as start_tstamp,
+  ev.doc_width,
+  ev.doc_height,
+  ev.page_title,
+  case when ev.page_url like '%/product%' then 'PDP'
+      when ev.page_url like '%/list%' then 'PLP'
+      when ev.page_url like '%/checkout%' then 'checkout'
+      when ev.page_url like '%/home%' then 'homepage'
+      else 'other'
+  end
+ as content_group,
+  ev.page_url,
+  ev.page_urlscheme,
+  ev.page_urlhost,
+  ev.page_urlpath,
+  ev.page_urlquery,
+  ev.page_urlfragment,
+  -- marketing fields
+  ev.mkt_medium,
+  ev.mkt_source,
+  ev.mkt_term,
+  ev.mkt_content,
+  ev.mkt_campaign,
+  ev.mkt_clickid,
+  ev.mkt_network,
+case
+   when lower(trim(mkt_source)) = '(direct)' and lower(trim(mkt_medium)) in ('(not set)', '(none)') then 'Direct'
+   when lower(trim(mkt_medium)) like '%cross-network%' then 'Cross-network'
+   when regexp_like(lower(trim(mkt_medium)), '^(.*cp.*|ppc|retargeting|paid.*)$') then
+      case
+         when upper(source_category) = 'SOURCE_CATEGORY_SHOPPING'
+            or regexp_like(lower(trim(mkt_campaign)), '^(.*(([^a-df-z]|^)shop|shopping).*)$') then 'Paid Shopping'
+         when upper(source_category) = 'SOURCE_CATEGORY_SEARCH' then 'Paid Search'
+         when upper(source_category) = 'SOURCE_CATEGORY_SOCIAL' then 'Paid Social'
+         when upper(source_category) = 'SOURCE_CATEGORY_VIDEO' then 'Paid Video'
+         else 'Paid Other'
+      end
+   when lower(trim(mkt_medium)) in ('display', 'banner', 'expandable', 'intersitial', 'cpm') then 'Display'
+   when upper(source_category) = 'SOURCE_CATEGORY_SHOPPING'
+      or regexp_like(lower(trim(mkt_campaign)), '^(.*(([^a-df-z]|^)shop|shopping).*)$') then 'Organic Shopping'
+   when upper(source_category) = 'SOURCE_CATEGORY_SOCIAL' or lower(trim(mkt_medium)) in ('social', 'social-network', 'sm', 'social network', 'social media') then 'Organic Social'
+   when upper(source_category) = 'SOURCE_CATEGORY_VIDEO'
+      or regexp_like(lower(trim(mkt_medium)), '^(.*video.*)$') then 'Organic Video'
+   when upper(source_category) = 'SOURCE_CATEGORY_SEARCH' or lower(trim(mkt_medium)) = 'organic' then 'Organic Search'
+   when lower(trim(mkt_medium)) in ('referral', 'app', 'link') then 'Referral'
+   when lower(trim(mkt_source)) in ('email', 'e-mail', 'e_mail', 'e mail') or lower(trim(mkt_medium)) in ('email', 'e-mail', 'e_mail', 'e mail') then 'Email'
+   when lower(trim(mkt_medium)) = 'affiliate' then 'Affiliates'
+   when lower(trim(mkt_medium)) = 'audio' then 'Audio'
+   when lower(trim(mkt_source)) = 'sms' or lower(trim(mkt_medium)) = 'sms' then 'SMS'
+   when lower(trim(mkt_medium)) like '%push' or regexp_like(lower(trim(mkt_medium)), '.*(mobile|notification).*') or lower(trim(mkt_source)) = 'firebase' then 'Mobile Push Notifications'
+   else 'Unassigned'
+end
+ as default_channel_group,
+  -- referrer fields
+  ev.page_referrer,
+  ev.refr_urlscheme,
+  ev.refr_urlhost,
+  ev.refr_urlpath,
+  ev.refr_urlquery,
+  ev.refr_urlfragment,
+  ev.refr_medium,
+  ev.refr_source,
+  ev.refr_term,
+  -- geo fields
+  ev.geo_country,
+  ev.geo_region,
+  ev.geo_region_name,
+  ev.geo_city,
+  ev.geo_zipcode,
+  ev.geo_latitude,
+  ev.geo_longitude,
+  ev.geo_timezone ,
+  ev.user_ipaddress,
+  ev.useragent,
+  ev.dvce_screenwidth || 'x' || ev.dvce_screenheight as screen_resolution,
+  ev.br_lang,
+  ev.br_viewwidth,
+  ev.br_viewheight,
+  ev.br_colordepth,
+  ev.br_renderengine,
+  ev.os_timezone,
+  -- optional fields, only populated if enabled.
+  -- iab enrichment fields: set iab variable to true to enable
+  cast(null as TEXT) as category,
+        cast(null as TEXT) as primary_impact,
+        cast(null as TEXT) as reason,
+        cast(null as boolean) as spider_or_robot,
+  -- ua parser enrichment fields
+  cast(null as TEXT) as useragent_family,
+        cast(null as TEXT) as useragent_major,
+        cast(null as TEXT) as useragent_minor,
+        cast(null as TEXT) as useragent_patch,
+        cast(null as TEXT) as useragent_version,
+        cast(null as TEXT) as os_family,
+        cast(null as TEXT) as os_major,
+        cast(null as TEXT) as os_minor,
+        cast(null as TEXT) as os_patch,
+        cast(null as TEXT) as os_patch_minor,
+        cast(null as TEXT) as os_version,
+        cast(null as TEXT) as device_family
+,
+  -- yauaa enrichment fields
+  cast(null as TEXT) as device_class,
+        cast(null as TEXT) as agent_class,
+        cast(null as TEXT) as agent_name,
+        cast(null as TEXT) as agent_name_version,
+        cast(null as TEXT) as agent_name_version_major,
+        cast(null as TEXT) as agent_version,
+        cast(null as TEXT) as agent_version_major,
+        cast(null as TEXT) as device_brand,
+        cast(null as TEXT) as device_name,
+        cast(null as TEXT) as device_version,
+        cast(null as TEXT) as layout_engine_class,
+        cast(null as TEXT) as layout_engine_name,
+        cast(null as TEXT) as layout_engine_name_version,
+        cast(null as TEXT) as layout_engine_name_version_major,
+        cast(null as TEXT) as layout_engine_version,
+        cast(null as TEXT) as layout_engine_version_major,
+        cast(null as TEXT) as operating_system_class,
+        cast(null as TEXT) as operating_system_name,
+        cast(null as TEXT) as operating_system_name_version,
+        cast(null as TEXT) as operating_system_version
+  from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run as ev
+  left join embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_ga4_source_categories c on lower(trim(ev.mkt_source)) = lower(c.source)
+  where ev.event_name = 'page_view'
+  and ev.page_view_id is not null
+  and not rlike(lower(ev.useragent), '.*(bot|crawl|slurp|spider|archiv|spinn|sniff|seo|audit|survey|pingdom|worm|capture|(browser|screen)shots|analyz|index|thumb|check|facebook|pingdombot|phantomjs|yandexbot|twitterbot|a_archiver|facebookexternalhit|bingbot|bingpreview|googlebot|baiduspider|360(spider|user-agent)|semalt).*')
+  qualify row_number() over (partition by ev.page_view_id order by ev.derived_tstamp, ev.dvce_created_tstamp) = 1
+)
+, page_view_events as (
+  select
+    p.page_view_id,
+    p.event_id,
+    p.app_id,
+    p.platform,
+    -- user fields
+    p.user_id,
+    p.domain_userid,
+    p.original_domain_userid,
+    p.stitched_user_id,
+    p.network_userid,
+    -- session fields
+    p.domain_sessionid,
+    p.original_domain_sessionid,
+    p.domain_sessionidx,
+    row_number() over (partition by p.domain_sessionid order by p.derived_tstamp, p.dvce_created_tstamp, p.event_id) AS page_view_in_session_index,
+    -- timestamp fields
+    p.dvce_created_tstamp,
+    p.collector_tstamp,
+    p.derived_tstamp,
+    p.start_tstamp,
+    coalesce(t.end_tstamp, p.derived_tstamp) as end_tstamp, -- only page views with pings will have a row in table t
+    convert_timezone('UTC', convert_timezone('UTC', current_timestamp()))::timestamp
+ as model_tstamp,
+    coalesce(t.engaged_time_in_s, 0) as engaged_time_in_s, -- where there are no pings, engaged time is 0.
+    datediff(
+        second,
+        p.derived_tstamp,
+        coalesce(t.end_tstamp, p.derived_tstamp)
+        ) as absolute_time_in_s,
+    sd.hmax as horizontal_pixels_scrolled,
+    sd.vmax as vertical_pixels_scrolled,
+    sd.relative_hmax as horizontal_percentage_scrolled,
+    sd.relative_vmax as vertical_percentage_scrolled,
+    p.doc_width,
+    p.doc_height,
+    p.content_group,
+    p.page_title,
+    p.page_url,
+    p.page_urlscheme,
+    p.page_urlhost,
+    p.page_urlpath,
+    p.page_urlquery,
+    p.page_urlfragment,
+    p.mkt_medium,
+    p.mkt_source,
+    p.mkt_term,
+    p.mkt_content,
+    p.mkt_campaign,
+    p.mkt_clickid,
+    p.mkt_network,
+    p.default_channel_group,
+    p.page_referrer,
+    p.refr_urlscheme,
+    p.refr_urlhost,
+    p.refr_urlpath,
+    p.refr_urlquery,
+    p.refr_urlfragment,
+    p.refr_medium,
+    p.refr_source,
+    p.refr_term,
+    p.geo_country,
+    p.geo_region,
+    p.geo_region_name,
+    p.geo_city,
+    p.geo_zipcode,
+    p.geo_latitude,
+    p.geo_longitude,
+    p.geo_timezone,
+    p.user_ipaddress,
+    p.useragent,
+    p.screen_resolution,
+    p.br_lang,
+    p.br_viewwidth,
+    p.br_viewheight,
+    p.br_colordepth,
+    p.br_renderengine,
+    p.os_timezone,
+    p.category,
+    p.primary_impact,
+    p.reason,
+    p.spider_or_robot,
+    p.useragent_family,
+    p.useragent_major,
+    p.useragent_minor,
+    p.useragent_patch,
+    p.useragent_version,
+    p.os_family,
+    p.os_major,
+    p.os_minor,
+    p.os_patch,
+    p.os_patch_minor,
+    p.os_version,
+    p.device_family,
+    p.device_class,
+    p.agent_class,
+    p.agent_name,
+    p.agent_name_version,
+    p.agent_name_version_major,
+    p.agent_version,
+    p.agent_version_major,
+    p.device_brand,
+    p.device_name,
+    p.device_version,
+    p.layout_engine_class,
+    p.layout_engine_name,
+    p.layout_engine_name_version,
+    p.layout_engine_name_version_major,
+    p.layout_engine_version,
+    p.layout_engine_version_major,
+    p.operating_system_class,
+    p.operating_system_name,
+    p.operating_system_name_version,
+    p.operating_system_version
+  from prep p
+  left join embucket.public_snowplow_manifest_scratch.snowplow_web_pv_engaged_time t
+  on p.page_view_id = t.page_view_id  and p.domain_sessionid = t.domain_sessionid 
+  left join embucket.public_snowplow_manifest_scratch.snowplow_web_pv_scroll_depth sd
+  on p.page_view_id = sd.page_view_id  and p.domain_sessionid = sd.domain_sessionid 
+)
+select
+  pve.page_view_id,
+  pve.event_id,
+  pve.app_id,
+  pve.platform,
+  -- user fields
+  pve.user_id,
+  pve.domain_userid,
+  pve.original_domain_userid,
+  pve.stitched_user_id,
+  pve.network_userid,
+  -- session fields
+  pve.domain_sessionid,
+  pve.original_domain_sessionid,
+  pve.domain_sessionidx,
+  pve.page_view_in_session_index,
+  max(pve.page_view_in_session_index) over (partition by pve.domain_sessionid) as page_views_in_session,
+  -- timestamp fields
+  pve.dvce_created_tstamp,
+  pve.collector_tstamp,
+  pve.derived_tstamp,
+  pve.start_tstamp,
+  pve.end_tstamp,
+  pve.model_tstamp,
+  pve.engaged_time_in_s,
+  pve.absolute_time_in_s,
+  pve.horizontal_pixels_scrolled,
+  pve.vertical_pixels_scrolled,
+  pve.horizontal_percentage_scrolled,
+  pve.vertical_percentage_scrolled,
+  pve.doc_width,
+  pve.doc_height,
+  pve.content_group,
+  pve.page_title,
+  pve.page_url,
+  pve.page_urlscheme,
+  pve.page_urlhost,
+  pve.page_urlpath,
+  pve.page_urlquery,
+  pve.page_urlfragment,
+  pve.mkt_medium,
+  pve.mkt_source,
+  pve.mkt_term,
+  pve.mkt_content,
+  pve.mkt_campaign,
+  pve.mkt_clickid,
+  pve.mkt_network,
+  pve.default_channel_group,
+  pve.page_referrer,
+  pve.refr_urlscheme,
+  pve.refr_urlhost,
+  pve.refr_urlpath,
+  pve.refr_urlquery,
+  pve.refr_urlfragment,
+  pve.refr_medium,
+  pve.refr_source,
+  pve.refr_term,
+  pve.geo_country,
+  pve.geo_region,
+  pve.geo_region_name,
+  pve.geo_city,
+  pve.geo_zipcode,
+  pve.geo_latitude,
+  pve.geo_longitude,
+  pve.geo_timezone,
+  pve.user_ipaddress,
+  pve.useragent,
+  pve.br_lang,
+  pve.br_viewwidth,
+  pve.br_viewheight,
+  pve.br_colordepth,
+  pve.br_renderengine,
+  pve.os_timezone,
+  pve.category,
+  pve.primary_impact,
+  pve.reason,
+  pve.spider_or_robot,
+  pve.useragent_family,
+  pve.useragent_major,
+  pve.useragent_minor,
+  pve.useragent_patch,
+  pve.useragent_version,
+  pve.os_family,
+  pve.os_major,
+  pve.os_minor,
+  pve.os_patch,
+  pve.os_patch_minor,
+  pve.os_version,
+  pve.device_family,
+  pve.device_class,
+  case when pve.device_class = 'Desktop' then 'Desktop'
+    when pve.device_class = 'Phone' then 'Mobile'
+    when pve.device_class = 'Tablet' then 'Tablet'
+    else 'Other' end as device_category,
+  pve.screen_resolution,
+  pve.agent_class,
+  pve.agent_name,
+  pve.agent_name_version,
+  pve.agent_name_version_major,
+  pve.agent_version,
+  pve.agent_version_major,
+  pve.device_brand,
+  pve.device_name,
+  pve.device_version,
+  pve.layout_engine_class,
+  pve.layout_engine_name,
+  pve.layout_engine_name_version,
+  pve.layout_engine_name_version_major,
+  pve.layout_engine_version,
+  pve.layout_engine_version_major,
+  pve.operating_system_class,
+  pve.operating_system_name,
+  pve.operating_system_name_version,
+  pve.operating_system_version
+from page_view_events pve
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/page_views/scratch/snowflake/snowplow_web_page_views_this_run.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_scratch.snowplow_web_page_views_this_run
+with prep as (
+select
+  ev.page_view_id,
+  ev.event_id,
+  ev.app_id,
+  ev.platform,
+  -- user fields
+  ev.user_id,
+  ev.domain_userid,
+  ev.original_domain_userid,
+    cast(null as TEXT) as stitched_user_id,
+  ev.network_userid,
+  -- session fields
+  ev.domain_sessionid,
+  ev.original_domain_sessionid,
+  ev.domain_sessionidx,
+  -- timestamp fields
+  ev.dvce_created_tstamp,
+  ev.collector_tstamp,
+  ev.derived_tstamp,
+  ev.derived_tstamp as start_tstamp,
+  ev.doc_width,
+  ev.doc_height,
+  ev.page_title,
+  case when ev.page_url like '%/product%' then 'PDP'
+      when ev.page_url like '%/list%' then 'PLP'
+      when ev.page_url like '%/checkout%' then 'checkout'
+      when ev.page_url like '%/home%' then 'homepage'
+      else 'other'
+  end
+ as content_group,
+  ev.page_url,
+  ev.page_urlscheme,
+  ev.page_urlhost,
+  ev.page_urlpath,
+  ev.page_urlquery,
+  ev.page_urlfragment,
+  -- marketing fields
+  ev.mkt_medium,
+  ev.mkt_source,
+  ev.mkt_term,
+  ev.mkt_content,
+  ev.mkt_campaign,
+  ev.mkt_clickid,
+  ev.mkt_network,
+case
+   when lower(trim(mkt_source)) = '(direct)' and lower(trim(mkt_medium)) in ('(not set)', '(none)') then 'Direct'
+   when lower(trim(mkt_medium)) like '%cross-network%' then 'Cross-network'
+   when regexp_like(lower(trim(mkt_medium)), '^(.*cp.*|ppc|retargeting|paid.*)$') then
+      case
+         when upper(source_category) = 'SOURCE_CATEGORY_SHOPPING'
+            or regexp_like(lower(trim(mkt_campaign)), '^(.*(([^a-df-z]|^)shop|shopping).*)$') then 'Paid Shopping'
+         when upper(source_category) = 'SOURCE_CATEGORY_SEARCH' then 'Paid Search'
+         when upper(source_category) = 'SOURCE_CATEGORY_SOCIAL' then 'Paid Social'
+         when upper(source_category) = 'SOURCE_CATEGORY_VIDEO' then 'Paid Video'
+         else 'Paid Other'
+      end
+   when lower(trim(mkt_medium)) in ('display', 'banner', 'expandable', 'intersitial', 'cpm') then 'Display'
+   when upper(source_category) = 'SOURCE_CATEGORY_SHOPPING'
+      or regexp_like(lower(trim(mkt_campaign)), '^(.*(([^a-df-z]|^)shop|shopping).*)$') then 'Organic Shopping'
+   when upper(source_category) = 'SOURCE_CATEGORY_SOCIAL' or lower(trim(mkt_medium)) in ('social', 'social-network', 'sm', 'social network', 'social media') then 'Organic Social'
+   when upper(source_category) = 'SOURCE_CATEGORY_VIDEO'
+      or regexp_like(lower(trim(mkt_medium)), '^(.*video.*)$') then 'Organic Video'
+   when upper(source_category) = 'SOURCE_CATEGORY_SEARCH' or lower(trim(mkt_medium)) = 'organic' then 'Organic Search'
+   when lower(trim(mkt_medium)) in ('referral', 'app', 'link') then 'Referral'
+   when lower(trim(mkt_source)) in ('email', 'e-mail', 'e_mail', 'e mail') or lower(trim(mkt_medium)) in ('email', 'e-mail', 'e_mail', 'e mail') then 'Email'
+   when lower(trim(mkt_medium)) = 'affiliate' then 'Affiliates'
+   when lower(trim(mkt_medium)) = 'audio' then 'Audio'
+   when lower(trim(mkt_source)) = 'sms' or lower(trim(mkt_medium)) = 'sms' then 'SMS'
+   when lower(trim(mkt_medium)) like '%push' or regexp_like(lower(trim(mkt_medium)), '.*(mobile|notification).*') or lower(trim(mkt_source)) = 'firebase' then 'Mobile Push Notifications'
+   else 'Unassigned'
+end
+ as default_channel_group,
+  -- referrer fields
+  ev.page_referrer,
+  ev.refr_urlscheme,
+  ev.refr_urlhost,
+  ev.refr_urlpath,
+  ev.refr_urlquery,
+  ev.refr_urlfragment,
+  ev.refr_medium,
+  ev.refr_source,
+  ev.refr_term,
+  -- geo fields
+  ev.geo_country,
+  ev.geo_region,
+  ev.geo_region_name,
+  ev.geo_city,
+  ev.geo_zipcode,
+  ev.geo_latitude,
+  ev.geo_longitude,
+  ev.geo_timezone ,
+  ev.user_ipaddress,
+  ev.useragent,
+  ev.dvce_screenwidth || 'x' || ev.dvce_screenheight as screen_resolution,
+  ev.br_lang,
+  ev.br_viewwidth,
+  ev.br_viewheight,
+  ev.br_colordepth,
+  ev.br_renderengine,
+  ev.os_timezone,
+  -- optional fields, only populated if enabled.
+  -- iab enrichment fields: set iab variable to true to enable
+  cast(null as TEXT) as category,
+        cast(null as TEXT) as primary_impact,
+        cast(null as TEXT) as reason,
+        cast(null as boolean) as spider_or_robot,
+  -- ua parser enrichment fields
+  cast(null as TEXT) as useragent_family,
+        cast(null as TEXT) as useragent_major,
+        cast(null as TEXT) as useragent_minor,
+        cast(null as TEXT) as useragent_patch,
+        cast(null as TEXT) as useragent_version,
+        cast(null as TEXT) as os_family,
+        cast(null as TEXT) as os_major,
+        cast(null as TEXT) as os_minor,
+        cast(null as TEXT) as os_patch,
+        cast(null as TEXT) as os_patch_minor,
+        cast(null as TEXT) as os_version,
+        cast(null as TEXT) as device_family
+,
+  -- yauaa enrichment fields
+  cast(null as TEXT) as device_class,
+        cast(null as TEXT) as agent_class,
+        cast(null as TEXT) as agent_name,
+        cast(null as TEXT) as agent_name_version,
+        cast(null as TEXT) as agent_name_version_major,
+        cast(null as TEXT) as agent_version,
+        cast(null as TEXT) as agent_version_major,
+        cast(null as TEXT) as device_brand,
+        cast(null as TEXT) as device_name,
+        cast(null as TEXT) as device_version,
+        cast(null as TEXT) as layout_engine_class,
+        cast(null as TEXT) as layout_engine_name,
+        cast(null as TEXT) as layout_engine_name_version,
+        cast(null as TEXT) as layout_engine_name_version_major,
+        cast(null as TEXT) as layout_engine_version,
+        cast(null as TEXT) as layout_engine_version_major,
+        cast(null as TEXT) as operating_system_class,
+        cast(null as TEXT) as operating_system_name,
+        cast(null as TEXT) as operating_system_name_version,
+        cast(null as TEXT) as operating_system_version
+  from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run as ev
+  left join embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_dim_ga4_source_categories c on lower(trim(ev.mkt_source)) = lower(c.source)
+  where ev.event_name = 'page_view'
+  and ev.page_view_id is not null
+  and not rlike(lower(ev.useragent), '.*(bot|crawl|slurp|spider|archiv|spinn|sniff|seo|audit|survey|pingdom|worm|capture|(browser|screen)shots|analyz|index|thumb|check|facebook|pingdombot|phantomjs|yandexbot|twitterbot|a_archiver|facebookexternalhit|bingbot|bingpreview|googlebot|baiduspider|360(spider|user-agent)|semalt).*')
+  qualify row_number() over (partition by ev.page_view_id order by ev.derived_tstamp, ev.dvce_created_tstamp) = 1
+)
+, page_view_events as (
+  select
+    p.page_view_id,
+    p.event_id,
+    p.app_id,
+    p.platform,
+    -- user fields
+    p.user_id,
+    p.domain_userid,
+    p.original_domain_userid,
+    p.stitched_user_id,
+    p.network_userid,
+    -- session fields
+    p.domain_sessionid,
+    p.original_domain_sessionid,
+    p.domain_sessionidx,
+    row_number() over (partition by p.domain_sessionid order by p.derived_tstamp, p.dvce_created_tstamp, p.event_id) AS page_view_in_session_index,
+    -- timestamp fields
+    p.dvce_created_tstamp,
+    p.collector_tstamp,
+    p.derived_tstamp,
+    p.start_tstamp,
+    coalesce(t.end_tstamp, p.derived_tstamp) as end_tstamp, -- only page views with pings will have a row in table t
+    convert_timezone('UTC', convert_timezone('UTC', current_timestamp()))::timestamp
+ as model_tstamp,
+    coalesce(t.engaged_time_in_s, 0) as engaged_time_in_s, -- where there are no pings, engaged time is 0.
+    datediff(
+        second,
+        p.derived_tstamp,
+        coalesce(t.end_tstamp, p.derived_tstamp)
+        ) as absolute_time_in_s,
+    sd.hmax as horizontal_pixels_scrolled,
+    sd.vmax as vertical_pixels_scrolled,
+    sd.relative_hmax as horizontal_percentage_scrolled,
+    sd.relative_vmax as vertical_percentage_scrolled,
+    p.doc_width,
+    p.doc_height,
+    p.content_group,
+    p.page_title,
+    p.page_url,
+    p.page_urlscheme,
+    p.page_urlhost,
+    p.page_urlpath,
+    p.page_urlquery,
+    p.page_urlfragment,
+    p.mkt_medium,
+    p.mkt_source,
+    p.mkt_term,
+    p.mkt_content,
+    p.mkt_campaign,
+    p.mkt_clickid,
+    p.mkt_network,
+    p.default_channel_group,
+    p.page_referrer,
+    p.refr_urlscheme,
+    p.refr_urlhost,
+    p.refr_urlpath,
+    p.refr_urlquery,
+    p.refr_urlfragment,
+    p.refr_medium,
+    p.refr_source,
+    p.refr_term,
+    p.geo_country,
+    p.geo_region,
+    p.geo_region_name,
+    p.geo_city,
+    p.geo_zipcode,
+    p.geo_latitude,
+    p.geo_longitude,
+    p.geo_timezone,
+    p.user_ipaddress,
+    p.useragent,
+    p.screen_resolution,
+    p.br_lang,
+    p.br_viewwidth,
+    p.br_viewheight,
+    p.br_colordepth,
+    p.br_renderengine,
+    p.os_timezone,
+    p.category,
+    p.primary_impact,
+    p.reason,
+    p.spider_or_robot,
+    p.useragent_family,
+    p.useragent_major,
+    p.useragent_minor,
+    p.useragent_patch,
+    p.useragent_version,
+    p.os_family,
+    p.os_major,
+    p.os_minor,
+    p.os_patch,
+    p.os_patch_minor,
+    p.os_version,
+    p.device_family,
+    p.device_class,
+    p.agent_class,
+    p.agent_name,
+    p.agent_name_version,
+    p.agent_name_version_major,
+    p.agent_version,
+    p.agent_version_major,
+    p.device_brand,
+    p.device_name,
+    p.device_version,
+    p.layout_engine_class,
+    p.layout_engine_name,
+    p.layout_engine_name_version,
+    p.layout_engine_name_version_major,
+    p.layout_engine_version,
+    p.layout_engine_version_major,
+    p.operating_system_class,
+    p.operating_system_name,
+    p.operating_system_name_version,
+    p.operating_system_version
+  from prep p
+  left join embucket.public_snowplow_manifest_scratch.snowplow_web_pv_engaged_time t
+  on p.page_view_id = t.page_view_id  and p.domain_sessionid = t.domain_sessionid 
+  left join embucket.public_snowplow_manifest_scratch.snowplow_web_pv_scroll_depth sd
+  on p.page_view_id = sd.page_view_id  and p.domain_sessionid = sd.domain_sessionid 
+)
+select
+  pve.page_view_id,
+  pve.event_id,
+  pve.app_id,
+  pve.platform,
+  -- user fields
+  pve.user_id,
+  pve.domain_userid,
+  pve.original_domain_userid,
+  pve.stitched_user_id,
+  pve.network_userid,
+  -- session fields
+  pve.domain_sessionid,
+  pve.original_domain_sessionid,
+  pve.domain_sessionidx,
+  pve.page_view_in_session_index,
+  max(pve.page_view_in_session_index) over (partition by pve.domain_sessionid) as page_views_in_session,
+  -- timestamp fields
+  pve.dvce_created_tstamp,
+  pve.collector_tstamp,
+  pve.derived_tstamp,
+  pve.start_tstamp,
+  pve.end_tstamp,
+  pve.model_tstamp,
+  pve.engaged_time_in_s,
+  pve.absolute_time_in_s,
+  pve.horizontal_pixels_scrolled,
+  pve.vertical_pixels_scrolled,
+  pve.horizontal_percentage_scrolled,
+  pve.vertical_percentage_scrolled,
+  pve.doc_width,
+  pve.doc_height,
+  pve.content_group,
+  pve.page_title,
+  pve.page_url,
+  pve.page_urlscheme,
+  pve.page_urlhost,
+  pve.page_urlpath,
+  pve.page_urlquery,
+  pve.page_urlfragment,
+  pve.mkt_medium,
+  pve.mkt_source,
+  pve.mkt_term,
+  pve.mkt_content,
+  pve.mkt_campaign,
+  pve.mkt_clickid,
+  pve.mkt_network,
+  pve.default_channel_group,
+  pve.page_referrer,
+  pve.refr_urlscheme,
+  pve.refr_urlhost,
+  pve.refr_urlpath,
+  pve.refr_urlquery,
+  pve.refr_urlfragment,
+  pve.refr_medium,
+  pve.refr_source,
+  pve.refr_term,
+  pve.geo_country,
+  pve.geo_region,
+  pve.geo_region_name,
+  pve.geo_city,
+  pve.geo_zipcode,
+  pve.geo_latitude,
+  pve.geo_longitude,
+  pve.geo_timezone,
+  pve.user_ipaddress,
+  pve.useragent,
+  pve.br_lang,
+  pve.br_viewwidth,
+  pve.br_viewheight,
+  pve.br_colordepth,
+  pve.br_renderengine,
+  pve.os_timezone,
+  pve.category,
+  pve.primary_impact,
+  pve.reason,
+  pve.spider_or_robot,
+  pve.useragent_family,
+  pve.useragent_major,
+  pve.useragent_minor,
+  pve.useragent_patch,
+  pve.useragent_version,
+  pve.os_family,
+  pve.os_major,
+  pve.os_minor,
+  pve.os_patch,
+  pve.os_patch_minor,
+  pve.os_version,
+  pve.device_family,
+  pve.device_class,
+  case when pve.device_class = 'Desktop' then 'Desktop'
+    when pve.device_class = 'Phone' then 'Mobile'
+    when pve.device_class = 'Tablet' then 'Tablet'
+    else 'Other' end as device_category,
+  pve.screen_resolution,
+  pve.agent_class,
+  pve.agent_name,
+  pve.agent_name_version,
+  pve.agent_name_version_major,
+  pve.agent_version,
+  pve.agent_version_major,
+  pve.device_brand,
+  pve.device_name,
+  pve.device_version,
+  pve.layout_engine_class,
+  pve.layout_engine_name,
+  pve.layout_engine_name_version,
+  pve.layout_engine_name_version_major,
+  pve.layout_engine_version,
+  pve.layout_engine_version_major,
+  pve.operating_system_class,
+  pve.operating_system_name,
+  pve.operating_system_name_version,
+  pve.operating_system_version
+from page_view_events pve
+;
+
+# snowplow_web_sessions
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/sessions/snowplow_web_sessions.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_derived.snowplow_web_sessions AS
+select *
+from embucket.public_snowplow_manifest_scratch.snowplow_web_sessions_this_run
+where True --returns false if run doesn't contain new events.
+;
+
+# Incremental upsert phase 1 of 2: build the dbt temp source table.
+#   ← incremental/sessions/snowplow_web_sessions.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_derived.snowplow_web_sessions__dbt_tmp AS
+select *
+from embucket.public_snowplow_manifest_scratch.snowplow_web_sessions_this_run
+where True --returns false if run doesn't contain new events.
+;
+
+# Incremental upsert phase 2 of 2: MERGE INTO the persistent table,
+# verbatim from dbt's incremental materialisation output.
+#   ← target/run/.../sessions/snowplow_web_sessions.sql
+statement ok
+    merge into embucket.public_snowplow_manifest_derived.snowplow_web_sessions as DBT_INTERNAL_DEST
+        using embucket.public_snowplow_manifest_derived.snowplow_web_sessions__dbt_tmp as DBT_INTERNAL_SOURCE
+        on (
+            DBT_INTERNAL_DEST.start_tstamp between '2026-02-28 21:04:18.917662' and '2026-04-29 21:04:36.730415'
+        ) and ((DBT_INTERNAL_SOURCE.domain_sessionid = DBT_INTERNAL_DEST.domain_sessionid))
+    when matched then update set
+        "app_id" = DBT_INTERNAL_SOURCE."app_id","platform" = DBT_INTERNAL_SOURCE."platform","domain_sessionid" = DBT_INTERNAL_SOURCE."domain_sessionid","original_domain_sessionid" = DBT_INTERNAL_SOURCE."original_domain_sessionid","domain_sessionidx" = DBT_INTERNAL_SOURCE."domain_sessionidx","start_tstamp" = DBT_INTERNAL_SOURCE."start_tstamp","end_tstamp" = DBT_INTERNAL_SOURCE."end_tstamp","model_tstamp" = DBT_INTERNAL_SOURCE."model_tstamp","user_id" = DBT_INTERNAL_SOURCE."user_id","domain_userid" = DBT_INTERNAL_SOURCE."domain_userid","original_domain_userid" = DBT_INTERNAL_SOURCE."original_domain_userid","stitched_user_id" = DBT_INTERNAL_SOURCE."stitched_user_id","network_userid" = DBT_INTERNAL_SOURCE."network_userid","page_views" = DBT_INTERNAL_SOURCE."page_views","engaged_time_in_s" = DBT_INTERNAL_SOURCE."engaged_time_in_s","total_events" = DBT_INTERNAL_SOURCE."total_events","is_engaged" = DBT_INTERNAL_SOURCE."is_engaged","absolute_time_in_s" = DBT_INTERNAL_SOURCE."absolute_time_in_s","first_page_title" = DBT_INTERNAL_SOURCE."first_page_title","first_page_url" = DBT_INTERNAL_SOURCE."first_page_url","first_page_urlscheme" = DBT_INTERNAL_SOURCE."first_page_urlscheme","first_page_urlhost" = DBT_INTERNAL_SOURCE."first_page_urlhost","first_page_urlpath" = DBT_INTERNAL_SOURCE."first_page_urlpath","first_page_urlquery" = DBT_INTERNAL_SOURCE."first_page_urlquery","first_page_urlfragment" = DBT_INTERNAL_SOURCE."first_page_urlfragment","last_page_title" = DBT_INTERNAL_SOURCE."last_page_title","last_page_url" = DBT_INTERNAL_SOURCE."last_page_url","last_page_urlscheme" = DBT_INTERNAL_SOURCE."last_page_urlscheme","last_page_urlhost" = DBT_INTERNAL_SOURCE."last_page_urlhost","last_page_urlpath" = DBT_INTERNAL_SOURCE."last_page_urlpath","last_page_urlquery" = DBT_INTERNAL_SOURCE."last_page_urlquery","last_page_urlfragment" = DBT_INTERNAL_SOURCE."last_page_urlfragment","referrer" = DBT_INTERNAL_SOURCE."referrer","refr_urlscheme" = DBT_INTERNAL_SOURCE."refr_urlscheme","refr_urlhost" = DBT_INTERNAL_SOURCE."refr_urlhost","refr_urlpath" = DBT_INTERNAL_SOURCE."refr_urlpath","refr_urlquery" = DBT_INTERNAL_SOURCE."refr_urlquery","refr_urlfragment" = DBT_INTERNAL_SOURCE."refr_urlfragment","refr_medium" = DBT_INTERNAL_SOURCE."refr_medium","refr_source" = DBT_INTERNAL_SOURCE."refr_source","refr_term" = DBT_INTERNAL_SOURCE."refr_term","mkt_medium" = DBT_INTERNAL_SOURCE."mkt_medium","mkt_source" = DBT_INTERNAL_SOURCE."mkt_source","mkt_term" = DBT_INTERNAL_SOURCE."mkt_term","mkt_content" = DBT_INTERNAL_SOURCE."mkt_content","mkt_campaign" = DBT_INTERNAL_SOURCE."mkt_campaign","mkt_clickid" = DBT_INTERNAL_SOURCE."mkt_clickid","mkt_network" = DBT_INTERNAL_SOURCE."mkt_network","mkt_source_platform" = DBT_INTERNAL_SOURCE."mkt_source_platform","default_channel_group" = DBT_INTERNAL_SOURCE."default_channel_group","geo_country" = DBT_INTERNAL_SOURCE."geo_country","geo_region" = DBT_INTERNAL_SOURCE."geo_region","geo_region_name" = DBT_INTERNAL_SOURCE."geo_region_name","geo_city" = DBT_INTERNAL_SOURCE."geo_city","geo_zipcode" = DBT_INTERNAL_SOURCE."geo_zipcode","geo_latitude" = DBT_INTERNAL_SOURCE."geo_latitude","geo_longitude" = DBT_INTERNAL_SOURCE."geo_longitude","geo_timezone" = DBT_INTERNAL_SOURCE."geo_timezone","geo_country_name" = DBT_INTERNAL_SOURCE."geo_country_name","geo_continent" = DBT_INTERNAL_SOURCE."geo_continent","last_geo_country" = DBT_INTERNAL_SOURCE."last_geo_country","last_geo_region_name" = DBT_INTERNAL_SOURCE."last_geo_region_name","last_geo_city" = DBT_INTERNAL_SOURCE."last_geo_city","last_geo_country_name" = DBT_INTERNAL_SOURCE."last_geo_country_name","last_geo_continent" = DBT_INTERNAL_SOURCE."last_geo_continent","user_ipaddress" = DBT_INTERNAL_SOURCE."user_ipaddress","useragent" = DBT_INTERNAL_SOURCE."useragent","br_renderengine" = DBT_INTERNAL_SOURCE."br_renderengine","br_lang" = DBT_INTERNAL_SOURCE."br_lang","br_lang_name" = DBT_INTERNAL_SOURCE."br_lang_name","last_br_lang" = DBT_INTERNAL_SOURCE."last_br_lang","last_br_lang_name" = DBT_INTERNAL_SOURCE."last_br_lang_name","os_timezone" = DBT_INTERNAL_SOURCE."os_timezone","category" = DBT_INTERNAL_SOURCE."category","primary_impact" = DBT_INTERNAL_SOURCE."primary_impact","reason" = DBT_INTERNAL_SOURCE."reason","spider_or_robot" = DBT_INTERNAL_SOURCE."spider_or_robot","useragent_family" = DBT_INTERNAL_SOURCE."useragent_family","useragent_major" = DBT_INTERNAL_SOURCE."useragent_major","useragent_minor" = DBT_INTERNAL_SOURCE."useragent_minor","useragent_patch" = DBT_INTERNAL_SOURCE."useragent_patch","useragent_version" = DBT_INTERNAL_SOURCE."useragent_version","os_family" = DBT_INTERNAL_SOURCE."os_family","os_major" = DBT_INTERNAL_SOURCE."os_major","os_minor" = DBT_INTERNAL_SOURCE."os_minor","os_patch" = DBT_INTERNAL_SOURCE."os_patch","os_patch_minor" = DBT_INTERNAL_SOURCE."os_patch_minor","os_version" = DBT_INTERNAL_SOURCE."os_version","device_family" = DBT_INTERNAL_SOURCE."device_family","device_class" = DBT_INTERNAL_SOURCE."device_class","device_category" = DBT_INTERNAL_SOURCE."device_category","screen_resolution" = DBT_INTERNAL_SOURCE."screen_resolution","agent_class" = DBT_INTERNAL_SOURCE."agent_class","agent_name" = DBT_INTERNAL_SOURCE."agent_name","agent_name_version" = DBT_INTERNAL_SOURCE."agent_name_version","agent_name_version_major" = DBT_INTERNAL_SOURCE."agent_name_version_major","agent_version" = DBT_INTERNAL_SOURCE."agent_version","agent_version_major" = DBT_INTERNAL_SOURCE."agent_version_major","device_brand" = DBT_INTERNAL_SOURCE."device_brand","device_name" = DBT_INTERNAL_SOURCE."device_name","device_version" = DBT_INTERNAL_SOURCE."device_version","layout_engine_class" = DBT_INTERNAL_SOURCE."layout_engine_class","layout_engine_name" = DBT_INTERNAL_SOURCE."layout_engine_name","layout_engine_name_version" = DBT_INTERNAL_SOURCE."layout_engine_name_version","layout_engine_name_version_major" = DBT_INTERNAL_SOURCE."layout_engine_name_version_major","layout_engine_version" = DBT_INTERNAL_SOURCE."layout_engine_version","layout_engine_version_major" = DBT_INTERNAL_SOURCE."layout_engine_version_major","operating_system_class" = DBT_INTERNAL_SOURCE."operating_system_class","operating_system_name" = DBT_INTERNAL_SOURCE."operating_system_name","operating_system_name_version" = DBT_INTERNAL_SOURCE."operating_system_name_version","operating_system_version" = DBT_INTERNAL_SOURCE."operating_system_version"
+    when not matched then insert
+        ("app_id", "platform", "domain_sessionid", "original_domain_sessionid", "domain_sessionidx", "start_tstamp", "end_tstamp", "model_tstamp", "user_id", "domain_userid", "original_domain_userid", "stitched_user_id", "network_userid", "page_views", "engaged_time_in_s", "total_events", "is_engaged", "absolute_time_in_s", "first_page_title", "first_page_url", "first_page_urlscheme", "first_page_urlhost", "first_page_urlpath", "first_page_urlquery", "first_page_urlfragment", "last_page_title", "last_page_url", "last_page_urlscheme", "last_page_urlhost", "last_page_urlpath", "last_page_urlquery", "last_page_urlfragment", "referrer", "refr_urlscheme", "refr_urlhost", "refr_urlpath", "refr_urlquery", "refr_urlfragment", "refr_medium", "refr_source", "refr_term", "mkt_medium", "mkt_source", "mkt_term", "mkt_content", "mkt_campaign", "mkt_clickid", "mkt_network", "mkt_source_platform", "default_channel_group", "geo_country", "geo_region", "geo_region_name", "geo_city", "geo_zipcode", "geo_latitude", "geo_longitude", "geo_timezone", "geo_country_name", "geo_continent", "last_geo_country", "last_geo_region_name", "last_geo_city", "last_geo_country_name", "last_geo_continent", "user_ipaddress", "useragent", "br_renderengine", "br_lang", "br_lang_name", "last_br_lang", "last_br_lang_name", "os_timezone", "category", "primary_impact", "reason", "spider_or_robot", "useragent_family", "useragent_major", "useragent_minor", "useragent_patch", "useragent_version", "os_family", "os_major", "os_minor", "os_patch", "os_patch_minor", "os_version", "device_family", "device_class", "device_category", "screen_resolution", "agent_class", "agent_name", "agent_name_version", "agent_name_version_major", "agent_version", "agent_version_major", "device_brand", "device_name", "device_version", "layout_engine_class", "layout_engine_name", "layout_engine_name_version", "layout_engine_name_version_major", "layout_engine_version", "layout_engine_version_major", "operating_system_class", "operating_system_name", "operating_system_name_version", "operating_system_version")
+    values
+        ("app_id", "platform", "domain_sessionid", "original_domain_sessionid", "domain_sessionidx", "start_tstamp", "end_tstamp", "model_tstamp", "user_id", "domain_userid", "original_domain_userid", "stitched_user_id", "network_userid", "page_views", "engaged_time_in_s", "total_events", "is_engaged", "absolute_time_in_s", "first_page_title", "first_page_url", "first_page_urlscheme", "first_page_urlhost", "first_page_urlpath", "first_page_urlquery", "first_page_urlfragment", "last_page_title", "last_page_url", "last_page_urlscheme", "last_page_urlhost", "last_page_urlpath", "last_page_urlquery", "last_page_urlfragment", "referrer", "refr_urlscheme", "refr_urlhost", "refr_urlpath", "refr_urlquery", "refr_urlfragment", "refr_medium", "refr_source", "refr_term", "mkt_medium", "mkt_source", "mkt_term", "mkt_content", "mkt_campaign", "mkt_clickid", "mkt_network", "mkt_source_platform", "default_channel_group", "geo_country", "geo_region", "geo_region_name", "geo_city", "geo_zipcode", "geo_latitude", "geo_longitude", "geo_timezone", "geo_country_name", "geo_continent", "last_geo_country", "last_geo_region_name", "last_geo_city", "last_geo_country_name", "last_geo_continent", "user_ipaddress", "useragent", "br_renderengine", "br_lang", "br_lang_name", "last_br_lang", "last_br_lang_name", "os_timezone", "category", "primary_impact", "reason", "spider_or_robot", "useragent_family", "useragent_major", "useragent_minor", "useragent_patch", "useragent_version", "os_family", "os_major", "os_minor", "os_patch", "os_patch_minor", "os_version", "device_family", "device_class", "device_category", "screen_resolution", "agent_class", "agent_name", "agent_name_version", "agent_name_version_major", "agent_version", "agent_version_major", "device_brand", "device_name", "device_version", "layout_engine_class", "layout_engine_name", "layout_engine_name_version", "layout_engine_name_version_major", "layout_engine_version", "layout_engine_version_major", "operating_system_class", "operating_system_name", "operating_system_name_version", "operating_system_version")
+;
+
+# snowplow_web_users_sessions_this_run
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/users/scratch/snowplow_web_users_sessions_this_run.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run AS
+select
+  a.*,
+  min(a.start_tstamp) over(partition by a.domain_userid) as user_start_tstamp,
+  max(a.end_tstamp) over(partition by a.domain_userid) as user_end_tstamp
+from embucket.public_snowplow_manifest_derived.snowplow_web_sessions a
+where exists (select 1 from embucket.public_snowplow_manifest_scratch.snowplow_web_base_sessions_this_run b where a.domain_userid = b.user_identifier)
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/users/scratch/snowplow_web_users_sessions_this_run.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run
+select
+  a.*,
+  min(a.start_tstamp) over(partition by a.domain_userid) as user_start_tstamp,
+  max(a.end_tstamp) over(partition by a.domain_userid) as user_end_tstamp
+from embucket.public_snowplow_manifest_derived.snowplow_web_sessions a
+where exists (select 1 from embucket.public_snowplow_manifest_scratch.snowplow_web_base_sessions_this_run b where a.domain_userid = b.user_identifier)
+;
+
+# snowplow_web_users_aggs
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/users/scratch/snowplow_web_users_aggs.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.snowplow_web_users_aggs AS
+select
+  domain_userid,
+  -- time
+  user_start_tstamp as start_tstamp,
+  user_end_tstamp as end_tstamp,
+  -- first/last session. Max to resolve edge case with multiple sessions with the same start/end tstamp
+  max(case when start_tstamp = user_start_tstamp then domain_sessionid end) as first_domain_sessionid,
+  max(case when end_tstamp = user_end_tstamp then domain_sessionid end) as last_domain_sessionid,
+  -- engagement
+  sum(page_views) as page_views,
+  count(distinct domain_sessionid) as sessions,
+  sum(engaged_time_in_s) as engaged_time_in_s
+from embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run
+group by 1,2,3
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/users/scratch/snowplow_web_users_aggs.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_scratch.snowplow_web_users_aggs
+select
+  domain_userid,
+  -- time
+  user_start_tstamp as start_tstamp,
+  user_end_tstamp as end_tstamp,
+  -- first/last session. Max to resolve edge case with multiple sessions with the same start/end tstamp
+  max(case when start_tstamp = user_start_tstamp then domain_sessionid end) as first_domain_sessionid,
+  max(case when end_tstamp = user_end_tstamp then domain_sessionid end) as last_domain_sessionid,
+  -- engagement
+  sum(page_views) as page_views,
+  count(distinct domain_sessionid) as sessions,
+  sum(engaged_time_in_s) as engaged_time_in_s
+from embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run
+group by 1,2,3
+;
+
+# snowplow_web_users_lasts
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/users/scratch/snowplow_web_users_lasts.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.snowplow_web_users_lasts AS
+select
+  a.domain_userid,
+  a.last_page_title,
+  a.last_page_url,
+  a.last_page_urlscheme,
+  a.last_page_urlhost,
+  a.last_page_urlpath,
+  a.last_page_urlquery,
+  a.last_page_urlfragment,
+  a.last_geo_country,
+  a.last_geo_country_name,
+  a.last_geo_continent,
+  a.last_geo_city,
+  a.last_geo_region_name,
+  a.last_br_lang,
+  a.last_br_lang_name
+from embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run a
+inner join embucket.public_snowplow_manifest_scratch.snowplow_web_users_aggs b
+on a.domain_sessionid = b.last_domain_sessionid
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/users/scratch/snowplow_web_users_lasts.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_scratch.snowplow_web_users_lasts
+select
+  a.domain_userid,
+  a.last_page_title,
+  a.last_page_url,
+  a.last_page_urlscheme,
+  a.last_page_urlhost,
+  a.last_page_urlpath,
+  a.last_page_urlquery,
+  a.last_page_urlfragment,
+  a.last_geo_country,
+  a.last_geo_country_name,
+  a.last_geo_continent,
+  a.last_geo_city,
+  a.last_geo_region_name,
+  a.last_br_lang,
+  a.last_br_lang_name
+from embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run a
+inner join embucket.public_snowplow_manifest_scratch.snowplow_web_users_aggs b
+on a.domain_sessionid = b.last_domain_sessionid
+;
+
+# snowplow_web_users_this_run
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/users/scratch/snowplow_web_users_this_run.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_scratch.snowplow_web_users_this_run AS
+select
+  -- user fields
+  a.user_id,
+  a.domain_userid,
+  a.original_domain_userid,
+  a.network_userid,
+  b.start_tstamp,
+  b.end_tstamp,
+    convert_timezone('UTC', convert_timezone('UTC', current_timestamp()))::timestamp
+ as model_tstamp,
+  -- engagement fields
+  b.page_views,
+  b.sessions,
+  b.engaged_time_in_s,
+  -- first page fields
+  a.first_page_title,
+  a.first_page_url,
+  a.first_page_urlscheme,
+  a.first_page_urlhost,
+  a.first_page_urlpath,
+  a.first_page_urlquery,
+  a.first_page_urlfragment,
+  a.geo_country as first_geo_country,
+  a.geo_country_name as first_geo_country_name,
+  a.geo_continent as first_geo_continent,
+  a.geo_city as first_geo_city,
+  a.geo_region_name as first_geo_region_name,
+  a.br_lang as first_br_lang,
+  a.br_lang_name as first_br_lang_name,
+  c.last_page_title,
+  c.last_page_url,
+  c.last_page_urlscheme,
+  c.last_page_urlhost,
+  c.last_page_urlpath,
+  c.last_page_urlquery,
+  c.last_page_urlfragment,
+  c.last_geo_country,
+  c.last_geo_country_name,
+  c.last_geo_continent,
+  c.last_geo_city,
+  c.last_geo_region_name,
+  c.last_br_lang,
+  c.last_br_lang_name,
+  -- referrer fields
+  a.referrer,
+  a.refr_urlscheme,
+  a.refr_urlhost,
+  a.refr_urlpath,
+  a.refr_urlquery,
+  a.refr_urlfragment,
+  a.refr_medium,
+  a.refr_source,
+  a.refr_term,
+  -- marketing fields
+  a.mkt_medium,
+  a.mkt_source,
+  a.mkt_term,
+  a.mkt_content,
+  a.mkt_campaign,
+  a.mkt_clickid,
+  a.mkt_network,
+  a.mkt_source_platform,
+  a.default_channel_group
+from embucket.public_snowplow_manifest_scratch.snowplow_web_users_aggs as b
+inner join embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run as a
+on a.domain_sessionid = b.first_domain_sessionid
+inner join embucket.public_snowplow_manifest_scratch.snowplow_web_users_lasts c
+on b.domain_userid = c.domain_userid
+;
+
+# Incremental load (populates with real-timestamp data)
+#   ← incremental/users/scratch/snowplow_web_users_this_run.sql
+statement ok
+INSERT INTO embucket.public_snowplow_manifest_scratch.snowplow_web_users_this_run
+select
+  -- user fields
+  a.user_id,
+  a.domain_userid,
+  a.original_domain_userid,
+  a.network_userid,
+  b.start_tstamp,
+  b.end_tstamp,
+    convert_timezone('UTC', convert_timezone('UTC', current_timestamp()))::timestamp
+ as model_tstamp,
+  -- engagement fields
+  b.page_views,
+  b.sessions,
+  b.engaged_time_in_s,
+  -- first page fields
+  a.first_page_title,
+  a.first_page_url,
+  a.first_page_urlscheme,
+  a.first_page_urlhost,
+  a.first_page_urlpath,
+  a.first_page_urlquery,
+  a.first_page_urlfragment,
+  a.geo_country as first_geo_country,
+  a.geo_country_name as first_geo_country_name,
+  a.geo_continent as first_geo_continent,
+  a.geo_city as first_geo_city,
+  a.geo_region_name as first_geo_region_name,
+  a.br_lang as first_br_lang,
+  a.br_lang_name as first_br_lang_name,
+  c.last_page_title,
+  c.last_page_url,
+  c.last_page_urlscheme,
+  c.last_page_urlhost,
+  c.last_page_urlpath,
+  c.last_page_urlquery,
+  c.last_page_urlfragment,
+  c.last_geo_country,
+  c.last_geo_country_name,
+  c.last_geo_continent,
+  c.last_geo_city,
+  c.last_geo_region_name,
+  c.last_br_lang,
+  c.last_br_lang_name,
+  -- referrer fields
+  a.referrer,
+  a.refr_urlscheme,
+  a.refr_urlhost,
+  a.refr_urlpath,
+  a.refr_urlquery,
+  a.refr_urlfragment,
+  a.refr_medium,
+  a.refr_source,
+  a.refr_term,
+  -- marketing fields
+  a.mkt_medium,
+  a.mkt_source,
+  a.mkt_term,
+  a.mkt_content,
+  a.mkt_campaign,
+  a.mkt_clickid,
+  a.mkt_network,
+  a.mkt_source_platform,
+  a.default_channel_group
+from embucket.public_snowplow_manifest_scratch.snowplow_web_users_aggs as b
+inner join embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run as a
+on a.domain_sessionid = b.first_domain_sessionid
+inner join embucket.public_snowplow_manifest_scratch.snowplow_web_users_lasts c
+on b.domain_userid = c.domain_userid
+;
+
+# snowplow_web_page_views
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/page_views/snowplow_web_page_views.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_derived.snowplow_web_page_views AS
+select *
+from embucket.public_snowplow_manifest_scratch.snowplow_web_page_views_this_run
+where True --returns false if run doesn't contain new events.
+;
+
+# Incremental upsert phase 1 of 2: build the dbt temp source table.
+#   ← incremental/page_views/snowplow_web_page_views.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_derived.snowplow_web_page_views__dbt_tmp AS
+select *
+from embucket.public_snowplow_manifest_scratch.snowplow_web_page_views_this_run
+where True --returns false if run doesn't contain new events.
+;
+
+# Incremental upsert phase 2 of 2: MERGE INTO the persistent table,
+# verbatim from dbt's incremental materialisation output.
+#   ← target/run/.../page_views/snowplow_web_page_views.sql
+statement ok
+    merge into embucket.public_snowplow_manifest_derived.snowplow_web_page_views as DBT_INTERNAL_DEST
+        using embucket.public_snowplow_manifest_derived.snowplow_web_page_views__dbt_tmp as DBT_INTERNAL_SOURCE
+        on (
+            DBT_INTERNAL_DEST.start_tstamp between '2026-02-28 21:04:24.276100' and '2026-04-29 21:12:04.744751'
+        ) and ((DBT_INTERNAL_SOURCE.page_view_id = DBT_INTERNAL_DEST.page_view_id))
+    when matched then update set
+        "page_view_id" = DBT_INTERNAL_SOURCE."page_view_id","event_id" = DBT_INTERNAL_SOURCE."event_id","app_id" = DBT_INTERNAL_SOURCE."app_id","platform" = DBT_INTERNAL_SOURCE."platform","user_id" = DBT_INTERNAL_SOURCE."user_id","domain_userid" = DBT_INTERNAL_SOURCE."domain_userid","original_domain_userid" = DBT_INTERNAL_SOURCE."original_domain_userid","stitched_user_id" = DBT_INTERNAL_SOURCE."stitched_user_id","network_userid" = DBT_INTERNAL_SOURCE."network_userid","domain_sessionid" = DBT_INTERNAL_SOURCE."domain_sessionid","original_domain_sessionid" = DBT_INTERNAL_SOURCE."original_domain_sessionid","domain_sessionidx" = DBT_INTERNAL_SOURCE."domain_sessionidx","page_view_in_session_index" = DBT_INTERNAL_SOURCE."page_view_in_session_index","page_views_in_session" = DBT_INTERNAL_SOURCE."page_views_in_session","dvce_created_tstamp" = DBT_INTERNAL_SOURCE."dvce_created_tstamp","collector_tstamp" = DBT_INTERNAL_SOURCE."collector_tstamp","derived_tstamp" = DBT_INTERNAL_SOURCE."derived_tstamp","start_tstamp" = DBT_INTERNAL_SOURCE."start_tstamp","end_tstamp" = DBT_INTERNAL_SOURCE."end_tstamp","model_tstamp" = DBT_INTERNAL_SOURCE."model_tstamp","engaged_time_in_s" = DBT_INTERNAL_SOURCE."engaged_time_in_s","absolute_time_in_s" = DBT_INTERNAL_SOURCE."absolute_time_in_s","horizontal_pixels_scrolled" = DBT_INTERNAL_SOURCE."horizontal_pixels_scrolled","vertical_pixels_scrolled" = DBT_INTERNAL_SOURCE."vertical_pixels_scrolled","horizontal_percentage_scrolled" = DBT_INTERNAL_SOURCE."horizontal_percentage_scrolled","vertical_percentage_scrolled" = DBT_INTERNAL_SOURCE."vertical_percentage_scrolled","doc_width" = DBT_INTERNAL_SOURCE."doc_width","doc_height" = DBT_INTERNAL_SOURCE."doc_height","content_group" = DBT_INTERNAL_SOURCE."content_group","page_title" = DBT_INTERNAL_SOURCE."page_title","page_url" = DBT_INTERNAL_SOURCE."page_url","page_urlscheme" = DBT_INTERNAL_SOURCE."page_urlscheme","page_urlhost" = DBT_INTERNAL_SOURCE."page_urlhost","page_urlpath" = DBT_INTERNAL_SOURCE."page_urlpath","page_urlquery" = DBT_INTERNAL_SOURCE."page_urlquery","page_urlfragment" = DBT_INTERNAL_SOURCE."page_urlfragment","mkt_medium" = DBT_INTERNAL_SOURCE."mkt_medium","mkt_source" = DBT_INTERNAL_SOURCE."mkt_source","mkt_term" = DBT_INTERNAL_SOURCE."mkt_term","mkt_content" = DBT_INTERNAL_SOURCE."mkt_content","mkt_campaign" = DBT_INTERNAL_SOURCE."mkt_campaign","mkt_clickid" = DBT_INTERNAL_SOURCE."mkt_clickid","mkt_network" = DBT_INTERNAL_SOURCE."mkt_network","default_channel_group" = DBT_INTERNAL_SOURCE."default_channel_group","page_referrer" = DBT_INTERNAL_SOURCE."page_referrer","refr_urlscheme" = DBT_INTERNAL_SOURCE."refr_urlscheme","refr_urlhost" = DBT_INTERNAL_SOURCE."refr_urlhost","refr_urlpath" = DBT_INTERNAL_SOURCE."refr_urlpath","refr_urlquery" = DBT_INTERNAL_SOURCE."refr_urlquery","refr_urlfragment" = DBT_INTERNAL_SOURCE."refr_urlfragment","refr_medium" = DBT_INTERNAL_SOURCE."refr_medium","refr_source" = DBT_INTERNAL_SOURCE."refr_source","refr_term" = DBT_INTERNAL_SOURCE."refr_term","geo_country" = DBT_INTERNAL_SOURCE."geo_country","geo_region" = DBT_INTERNAL_SOURCE."geo_region","geo_region_name" = DBT_INTERNAL_SOURCE."geo_region_name","geo_city" = DBT_INTERNAL_SOURCE."geo_city","geo_zipcode" = DBT_INTERNAL_SOURCE."geo_zipcode","geo_latitude" = DBT_INTERNAL_SOURCE."geo_latitude","geo_longitude" = DBT_INTERNAL_SOURCE."geo_longitude","geo_timezone" = DBT_INTERNAL_SOURCE."geo_timezone","user_ipaddress" = DBT_INTERNAL_SOURCE."user_ipaddress","useragent" = DBT_INTERNAL_SOURCE."useragent","br_lang" = DBT_INTERNAL_SOURCE."br_lang","br_viewwidth" = DBT_INTERNAL_SOURCE."br_viewwidth","br_viewheight" = DBT_INTERNAL_SOURCE."br_viewheight","br_colordepth" = DBT_INTERNAL_SOURCE."br_colordepth","br_renderengine" = DBT_INTERNAL_SOURCE."br_renderengine","os_timezone" = DBT_INTERNAL_SOURCE."os_timezone","category" = DBT_INTERNAL_SOURCE."category","primary_impact" = DBT_INTERNAL_SOURCE."primary_impact","reason" = DBT_INTERNAL_SOURCE."reason","spider_or_robot" = DBT_INTERNAL_SOURCE."spider_or_robot","useragent_family" = DBT_INTERNAL_SOURCE."useragent_family","useragent_major" = DBT_INTERNAL_SOURCE."useragent_major","useragent_minor" = DBT_INTERNAL_SOURCE."useragent_minor","useragent_patch" = DBT_INTERNAL_SOURCE."useragent_patch","useragent_version" = DBT_INTERNAL_SOURCE."useragent_version","os_family" = DBT_INTERNAL_SOURCE."os_family","os_major" = DBT_INTERNAL_SOURCE."os_major","os_minor" = DBT_INTERNAL_SOURCE."os_minor","os_patch" = DBT_INTERNAL_SOURCE."os_patch","os_patch_minor" = DBT_INTERNAL_SOURCE."os_patch_minor","os_version" = DBT_INTERNAL_SOURCE."os_version","device_family" = DBT_INTERNAL_SOURCE."device_family","device_class" = DBT_INTERNAL_SOURCE."device_class","device_category" = DBT_INTERNAL_SOURCE."device_category","screen_resolution" = DBT_INTERNAL_SOURCE."screen_resolution","agent_class" = DBT_INTERNAL_SOURCE."agent_class","agent_name" = DBT_INTERNAL_SOURCE."agent_name","agent_name_version" = DBT_INTERNAL_SOURCE."agent_name_version","agent_name_version_major" = DBT_INTERNAL_SOURCE."agent_name_version_major","agent_version" = DBT_INTERNAL_SOURCE."agent_version","agent_version_major" = DBT_INTERNAL_SOURCE."agent_version_major","device_brand" = DBT_INTERNAL_SOURCE."device_brand","device_name" = DBT_INTERNAL_SOURCE."device_name","device_version" = DBT_INTERNAL_SOURCE."device_version","layout_engine_class" = DBT_INTERNAL_SOURCE."layout_engine_class","layout_engine_name" = DBT_INTERNAL_SOURCE."layout_engine_name","layout_engine_name_version" = DBT_INTERNAL_SOURCE."layout_engine_name_version","layout_engine_name_version_major" = DBT_INTERNAL_SOURCE."layout_engine_name_version_major","layout_engine_version" = DBT_INTERNAL_SOURCE."layout_engine_version","layout_engine_version_major" = DBT_INTERNAL_SOURCE."layout_engine_version_major","operating_system_class" = DBT_INTERNAL_SOURCE."operating_system_class","operating_system_name" = DBT_INTERNAL_SOURCE."operating_system_name","operating_system_name_version" = DBT_INTERNAL_SOURCE."operating_system_name_version","operating_system_version" = DBT_INTERNAL_SOURCE."operating_system_version"
+    when not matched then insert
+        ("page_view_id", "event_id", "app_id", "platform", "user_id", "domain_userid", "original_domain_userid", "stitched_user_id", "network_userid", "domain_sessionid", "original_domain_sessionid", "domain_sessionidx", "page_view_in_session_index", "page_views_in_session", "dvce_created_tstamp", "collector_tstamp", "derived_tstamp", "start_tstamp", "end_tstamp", "model_tstamp", "engaged_time_in_s", "absolute_time_in_s", "horizontal_pixels_scrolled", "vertical_pixels_scrolled", "horizontal_percentage_scrolled", "vertical_percentage_scrolled", "doc_width", "doc_height", "content_group", "page_title", "page_url", "page_urlscheme", "page_urlhost", "page_urlpath", "page_urlquery", "page_urlfragment", "mkt_medium", "mkt_source", "mkt_term", "mkt_content", "mkt_campaign", "mkt_clickid", "mkt_network", "default_channel_group", "page_referrer", "refr_urlscheme", "refr_urlhost", "refr_urlpath", "refr_urlquery", "refr_urlfragment", "refr_medium", "refr_source", "refr_term", "geo_country", "geo_region", "geo_region_name", "geo_city", "geo_zipcode", "geo_latitude", "geo_longitude", "geo_timezone", "user_ipaddress", "useragent", "br_lang", "br_viewwidth", "br_viewheight", "br_colordepth", "br_renderengine", "os_timezone", "category", "primary_impact", "reason", "spider_or_robot", "useragent_family", "useragent_major", "useragent_minor", "useragent_patch", "useragent_version", "os_family", "os_major", "os_minor", "os_patch", "os_patch_minor", "os_version", "device_family", "device_class", "device_category", "screen_resolution", "agent_class", "agent_name", "agent_name_version", "agent_name_version_major", "agent_version", "agent_version_major", "device_brand", "device_name", "device_version", "layout_engine_class", "layout_engine_name", "layout_engine_name_version", "layout_engine_name_version_major", "layout_engine_version", "layout_engine_version_major", "operating_system_class", "operating_system_name", "operating_system_name_version", "operating_system_version")
+    values
+        ("page_view_id", "event_id", "app_id", "platform", "user_id", "domain_userid", "original_domain_userid", "stitched_user_id", "network_userid", "domain_sessionid", "original_domain_sessionid", "domain_sessionidx", "page_view_in_session_index", "page_views_in_session", "dvce_created_tstamp", "collector_tstamp", "derived_tstamp", "start_tstamp", "end_tstamp", "model_tstamp", "engaged_time_in_s", "absolute_time_in_s", "horizontal_pixels_scrolled", "vertical_pixels_scrolled", "horizontal_percentage_scrolled", "vertical_percentage_scrolled", "doc_width", "doc_height", "content_group", "page_title", "page_url", "page_urlscheme", "page_urlhost", "page_urlpath", "page_urlquery", "page_urlfragment", "mkt_medium", "mkt_source", "mkt_term", "mkt_content", "mkt_campaign", "mkt_clickid", "mkt_network", "default_channel_group", "page_referrer", "refr_urlscheme", "refr_urlhost", "refr_urlpath", "refr_urlquery", "refr_urlfragment", "refr_medium", "refr_source", "refr_term", "geo_country", "geo_region", "geo_region_name", "geo_city", "geo_zipcode", "geo_latitude", "geo_longitude", "geo_timezone", "user_ipaddress", "useragent", "br_lang", "br_viewwidth", "br_viewheight", "br_colordepth", "br_renderengine", "os_timezone", "category", "primary_impact", "reason", "spider_or_robot", "useragent_family", "useragent_major", "useragent_minor", "useragent_patch", "useragent_version", "os_family", "os_major", "os_minor", "os_patch", "os_patch_minor", "os_version", "device_family", "device_class", "device_category", "screen_resolution", "agent_class", "agent_name", "agent_name_version", "agent_name_version_major", "agent_version", "agent_version_major", "device_brand", "device_name", "device_version", "layout_engine_class", "layout_engine_name", "layout_engine_name_version", "layout_engine_name_version_major", "layout_engine_version", "layout_engine_version_major", "operating_system_class", "operating_system_name", "operating_system_name_version", "operating_system_version")
+;
+
+# snowplow_web_users
+# Full-refresh CTAS (creates table with correct schema)
+#   ← full-refresh/users/snowplow_web_users.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_derived.snowplow_web_users AS
+select *
+from embucket.public_snowplow_manifest_scratch.snowplow_web_users_this_run
+where True --returns false if run doesn't contain new events.
+;
+
+# Incremental upsert phase 1 of 2: build the dbt temp source table.
+#   ← incremental/users/snowplow_web_users.sql
+statement ok
+CREATE TABLE embucket.public_snowplow_manifest_derived.snowplow_web_users__dbt_tmp AS
+select *
+from embucket.public_snowplow_manifest_scratch.snowplow_web_users_this_run
+where True --returns false if run doesn't contain new events.
+;
+
+# Incremental upsert phase 2 of 2: MERGE INTO the persistent table,
+# verbatim from dbt's incremental materialisation output.
+#   ← target/run/.../users/snowplow_web_users.sql
+statement ok
+    merge into embucket.public_snowplow_manifest_derived.snowplow_web_users as DBT_INTERNAL_DEST
+        using embucket.public_snowplow_manifest_derived.snowplow_web_users__dbt_tmp as DBT_INTERNAL_SOURCE
+        on (
+            DBT_INTERNAL_DEST.start_tstamp between '2026-04-29 21:04:18.917662' and '2026-04-29 21:04:20.081686'
+        ) and ((DBT_INTERNAL_SOURCE.domain_userid = DBT_INTERNAL_DEST.domain_userid))
+    when matched then update set
+        "user_id" = DBT_INTERNAL_SOURCE."user_id","domain_userid" = DBT_INTERNAL_SOURCE."domain_userid","original_domain_userid" = DBT_INTERNAL_SOURCE."original_domain_userid","network_userid" = DBT_INTERNAL_SOURCE."network_userid","start_tstamp" = DBT_INTERNAL_SOURCE."start_tstamp","end_tstamp" = DBT_INTERNAL_SOURCE."end_tstamp","model_tstamp" = DBT_INTERNAL_SOURCE."model_tstamp","page_views" = DBT_INTERNAL_SOURCE."page_views","sessions" = DBT_INTERNAL_SOURCE."sessions","engaged_time_in_s" = DBT_INTERNAL_SOURCE."engaged_time_in_s","first_page_title" = DBT_INTERNAL_SOURCE."first_page_title","first_page_url" = DBT_INTERNAL_SOURCE."first_page_url","first_page_urlscheme" = DBT_INTERNAL_SOURCE."first_page_urlscheme","first_page_urlhost" = DBT_INTERNAL_SOURCE."first_page_urlhost","first_page_urlpath" = DBT_INTERNAL_SOURCE."first_page_urlpath","first_page_urlquery" = DBT_INTERNAL_SOURCE."first_page_urlquery","first_page_urlfragment" = DBT_INTERNAL_SOURCE."first_page_urlfragment","first_geo_country" = DBT_INTERNAL_SOURCE."first_geo_country","first_geo_country_name" = DBT_INTERNAL_SOURCE."first_geo_country_name","first_geo_continent" = DBT_INTERNAL_SOURCE."first_geo_continent","first_geo_city" = DBT_INTERNAL_SOURCE."first_geo_city","first_geo_region_name" = DBT_INTERNAL_SOURCE."first_geo_region_name","first_br_lang" = DBT_INTERNAL_SOURCE."first_br_lang","first_br_lang_name" = DBT_INTERNAL_SOURCE."first_br_lang_name","last_page_title" = DBT_INTERNAL_SOURCE."last_page_title","last_page_url" = DBT_INTERNAL_SOURCE."last_page_url","last_page_urlscheme" = DBT_INTERNAL_SOURCE."last_page_urlscheme","last_page_urlhost" = DBT_INTERNAL_SOURCE."last_page_urlhost","last_page_urlpath" = DBT_INTERNAL_SOURCE."last_page_urlpath","last_page_urlquery" = DBT_INTERNAL_SOURCE."last_page_urlquery","last_page_urlfragment" = DBT_INTERNAL_SOURCE."last_page_urlfragment","last_geo_country" = DBT_INTERNAL_SOURCE."last_geo_country","last_geo_country_name" = DBT_INTERNAL_SOURCE."last_geo_country_name","last_geo_continent" = DBT_INTERNAL_SOURCE."last_geo_continent","last_geo_city" = DBT_INTERNAL_SOURCE."last_geo_city","last_geo_region_name" = DBT_INTERNAL_SOURCE."last_geo_region_name","last_br_lang" = DBT_INTERNAL_SOURCE."last_br_lang","last_br_lang_name" = DBT_INTERNAL_SOURCE."last_br_lang_name","referrer" = DBT_INTERNAL_SOURCE."referrer","refr_urlscheme" = DBT_INTERNAL_SOURCE."refr_urlscheme","refr_urlhost" = DBT_INTERNAL_SOURCE."refr_urlhost","refr_urlpath" = DBT_INTERNAL_SOURCE."refr_urlpath","refr_urlquery" = DBT_INTERNAL_SOURCE."refr_urlquery","refr_urlfragment" = DBT_INTERNAL_SOURCE."refr_urlfragment","refr_medium" = DBT_INTERNAL_SOURCE."refr_medium","refr_source" = DBT_INTERNAL_SOURCE."refr_source","refr_term" = DBT_INTERNAL_SOURCE."refr_term","mkt_medium" = DBT_INTERNAL_SOURCE."mkt_medium","mkt_source" = DBT_INTERNAL_SOURCE."mkt_source","mkt_term" = DBT_INTERNAL_SOURCE."mkt_term","mkt_content" = DBT_INTERNAL_SOURCE."mkt_content","mkt_campaign" = DBT_INTERNAL_SOURCE."mkt_campaign","mkt_clickid" = DBT_INTERNAL_SOURCE."mkt_clickid","mkt_network" = DBT_INTERNAL_SOURCE."mkt_network","mkt_source_platform" = DBT_INTERNAL_SOURCE."mkt_source_platform","default_channel_group" = DBT_INTERNAL_SOURCE."default_channel_group"
+    when not matched then insert
+        ("user_id", "domain_userid", "original_domain_userid", "network_userid", "start_tstamp", "end_tstamp", "model_tstamp", "page_views", "sessions", "engaged_time_in_s", "first_page_title", "first_page_url", "first_page_urlscheme", "first_page_urlhost", "first_page_urlpath", "first_page_urlquery", "first_page_urlfragment", "first_geo_country", "first_geo_country_name", "first_geo_continent", "first_geo_city", "first_geo_region_name", "first_br_lang", "first_br_lang_name", "last_page_title", "last_page_url", "last_page_urlscheme", "last_page_urlhost", "last_page_urlpath", "last_page_urlquery", "last_page_urlfragment", "last_geo_country", "last_geo_country_name", "last_geo_continent", "last_geo_city", "last_geo_region_name", "last_br_lang", "last_br_lang_name", "referrer", "refr_urlscheme", "refr_urlhost", "refr_urlpath", "refr_urlquery", "refr_urlfragment", "refr_medium", "refr_source", "refr_term", "mkt_medium", "mkt_source", "mkt_term", "mkt_content", "mkt_campaign", "mkt_clickid", "mkt_network", "mkt_source_platform", "default_channel_group")
+    values
+        ("user_id", "domain_userid", "original_domain_userid", "network_userid", "start_tstamp", "end_tstamp", "model_tstamp", "page_views", "sessions", "engaged_time_in_s", "first_page_title", "first_page_url", "first_page_urlscheme", "first_page_urlhost", "first_page_urlpath", "first_page_urlquery", "first_page_urlfragment", "first_geo_country", "first_geo_country_name", "first_geo_continent", "first_geo_city", "first_geo_region_name", "first_br_lang", "first_br_lang_name", "last_page_title", "last_page_url", "last_page_urlscheme", "last_page_urlhost", "last_page_urlpath", "last_page_urlquery", "last_page_urlfragment", "last_geo_country", "last_geo_country_name", "last_geo_continent", "last_geo_city", "last_geo_region_name", "last_br_lang", "last_br_lang_name", "referrer", "refr_urlscheme", "refr_urlhost", "refr_urlpath", "refr_urlquery", "refr_urlfragment", "refr_medium", "refr_source", "refr_term", "mkt_medium", "mkt_source", "mkt_term", "mkt_content", "mkt_campaign", "mkt_clickid", "mkt_network", "mkt_source_platform", "default_channel_group")
+;
+

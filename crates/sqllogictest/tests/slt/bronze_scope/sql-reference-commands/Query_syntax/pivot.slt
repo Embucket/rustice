@@ -1,4 +1,4 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE quarterly_sales(
   empid INT,
@@ -36,7 +36,7 @@ SELECT *
 2	39500	90700	12000	5300
 3	NULL	NULL	2700	28900
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE ad_campaign_types_by_quarter(
   quarter VARCHAR,
@@ -101,7 +101,7 @@ Total amount	1	10400.000000	8000.000000	11000.000000	18000.000000
 Total amount	2	39500.000000	90700.000000	12000.000000	5300.000000
 Total amount	3	NULL	NULL	2700.000000	28900.000000
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE emp_manager(
     empid INT,
@@ -212,17 +212,17 @@ SELECT *
 2	39500	90700
 3	0	0
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE quarterly_sales_with_discount AS
 SELECT empid, amount, quarter, 2 AS discount_percent
 FROM quarterly_sales;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE quarterly_sales;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER TABLE quarterly_sales_with_discount RENAME TO quarterly_sales;
 

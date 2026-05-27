@@ -1,0 +1,9 @@
+# dbt-snowplow-web: incremental/snowplow_web_sessions
+# Source: test-dbt-snowplow-web/queries/incremental/sessions/snowplow_web_sessions.sql
+
+include ../../../fixtures/snowplow/setup.slt
+
+statement ok
+select *
+from embucket.public_snowplow_manifest_scratch.snowplow_web_sessions_this_run
+where True --returns false if run doesn't contain new events.

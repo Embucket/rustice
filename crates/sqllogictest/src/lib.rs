@@ -4,9 +4,7 @@
 //!   * [`conversion`] / [`normalize`] / [`output`] — Arrow `RecordBatch` →
 //!     `Vec<Vec<String>>` conversion adapted verbatim from DataFusion's
 //!     sqllogictest harness. Reused to match the float and decimal rounding
-//!     used by `.slt` corpora authored against DataFusion.
-//!   * [`preprocessor`] — strips embucket-specific directives so the upstream
-//!     `sqllogictest` parser accepts the files.
+//!     used by the embucket corpus.
 //!   * [`engine`] — `EmbucketSession`, the `AsyncDB` adapter that drives
 //!     rustice's `UserSession`.
 //!   * `validator` (in this file, [`embucket_validator`]) — recognises
@@ -17,7 +15,6 @@ pub mod engine;
 pub mod error;
 pub mod normalize;
 pub mod output;
-pub mod preprocessor;
 
 use sqllogictest::Normalizer;
 
