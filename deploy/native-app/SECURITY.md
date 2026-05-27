@@ -38,7 +38,9 @@ Containers:
 
 - One container named `rustice` running the `embucketd` Rust binary.
 - The image is built from a multi-stage Dockerfile.
-- The runtime stage uses `gcr.io/distroless/cc-debian13:nonroot`.
+- The builder creates a statically linked `x86_64-unknown-linux-gnu` release binary.
+- The runtime stage uses `gcr.io/distroless/static-debian13:nonroot`.
+- The runtime image avoids Debian `libc6` runtime packages.
 - The runtime container runs as `nonroot`.
 
 Public endpoints:
@@ -157,7 +159,7 @@ The GitHub Actions workflow `.github/workflows/image-security.yml` builds the
 final image and scans it with:
 
 - Grype for CVEs, uploading the full vulnerability report;
-- a release gate for fixable `HIGH` and `CRITICAL` findings;
+- a release gate for `HIGH` and `CRITICAL` findings;
 - ClamAV for malware, scanning the exported final image root filesystem.
 
 Run it manually before Snowflake questionnaire resubmission:
