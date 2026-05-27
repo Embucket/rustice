@@ -29,7 +29,8 @@ Rustice maintainers use the following controls for code and Native App changes:
 - CI runs formatting, linting, and Rust test workflows on relevant changes.
 - Rust static analysis is performed through `cargo clippy`.
 - The Native App container image is built from a multi-stage Dockerfile and uses
-  a Debian 13 distroless runtime image.
+  a statically linked Rust binary in a Debian 13 distroless static runtime image.
+- The runtime image avoids Debian `libc6` runtime packages.
 - The runtime container runs as `nonroot`.
 - The runtime image does not download or execute additional application code at
   startup.
@@ -46,7 +47,7 @@ run the image security workflow in `.github/workflows/image-security.yml`.
 The workflow builds the final Docker image and performs:
 
 - vulnerability scanning with Grype and upload of the full vulnerability report;
-- a CI gate that fails on fixable `HIGH` or `CRITICAL` findings;
+- a CI gate that fails on `HIGH` or `CRITICAL` findings;
 - malware scanning with ClamAV over the exported final image root filesystem;
 - upload of scan reports as GitHub Actions artifacts.
 
@@ -67,10 +68,10 @@ App release artifacts:
 - Medium: 90 calendar days
 - Low: addressed opportunistically or during routine maintenance
 
-Fixable Critical and High findings in the final runtime image block release
-until they are remediated or formally accepted with documented compensating
-controls. Non-fixable findings from the runtime base image are tracked in the
-scan report and re-evaluated on each release or base image rebuild.
+Critical and High findings in the final runtime image block release until they
+are remediated or formally accepted with documented compensating controls.
+Non-fixable findings from the runtime base image are tracked in the scan report
+and re-evaluated on each release or base image rebuild.
 
 If a finding is not applicable, maintainers document the rationale in the release
 or security review evidence. Examples include build-only dependencies that are
