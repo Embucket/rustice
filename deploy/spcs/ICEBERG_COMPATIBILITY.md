@@ -190,11 +190,56 @@ Rustice insert. Snowflake returned the original managed metadata location:
 After that call, Snowflake still returned `0` rows for the table while Rustice
 returned `10,000` rows after an SPCS service restart.
 
+## External Writer Control Checks
+
+To separate Snowflake/Horizon behavior from Rustice write behavior, the same
+account and Horizon REST endpoint were checked with external writers that bypass
+Rustice entirely.
+
+Connection details:
+
+| Setting | Value |
+| --- | --- |
+| Horizon URI | `https://IWUWGVK-LV71752.snowflakecomputing.com/polaris/api/catalog` |
+| Warehouse / database | `RUSTICE_SPCS` |
+| Role scope | `session:role:ACCOUNTADMIN` |
+| Auth | Short-lived PAT for `RUSTICE_HORIZON_SVC`, removed after each test |
+
+Results:
+
+| Test | Writer | Table | Snowflake result | Status |
+| --- | --- | --- | --- | --- |
+| Simple append | PyIceberg `0.9.1` | `compat_pyiceberg_append_simple` | `3,90001.0,90003.0,270006.0,2` | Pass |
+| Simple insert | Spark `3.5.1` + Iceberg runtime `1.9.1` | `compat_spark_append_simple` | `3,91001.0,91003.0,273006.0,2` | Pass |
+
+Result tuple order:
+`row_count,min_id,max_id,sum_id,true_count`.
+
+Snowflake row checks:
+
+| Table | Rows |
+| --- | --- |
+| `compat_pyiceberg_append_simple` | `90001.0,pyiceberg-a,True`; `90002.0,pyiceberg-b,False`; `90003.0,pyiceberg-c,True` |
+| `compat_spark_append_simple` | `91001.0,spark-a,True`; `91002.0,spark-b,False`; `91003.0,spark-c,True` |
+
+PyIceberg also reached the file-writing path for a wider table containing
+`decimal(18,4)`, but failed locally before commit while collecting Parquet
+statistics:
+
+```text
+Unexpected physical type FIXED_LEN_BYTE_ARRAY for decimal(18, 4), expected INT64
+```
+
+That decimal-specific PyIceberg failure is separate from the Rustice reverse
+write issue. The simple PyIceberg and Spark positive controls confirm that
+Snowflake can see successful external writes committed through Horizon REST for
+Snowflake-managed Iceberg tables.
+
 Reverse-direction conclusion: Rustice can currently read Snowflake-managed
 Iceberg snapshots written by Snowflake, but writes performed through Rustice are
 not visible to Snowflake-managed Iceberg readers. Treat Rustice writes to
-Snowflake-managed Horizon tables as unsupported until the commit path is made
-compatible with Snowflake's managed Iceberg metadata expectations.
+Snowflake-managed Horizon tables as unsupported until Rustice's commit path is
+made compatible with Snowflake's managed Iceberg metadata expectations.
 
 ## Cache Fix Verified
 
