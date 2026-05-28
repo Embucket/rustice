@@ -58,26 +58,26 @@ impl SchemaProvider for CachingSchema {
     #[allow(clippy::as_conversions)]
     #[tracing::instrument(name = "CachingSchema::table", level = "debug", skip(self), err)]
     async fn table(&self, name: &str) -> Result<Option<Arc<dyn TableProvider>>, DataFusionError> {
-        // NOTE: We should always rely on the original schema provider instead of the cache,
-        // because the underlying Iceberg catalog may have updated the table metadata outside
-        // of SQL (e.g., via direct catalog API calls). In such cases, our cache could contain
-        // stale metadata and ignore the latest snapshot updates.
-        //
-        // However, since we assume that users will interact with the Iceberg catalog
-        // exclusively through Embucket, we can safely enable caching — in this case,
-        // the data will remain consistent across all queries.
-        if let Some(table) = self.tables_cache.get(name) {
+        if self.iceberg_catalog.is_none()
+            && let Some(table) = self.tables_cache.get(name)
+        {
             return Ok(Some(Arc::clone(table.value()) as Arc<dyn TableProvider>));
         }
 
         if let Some(table) = self.schema.table(name).await? {
             let caching_table = Arc::new(CachingTable::new(name.to_string(), Arc::clone(&table)));
 
-            // Optionally update the cache for reuse (not as source of truth)
-            self.tables_cache
-                .insert(name.to_string(), Arc::clone(&caching_table));
+            // Iceberg tables can be updated by external writers such as Snowflake.
+            // Keep the cache only for local catalog tables so REST catalog reads do
+            // not reuse a stale snapshot.
+            if self.iceberg_catalog.is_none() {
+                self.tables_cache
+                    .insert(name.to_string(), Arc::clone(&caching_table));
+            }
 
             Ok(Some(caching_table as Arc<dyn TableProvider>))
+        } else if let Some(table) = self.tables_cache.get(name) {
+            Ok(Some(Arc::clone(table.value()) as Arc<dyn TableProvider>))
         } else {
             Ok(None)
         }
