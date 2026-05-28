@@ -21,6 +21,11 @@ snow --config-file /path/to/config.toml sql -c snowflake \
 
 Use this path for the normal first deployment. It creates the Snowflake-side SPCS objects, pushes the selected Rustice image into the Snowflake image registry, waits for the service to become `READY`, and writes an `embucket-snow` config.
 
+By default the script does not build an image locally. It pulls
+`embucket/rustice:<RUSTICE_IMAGE_TAG>` from Docker Hub, retags it, and pushes it
+into the Snowflake image registry required by SPCS. Use `RUSTICE_BUILD_LOCAL=1`
+only for development or PR validation from a local checkout.
+
 Deploy the default one-node `CPU_X64_XS` service:
 
 ```bash
@@ -59,6 +64,9 @@ The script waits until the service is `READY`, prints the public ingress URL, an
 - `deploy/spcs/generated/embucket_spcs.env`
 
 The generated `config.toml` uses `spcs_token_connection = "<SNOW_CONNECTION>"`, so the normal `embucket-snow` path gets short-lived SPCS ingress tokens in memory from the regular Snowflake profile. No daily token-file refresh is needed for that path.
+
+For the current manual Snowflake-managed Iceberg read compatibility matrix, see
+[ICEBERG_COMPATIBILITY.md](ICEBERG_COMPATIBILITY.md).
 
 ## Deploy With SQL
 
