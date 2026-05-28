@@ -32,7 +32,7 @@ use crate::utils::Config;
 use catalog::catalog_list::EmbucketCatalogList;
 use catalog_metastore::TableIdent as MetastoreTableIdent;
 use sysinfo::System;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, oneshot};
 use tokio::time::Duration;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -442,6 +442,7 @@ impl ExecutionService for CoreExecutionService {
 
         let request_id = query_context.request_id;
         let query_token = CancellationToken::new();
+        let (start_tx, start_rx) = oneshot::channel();
 
         let task_span = tracing::info_span!("spawn_query_task");
 
@@ -457,6 +458,8 @@ impl ExecutionService for CoreExecutionService {
             let queries_registry = self.queries.clone();
             let query_token = query_token.clone();
             async move {
+                // Fast statements can finish before registry insertion; wait until add() completes.
+                let _ = start_rx.await;
                 let sub_task_span = tracing::info_span!("spawn_query_sub_task");
                 let mut query_obj = user_session.query(query_text, query_context);
 
@@ -535,6 +538,7 @@ impl ExecutionService for CoreExecutionService {
                 .with_result_handle(handle)
                 .with_cancellation_token(query_token),
         );
+        let _ = start_tx.send(());
 
         Ok(query_id)
     }
