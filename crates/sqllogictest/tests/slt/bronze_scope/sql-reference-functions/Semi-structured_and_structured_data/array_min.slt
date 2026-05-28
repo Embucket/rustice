@@ -1,4 +1,4 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET TIMESTAMP_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF3';
 

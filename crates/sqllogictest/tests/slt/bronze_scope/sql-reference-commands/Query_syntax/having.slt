@@ -1,16 +1,16 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE employees (
     department_id INT
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO employees (department_id)
 VALUES
   (101), (101), (101), (101), (101);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO employees (department_id)
 VALUES
@@ -28,11 +28,11 @@ HAVING count(*) < 10
 
 # Test HAVING without explicit GROUP BY (single implicit group)
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE hav_test(n INT);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO hav_test VALUES (10),(15);
 

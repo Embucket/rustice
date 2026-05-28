@@ -1,4 +1,4 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE sales (
   product_ID INTEGER,
@@ -7,7 +7,7 @@ CREATE OR REPLACE TABLE sales (
   city VARCHAR,
   state VARCHAR);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO sales (product_id, retail_price, quantity, city, state) VALUES
   (1, 2.00,  1, 'SF', 'CA'),
@@ -18,17 +18,17 @@ INSERT INTO sales (product_id, retail_price, quantity, city, state) VALUES
   (2, 5.00, 32, 'Orlando', 'FL'),
   (2, 5.00, 64, 'SJ', 'PR');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE products (
   product_ID INTEGER,
   wholesale_price REAL);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO products (product_ID, wholesale_price) VALUES (1, 1.00);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO products (product_ID, wholesale_price) VALUES (2, 2.00);
 
@@ -71,11 +71,11 @@ FL	Miami	80.0
 FL	Orlando	160.0
 PR	SJ	320.0
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE employees (salary float, state varchar, employment_state varchar);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 insert into employees (salary, state, employment_state) values
     (60000, 'California', 'Active'),
@@ -100,11 +100,11 @@ select sum(salary), ANY_VALUE(employment_state) as state
 
 # Test grouping by column position (ordinal) in GROUP BY
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE grp_test(a INT, b STRING);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO grp_test VALUES (1,'X'),(1,'Y'),(2,'Z');
 

@@ -1,7 +1,7 @@
 # embucket-sqllogictest
 
-A [sqllogictest][slt] harness that runs the embucket Snowflake-compatibility
-corpus against rustice's in-process SQL engine.
+A [sqllogictest][slt] harness that runs rustice's first-party Snowflake-
+compatibility corpus against the in-process SQL engine.
 
 It is **not** part of the main `cargo test` suite. It is a tracked
 compatibility report: failures are expected while rustice grows its Snowflake
@@ -12,11 +12,14 @@ surface, and the CI job is configured to be non-gating.
 ## Quick start
 
 ```bash
-# Run the bronze_scope corpus (~340 files) in parallel.
+# Run every .slt file under tests/slt/, in parallel.
 cargo test -p embucket-sqllogictest
 
 # Filter to a substring of the path.
 cargo test -p embucket-sqllogictest -- listagg variant
+
+# Run only the dbt-snowplow-web compat suite.
+cargo test -p embucket-sqllogictest -- dbt_snowplow_web
 
 # List the files that would run, then exit.
 cargo test -p embucket-sqllogictest -- --list
@@ -24,29 +27,16 @@ cargo test -p embucket-sqllogictest -- --list
 # Exit non-zero if any file fails (otherwise the process always exits 0).
 cargo test -p embucket-sqllogictest -- --strict
 
-# Also run the vendored Databend corpus.
-cargo test -p embucket-sqllogictest -- --include-databend
-
 # Tune parallelism (defaults to logical CPU count).
 cargo test -p embucket-sqllogictest -- --test-threads 4
+
+# Write a markdown report of the run (per-directory table + full diffs).
+cargo test -p embucket-sqllogictest -- --report /tmp/slt.md
 ```
 
-Output ends with a per-directory pass/fail summary followed by a list of
-failing files (truncated to the first three error lines each):
-
-```
-===== sqllogictest summary =====
-  bronze_scope/data-types                                  pass=3    fail=5
-  bronze_scope/sql-reference-functions/Aggregate           pass=8    fail=17
-  …
-  TOTAL                                                    pass=142  fail=198  (87421 ms)
-
---- failing files ---
-  bronze_scope/sql-reference-functions/Aggregate/listagg.slt (2 error(s))
-    - query result mismatch:
-    - query result mismatch:
-  …
-```
+Each file emits a `[N/total] PASS|FAIL` line as it completes, and the run
+ends with a per-directory pass/fail summary followed by full error bodies
+for every failing file (SQL + expected/actual diff).
 
 ---
 
@@ -57,20 +47,24 @@ crates/sqllogictest/
 ├── Cargo.toml                  # name = "embucket-sqllogictest"
 ├── README.md                   # this file
 ├── dev/
-│   └── sync-slt.sh             # re-sync the vendored corpus from embucket-labs
+│   ├── regen-snowplow-slt.sh   # regenerate dbt_snowplow_web/*.slt leaf files
+│   └── regen-snowplow-setup.sh # regenerate fixtures/snowplow/setup.slt
+│                               # (full-refresh CTAS + incremental INSERT/MERGE chain)
 ├── src/
 │   ├── lib.rs                  # module roots + `embucket_validator`
 │   ├── conversion.rs           # cell-level string helpers (verbatim from DataFusion)
 │   ├── output.rs               # `DFColumnType` ColumnType impl (verbatim from DataFusion)
 │   ├── normalize.rs            # RecordBatch → Vec<Vec<String>> (trimmed from DataFusion)
-│   ├── preprocessor.rs         # strip embucket-specific directives
 │   ├── engine.rs               # `EmbucketSession` — `AsyncDB` adapter over `UserSession`
 │   └── error.rs                # thiserror enum
 └── tests/
     ├── sqllogictests.rs        # binary entry point (`harness = false`)
+    ├── fixtures/
+    │   └── snowplow/           # TSV data + setup.slt for the dbt_snowplow_web suite
     └── slt/
-        ├── bronze_scope/       # vendored from embucket-labs/test/sql/bronze_scope/
-        └── databend/           # vendored from embucket-labs/test/sql/databend/
+        ├── bronze_scope/       # data-types, sql-reference-commands, functions
+        ├── databend/           # auxiliary corpus
+        └── dbt_snowplow_web/   # 18 dbt-snowplow-web models × incremental + full_refresh
 ```
 
 The `tests/sqllogictests.rs` binary is registered with `harness = false`, so
@@ -81,23 +75,27 @@ any flags that follow `--`.
 
 ## How it works
 
+The harness is intentionally thin — file discovery, parallel scheduling, and
+result aggregation are the only meaningful pieces of glue. Parsing,
+`include` resolution, and variable substitution are handled by the upstream
+[`sqllogictest`][slt-crate] crate.
+
 1. **Discover** every `.slt` file under `tests/slt/`. Apply the path-substring
-   filters from the CLI. Skip `databend/` unless `--include-databend` is set.
+   filters from the CLI.
 
 2. **For each file**, in parallel up to `--test-threads`:
-   - Read the file into memory.
-   - Run [`preprocessor::strip_custom_directives`](src/preprocessor.rs) over
-     the text to remove embucket-specific directives the upstream parser does
-     not understand: `exclude-from-coverage`, `skip-if`, `only-if`.
-   - Parse with `sqllogictest::parse_with_name`.
+   - Parse with [`sqllogictest::parse_file`][parse_file] — the parser
+     handles `include` directives natively (glob-based, resolved relative
+     to the including file).
    - Build a fresh `Arc<UserSession>` via
-     `executor::test_helpers::create_df_session_with_catalog_url("/dev")` —
-     an in-memory Iceberg catalog with the `embucket.public` schema and the
-     standard fixture tables (`employee_table`, `department_table`, etc.)
-     pre-created. Sessions are never shared across files.
+     `executor::test_helpers::create_df_session_with_catalog_url(...)` —
+     either an in-memory `/dev` catalog or, for fixture-loading suites
+     (see `FILE_CATALOG_SUITES`), a per-file `tempfile::tempdir()` `file://`
+     catalog. Sessions are never shared across files.
    - Build a `sqllogictest::Runner` wrapping an `EmbucketSession` adapter.
-     Register the engine label `embucket` and the
-     [`embucket_validator`](src/lib.rs) cell comparator.
+     Register the engine label `embucket`, the [`embucket_validator`](src/lib.rs)
+     cell comparator, and the `CRATE_ROOT` variable (for `${CRATE_ROOT}`
+     substitution).
    - Drive records one at a time. Errors are collected (capped per file at
      `ERRS_PER_FILE_LIMIT = 10`) rather than aborting the run.
 
@@ -108,26 +106,25 @@ any flags that follow `--`.
 
 [`EmbucketSession`](src/engine.rs) implements `sqllogictest::AsyncDB` by
 forwarding to `UserSession::query(sql, QueryContext::default()).execute()`.
-The returned `QueryResult { records, schema, … }` is converted to the
-`Vec<Vec<String>>` form sqllogictest expects via
-[`normalize::convert_batches`](src/normalize.rs) and
-[`normalize::convert_schema_to_types`](src/normalize.rs) — adapted verbatim
-from DataFusion's harness so float/decimal formatting matches the corpus
-authoring conventions.
+The returned `QueryResult` is converted to the `Vec<Vec<String>>` form
+sqllogictest expects via [`normalize::convert_batches`](src/normalize.rs)
+and [`normalize::convert_schema_to_types`](src/normalize.rs) — adapted
+verbatim from DataFusion's harness so float/decimal formatting matches
+the corpus authoring conventions.
 
-### Custom directives
+### Variable substitution
 
-The embucket Python runner accepts three directives the Rust
-`sqllogictest = "0.29"` parser doesn't:
+The harness publishes `CRATE_ROOT` (absolute path to this crate's manifest
+directory) to the runner via `Runner::set_var`. A `.slt` file can opt in to
+substitution with the upstream `control substitution on/off` directive and
+then reference `${CRATE_ROOT}` inside the bracketed region. The
+[snowplow setup](tests/fixtures/snowplow/setup.header.slt) uses this to
+reach the committed TSV fixture.
 
-| Directive               | Meaning in the Python runner            | What we do            |
-| ----------------------- | --------------------------------------- | --------------------- |
-| `exclude-from-coverage` | Don't count this block toward coverage. | Dropped (line-level). |
-| `skip-if <…>`           | Conditional skip.                       | Dropped (line-level). |
-| `only-if <…>`           | Conditional run.                        | Dropped (line-level). |
-
-Upstream `onlyif`/`skipif` (no hyphen) are left untouched and respected by
-the upstream parser.
+Substitution is **off by default**; it must be bracketed because the
+upstream `subst` parser treats `\` as an escape character and would mangle
+literal SQL backslashes (e.g. `'\t'` field delimiters) outside the
+substitution region.
 
 ### Regex expected values
 
@@ -145,23 +142,11 @@ non-zero whenever any file has at least one error.
 
 ---
 
-## Adding or editing `.slt` files
+## Editing `.slt` files
 
-The corpus is vendored from `embucket-labs`. Two ways to update it:
-
-**Targeted edits.** Edit a file in `tests/slt/…` directly. Commit the
-change. The next harness run picks it up.
-
-**Bulk re-sync from embucket-labs.** Check out `embucket-labs` next to
-`rustice` (or set `EMBUCKET_LABS` to its path), then:
-
-```bash
-bash crates/sqllogictest/dev/sync-slt.sh
-# review `git diff` carefully before committing
-```
-
-The script uses `rsync --delete`, so files removed upstream are also removed
-locally.
+Edit a file in `tests/slt/…` directly. Commit the change. The next harness
+run picks it up. The corpus is first-party — there is no upstream to sync
+from.
 
 ---
 
@@ -173,11 +158,8 @@ For a single failing file, the most useful command is:
 cargo test -p embucket-sqllogictest -- path/to/file.slt --test-threads 1
 ```
 
-The harness prints the first three errors per file in the summary. To see
-the full error trail for a file, drop `--test-threads` or grep the file's
-section in the stderr output.
-
-Common failure shapes:
+The summary section prints all errors per file (capped at 10). Common
+failure shapes:
 
 - **`query result mismatch:`** — rustice executed the query successfully but
   the returned rows don't match the expected block. Either rustice is wrong,
@@ -196,10 +178,9 @@ Common failure shapes:
   here until rustice mirrors Snowflake error wording (or the test file is
   edited to use rustice's wording).
 
-- **`parse error:`** — the file uses syntax the upstream parser doesn't
-  accept and the preprocessor doesn't strip. Inspect the file; if it's a
-  new embucket directive, extend `STRIP_PREFIXES` in
-  [`preprocessor.rs`](src/preprocessor.rs).
+- **`parse error:`** — the file uses syntax the upstream `sqllogictest`
+  parser rejects. Most common cause: a leading-whitespace `# comment` or a
+  bare non-standard directive. Edit the file to make it parser-clean.
 
 ---
 
@@ -218,21 +199,66 @@ other workspace crates with `-p` so the harness isn't built twice.
 
 ---
 
-## Why a separate harness instead of reusing embucket-labs's Python runner?
+## dbt-snowplow-web compat suite
 
-The Python runner at `embucket-labs/test/slt_runner/` drives the embucket
-binary over the Snowflake REST wire protocol. This harness drives rustice
-**in-process** via the `executor` crate's `UserSession`, which means:
+`tests/slt/dbt_snowplow_web/` contains 36 `.slt` files (18 dbt models × incremental
+and full_refresh modes) that run the compiled dbt-snowplow-web SQL verbatim
+against a session pre-loaded with two 200-row slices of canonical Snowplow
+events and the full dbt-snowplow-web DAG materialised through a cold-start
+then incremental-refresh cycle.
 
-- No network, no server boot, no port allocation — runs as a normal
-  `cargo test` target.
-- Errors include native Rust backtraces, not just JSON-over-HTTP error
-  strings.
-- Each `.slt` file gets a fresh isolated catalog instead of sharing the
-  server's global state.
+Path-based dispatch (`FILE_CATALOG_SUITES` in `tests/sqllogictests.rs`)
+switches these files onto a per-file `tempfile::tempdir()` `file://` catalog
+so `COPY INTO file://` can reach the TSV fixtures; all other suites stay on
+the in-memory `/dev` catalog.
 
-The Python runner remains the right tool when testing the full embucket
-stack (REST API, sessions, auth). This harness is the right tool when
-testing the SQL engine itself.
+Each leaf `.slt` does `include ../../../fixtures/snowplow/setup.slt`; the
+upstream parser resolves relative include paths against the including
+file's directory automatically. `setup.header.slt` declares the typed
+`events` table and `COPY INTO`s the committed parquet fixture
+(`events1.parquet`) directly into it — no staging table, no runtime CTAS.
+The parquet files are copies of the upstream `snowplow-events-parquet`
+pipeline output (`runs/*/parquet/data.parquet`).
+
+`setup.slt` runs two phases over the dbt-snowplow-web DAG:
+
+- **Phase A — cold start** processes `events1.csv` only. For each of the
+  18 models, the full-refresh CTAS lays down the schema (empty due to dbt's
+  9999 sentinels) and then either `INSERT INTO` (`+materialized: table`)
+  or `__dbt_tmp + MERGE INTO` (`+materialized: incremental`) populates it.
+- **Phase B — incremental refresh** appends `events2.csv` to
+  `enriched_raw`, rebuilds the typed `events` table, then re-runs the
+  per-model incremental SQL: scratch tables `DROP + CREATE TABLE AS`
+  (matches dbt's per-run rebuild of `_this_run` tables); the 4 derived
+  models (`snowplow_web_sessions`, `_page_views`, `_users`,
+  `_user_mapping`) DROP their `__dbt_tmp`, rebuild it, and re-MERGE into
+  the persistent table — the canonical late-arriving-events upsert.
+
+Both files have disjoint event_ids but share the same 20 sessions and 5
+users, exercising the MERGE-upsert path on every derived model.
+
+Regenerate the leaf files and `setup.slt` after the upstream dbt compiler
+output changes:
+
+```bash
+bash crates/sqllogictest/dev/regen-snowplow-slt.sh    # 36 leaf .slt files
+bash crates/sqllogictest/dev/regen-snowplow-setup.sh  # tests/fixtures/snowplow/setup.slt
+```
+
+Refresh the parquet fixtures by copying from the upstream `snowplow-events-parquet`
+pipeline (replace `<runs-dir>` with the absolute path to its `runs/` directory):
+
+```bash
+cp <runs-dir>/<run1>/parquet/data.parquet \
+   crates/sqllogictest/tests/fixtures/snowplow/events1.parquet
+cp <runs-dir>/<run2>/parquet/data.parquet \
+   crates/sqllogictest/tests/fixtures/snowplow/events2.parquet
+```
+
+See `tests/fixtures/snowplow/README.md` for fixture provenance and how the
+events table is materialised (mirrors `snowplow-events-parquet`'s
+`sql/tsv_to_parquet.sql.tmpl`).
 
 [slt]: https://www.sqlite.org/sqllogictest/doc/trunk/about.wiki
+[slt-crate]: https://crates.io/crates/sqllogictest
+[parse_file]: https://docs.rs/sqllogictest/0.29/sqllogictest/fn.parse_file.html

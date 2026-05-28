@@ -1,4 +1,4 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE music_albums (
   album_ID INTEGER,
@@ -7,48 +7,48 @@ CREATE OR REPLACE TABLE music_albums (
   band_ID INTEGER
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO music_albums (album_ID, album_name, album_year, band_ID) VALUES
   (101, 'Escape', 1976, 1),     -- Journey
   (102, 'Abraxas', 1976, 2),    -- Santana
   (103, 'Infinity', 1976, 1);   -- Journey
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE music_bands (
   band_ID INTEGER,
   band_name VARCHAR
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO music_bands (band_ID, band_name) VALUES
   (1, 'Journey'),
   (2, 'Santana');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE musicians (
   musician_ID INTEGER,
   musician_name VARCHAR
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO musicians (musician_ID, musician_name) VALUES
   (201, 'Steve Perry'),
   (202, 'Carlos Santana'),
   (203, 'Neal Schon');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE musicians_and_albums (
   musician_ID INTEGER,
   album_ID INTEGER
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO musicians_and_albums (musician_ID, album_ID) VALUES
   (201, 101),  -- Steve Perry -> Escape (Journey)
@@ -155,7 +155,7 @@ WITH RECURSIVE current_f (current_val, previous_val) AS
 55
 89
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE components (
     description VARCHAR,
@@ -164,7 +164,7 @@ CREATE OR REPLACE TABLE components (
     parent_component_ID INTEGER
     );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO components (description, quantity, component_ID, parent_component_ID) VALUES
     ('car', 1, 1, 0),

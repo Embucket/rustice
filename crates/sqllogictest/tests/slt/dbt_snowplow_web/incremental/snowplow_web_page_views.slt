@@ -1,0 +1,28 @@
+# dbt-snowplow-web: incremental/snowplow_web_page_views
+# Source: test-dbt-snowplow-web/queries/incremental/page_views/snowplow_web_page_views.sql
+
+include ../../../fixtures/snowplow/setup.slt
+
+statement ok
+select *
+from embucket.public_snowplow_manifest_scratch.snowplow_web_page_views_this_run
+where True --returns false if run doesn't contain new events.
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query TTT
+select page_view_id, domain_sessionid, domain_userid from embucket.public_snowplow_manifest_derived.snowplow_web_page_views order by page_view_id limit 10
+----
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO
+TODO	TODO	TODO

@@ -1,8 +1,8 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE testtable (c1 STRING);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO testtable (c1) VALUES
 ('1'),
@@ -29,11 +29,11 @@ select TOP 4 c1 from testtable
 
 # Test that TOP <percent> is not supported (should error)
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE top_test(x INT);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO top_test VALUES (1);
 

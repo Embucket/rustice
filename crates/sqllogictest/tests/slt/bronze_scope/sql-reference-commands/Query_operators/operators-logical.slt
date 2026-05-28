@@ -1,20 +1,20 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE logical_test1 (id INT, a INT, b VARCHAR);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO logical_test1 (id, a, b) VALUES (1, 8, 'Up');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO logical_test1 (id, a, b) VALUES (2, 25, 'Down');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO logical_test1 (id, a, b) VALUES (3, 15, 'Down');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO logical_test1 (id, a, b) VALUES (4, 47, 'Up');
 
@@ -67,11 +67,11 @@ SELECT * FROM logical_test1 WHERE NOT (a = 15 AND b = 'Down')
 2	25	Down
 4	47	Up
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE logical_test2 (a BOOLEAN, b BOOLEAN);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO logical_test2 VALUES (0, 1);
 
@@ -95,11 +95,11 @@ SELECT a, b FROM logical_test2 WHERE a AND NOT b
 ----
 
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE logical_test3 (x BOOLEAN);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO logical_test3 (x) VALUES (False), (True), (NULL);
 
@@ -119,11 +119,11 @@ NULL	FALSE	NULL	NULL
 
 # Test operator precedence: AND vs OR
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE bool_test(v INT);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO bool_test VALUES (1),(2),(3);
 

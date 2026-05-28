@@ -1,4 +1,4 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE mytable (
   col1 DATE,
@@ -25,7 +25,7 @@ SELECT * FROM mytable;
 '2013-05-08'	'2013-05-08T23:39:20.123000'	'2013-05-08T23:39:20.123000'
 '2013-05-08'	NULL	'2013-05-08T23:39:20.123000'
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE employees (
   first_name STRING,
@@ -51,7 +51,7 @@ SELECT * FROM employees;
 Lysandra	Reeves	1-212-759-3751	New York	10018
 Michael	Arnett	1-650-230-8467	San Francisco	94116
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE t1 (v VARCHAR);
 
@@ -67,7 +67,7 @@ INSERT INTO t1 (v) VALUES
 ----
 DML operation to table T1 failed on column V with error: Numeric value 'd' is not recognized
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE contractors (
   contractor_first STRING,
@@ -113,7 +113,7 @@ INSERT INTO employees (first_name,last_name,workphone,city,postal_code)
   SELECT first_name,last_name,workphone,city,postal_code
   FROM cte;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE emp_addr (
   id INTEGER,
@@ -123,14 +123,14 @@ CREATE OR REPLACE TABLE emp_addr (
   postal_code INTEGER
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE emp_ph (
   id INTEGER,
   ph STRING
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE emp (
   id INTEGER,
@@ -147,7 +147,7 @@ INSERT INTO emp (id,first_name,last_name,city,postal_code,ph)
   FROM emp_addr a
   INNER JOIN emp_ph b ON a.id = b.id;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE prospects (
   column1 VARIANT
@@ -190,7 +190,7 @@ Alice	Johnson	451	Chicago	60616
 Bob	Martinez	782	Denver	80204
 Clara	Nguyen	650	Austin	73301
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE sf_employees AS
 SELECT * FROM employees
@@ -208,7 +208,7 @@ Michael	Arnett	1-650-230-8467	San Francisco	94116
 
 # Test INSERT with columns specified out of order
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE ins_test(a INT, b STRING);
 
@@ -222,7 +222,7 @@ SELECT a, b FROM ins_test;
 
 # Test INSERT with incompatible data type (should error)
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE ins_types(x INT);
 
@@ -233,7 +233,7 @@ INSERT INTO ins_types VALUES ('not an integer');
 
 # Test INSERT ... SELECT from another table
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE ins_src(i INT);
 

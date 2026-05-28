@@ -7,7 +7,7 @@ CREATE OR REPLACE TABLE test_float (
     f FLOAT
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_float VALUES 
     (1, 123.456),
@@ -42,7 +42,7 @@ CREATE OR REPLACE TABLE test_double (
     d DOUBLE
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_double VALUES 
     (1, 123.456789012345),
@@ -71,7 +71,7 @@ CREATE OR REPLACE TABLE test_real (
     r REAL
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_real VALUES 
     (1, 123.456),
@@ -106,7 +106,7 @@ CREATE OR REPLACE TABLE test_double_precision (
     dp DOUBLE PRECISION
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_double_precision VALUES 
     (1, 123.456789012345),
@@ -194,7 +194,7 @@ CREATE OR REPLACE TABLE test_scientific (
     sci_val FLOAT
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_scientific VALUES 
     (1, 1.23e10),
@@ -220,7 +220,7 @@ CREATE OR REPLACE TABLE test_precision (
     real_val REAL
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_precision VALUES 
     (1, 123.456789012345678901, 123.456789012345678901),
@@ -233,26 +233,26 @@ SELECT id, float_val, real_val FROM test_precision ORDER BY id;
 2	NULL	NULL
 
 # Cleanup
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_float;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_double;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_real;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_double_precision;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_scientific;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_precision;

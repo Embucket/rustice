@@ -15,11 +15,11 @@ SELECT 'a' IN (
 ----
 FALSE
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE my_table (col_1 INTEGER, col_2 INTEGER, col_3 INTEGER);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO my_table (col_1, col_2, col_3) VALUES
     (1, 1, 1),

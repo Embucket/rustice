@@ -8,7 +8,7 @@ CREATE OR REPLACE TABLE test_variant (
     data VARIANT
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_variant VALUES
     (1, NULL),
@@ -39,7 +39,7 @@ CREATE OR REPLACE TABLE test_object (
     obj OBJECT
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_object VALUES
     (1, NULL),
@@ -64,7 +64,7 @@ CREATE OR REPLACE TABLE test_array (
     arr ARRAY
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_array
 SELECT 1, ARRAY_CONSTRUCT(1, 2, 3, 4, 5)
@@ -141,7 +141,7 @@ CREATE OR REPLACE TABLE test_nested (
     nested_data VARIANT
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_nested VALUES
     (1, NULL),
@@ -195,7 +195,7 @@ CREATE OR REPLACE TABLE test_variant_types (
     data_type VARCHAR(20)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_variant_types VALUES
     (1, NULL, 'integer'),
@@ -216,22 +216,22 @@ SELECT id, data, data_type FROM test_variant_types ORDER BY id;
 6	NULL	null
 
 # Cleanup
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_variant;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_object;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_array;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_nested;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_variant_types;

@@ -7,7 +7,7 @@ CREATE OR REPLACE TABLE test_binary (
     data BINARY(8)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_binary VALUES
     (1, X'48656C6C6F'),           -- "Hello" in hex, should be padded
@@ -32,7 +32,7 @@ CREATE OR REPLACE TABLE test_varbinary (
     data VARBINARY
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_varbinary VALUES 
     (1, X'48656C6C6F'),                           -- "Hello" in hex
@@ -61,7 +61,7 @@ CREATE OR REPLACE TABLE test_varbinary_limited (
     data VARBINARY(10)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_varbinary_limited VALUES 
     (1, X'48656C6C6F'),           -- 5 bytes
@@ -134,7 +134,7 @@ CREATE OR REPLACE TABLE test_hex_conversion (
     hex_string VARCHAR(100)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_hex_conversion VALUES
     (1, X'48656C6C6F', '48656C6C6F'),
@@ -156,7 +156,7 @@ CREATE OR REPLACE TABLE test_base64 (
     base64_string VARCHAR(100)
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_base64 VALUES
     (1, X'48656C6C6F', 'SGVsbG8='),
@@ -197,7 +197,7 @@ CREATE OR REPLACE TABLE test_binary_null (
     data VARBINARY
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_binary_null VALUES 
     (1, X'48656C6C6F'),
@@ -223,26 +223,26 @@ SELECT COUNT(*) FROM test_binary_null WHERE data IS NOT NULL;
 2
 
 # Cleanup
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_binary;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_varbinary;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_varbinary_limited;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_hex_conversion;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_base64;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_binary_null;

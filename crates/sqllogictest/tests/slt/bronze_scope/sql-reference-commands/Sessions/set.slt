@@ -1,4 +1,4 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE table1 AS SELECT 1 AS column1;
 

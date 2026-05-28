@@ -1,4 +1,4 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE invoices (
     invoice_id INTEGER,
@@ -24,13 +24,13 @@ SELECT * FROM invoices
                    )
     ;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE t1 (
     col1 INTEGER
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE t2 (
     col1 INTEGER
@@ -48,7 +48,7 @@ SELECT t1.col1, t2.col1
         ON t2.col1 = t1.col1
     ORDER BY 1, 2;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE departments (
     department_ID INTEGER,
@@ -56,7 +56,7 @@ CREATE OR REPLACE TABLE departments (
     location VARCHAR
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO departments (department_id, department_name, location) VALUES
     (10, 'CUSTOMER SUPPORT', 'CHICAGO'),
@@ -65,7 +65,7 @@ INSERT INTO departments (department_id, department_name, location) VALUES
     (90, 'Department with no projects or employees yet', 'EREHWON')
     ;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE projects (
     project_id integer,
@@ -73,7 +73,7 @@ CREATE OR REPLACE TABLE projects (
     department_id integer
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO projects (project_id, project_name, department_id) VALUES
     (4000, 'Detect fake product reviews', 40),
@@ -82,7 +82,7 @@ INSERT INTO projects (project_id, project_name, department_id) VALUES
     (9099, 'Project with no department or employees yet', NULL)
     ;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE employees (
     employee_ID INTEGER,
@@ -91,7 +91,7 @@ CREATE OR REPLACE TABLE employees (
     project_id INTEGER
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO employees (employee_id, employee_name, department_id, project_id)
   VALUES
@@ -129,11 +129,11 @@ SELECT d.department_name, p.project_name, e.employee_name
 
 # Test using a SELECT alias in WHERE (should error)
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE wh_test(a INT);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO wh_test VALUES (1),(2);
 

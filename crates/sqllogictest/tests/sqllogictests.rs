@@ -1,8 +1,11 @@
 //! Embucket SQL Logic Test harness binary.
 //!
-//! Discovers `.slt` files under `tests/slt/`, pre-processes embucket-specific
-//! directives, then runs each file against a fresh in-memory rustice session
-//! via the upstream `sqllogictest` `Runner`.
+//! Discovers `.slt` files under `tests/slt/` and runs each one against a fresh
+//! in-memory rustice session via the upstream `sqllogictest` `Runner`.
+//! Parsing (including glob-based `include` resolution) is delegated to
+//! `sqllogictest::parse_file`. The `${CRATE_ROOT}` variable is published to
+//! the runner via `set_var` so corpora can reach committed fixtures with
+//! `control substitution on` scoped substitution.
 //!
 //! Failure mode is soft by default: errors are aggregated into a per-directory
 //! summary and the process exits 0 unless `--strict` is passed.
@@ -12,10 +15,9 @@
 use clap::Parser;
 use embucket_sqllogictest::embucket_validator;
 use embucket_sqllogictest::engine::EmbucketSession;
-use embucket_sqllogictest::preprocessor::strip_custom_directives;
 use executor::test_helpers::create_df_session_with_catalog_url;
 use futures::{FutureExt, StreamExt};
-use sqllogictest::{Runner, parse_with_name};
+use sqllogictest::{Runner, parse_file};
 use std::collections::BTreeMap;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
@@ -36,13 +38,34 @@ struct Cli {
     #[arg(long)]
     strict: bool,
 
-    /// Also run files under `tests/slt/databend/`. Excluded by default.
-    #[arg(long)]
-    include_databend: bool,
-
     /// List the files that would run and exit.
     #[arg(long)]
     list: bool,
+
+    /// Write a markdown report of the run to this path.
+    #[arg(long, value_name = "PATH")]
+    report: Option<PathBuf>,
+
+    // Libtest-compatible no-op flags so `cargo test -- --nocapture` works.
+    // Output already streams to stderr because the harness uses `harness = false`.
+    #[arg(long, hide = true)]
+    nocapture: bool,
+    #[arg(long, hide = true)]
+    show_output: bool,
+    #[arg(long, hide = true)]
+    exact: bool,
+    #[arg(long, hide = true)]
+    quiet: bool,
+    #[arg(long, hide = true)]
+    include_ignored: bool,
+    #[arg(long, hide = true)]
+    ignored: bool,
+    #[arg(long, hide = true, value_name = "WHEN")]
+    color: Option<String>,
+    #[arg(long, hide = true, value_name = "FORMAT")]
+    format: Option<String>,
+    #[arg(long, hide = true, value_name = "PATTERN")]
+    skip: Vec<String>,
 }
 
 fn default_threads() -> usize {
@@ -62,6 +85,41 @@ struct FileOutcome {
     path: PathBuf,
     errors: Vec<String>,
     duration_ms: u128,
+    // Per-file Iceberg catalog tempdir. Held until the outcome is consumed so
+    // the directory survives every query the runner executed against it.
+    _catalog_tempdir: Option<tempfile::TempDir>,
+}
+
+/// Suite directories whose `.slt` files require a real filesystem-backed
+/// `file://` Iceberg catalog instead of the in-memory `/dev` default. They
+/// typically need `COPY INTO file://` to reach committed fixture data.
+const FILE_CATALOG_SUITES: &[&str] = &["dbt_snowplow_web"];
+
+/// Per-file configuration derived from the `.slt` path.
+struct FileProfile {
+    /// Catalog URL passed to `create_df_session_with_catalog_url`.
+    catalog_url: String,
+    /// Tempdir backing `catalog_url` for `file://` suites. Kept alive on the
+    /// `FileOutcome` so it survives every query the runner runs.
+    catalog_tempdir: Option<tempfile::TempDir>,
+}
+
+fn profile_for(path: &Path) -> std::io::Result<FileProfile> {
+    let needs_file_catalog = path
+        .components()
+        .any(|c| FILE_CATALOG_SUITES.iter().any(|s| c.as_os_str() == *s));
+    if needs_file_catalog {
+        let td = tempfile::tempdir()?;
+        Ok(FileProfile {
+            catalog_url: format!("file://{}", td.path().display()),
+            catalog_tempdir: Some(td),
+        })
+    } else {
+        Ok(FileProfile {
+            catalog_url: "/dev".to_string(),
+            catalog_tempdir: None,
+        })
+    }
 }
 
 fn main() {
@@ -105,6 +163,8 @@ async fn run(cli: Cli) -> i32 {
         });
     }));
 
+    let total = files.len();
+    let progress_root = slt_root.clone();
     let outcomes: Vec<FileOutcome> = futures::stream::iter(files)
         .map(|path| {
             let path_for_panic = path.clone();
@@ -122,18 +182,125 @@ async fn run(cli: Cli) -> i32 {
                             path: path_for_panic,
                             errors: vec![format!("panicked: {msg}")],
                             duration_ms: start.elapsed().as_millis(),
+                            _catalog_tempdir: None,
                         }
                     }
                 })
         })
         .buffer_unordered(cli.test_threads)
+        .enumerate()
+        .map(|(idx, outcome)| {
+            let rel = outcome
+                .path
+                .strip_prefix(&progress_root)
+                .unwrap_or(&outcome.path)
+                .display();
+            let status = if outcome.errors.is_empty() {
+                "PASS".to_string()
+            } else {
+                format!("FAIL ({} err)", outcome.errors.len())
+            };
+            eprintln!(
+                "[{:>4}/{:<4}] {:<14} {} ({} ms)",
+                idx + 1,
+                total,
+                status,
+                rel,
+                outcome.duration_ms
+            );
+            outcome
+        })
         .collect()
         .await;
 
     print_summary(&slt_root, &outcomes);
 
+    if let Some(report_path) = cli.report.as_ref() {
+        match write_report(report_path, &slt_root, &outcomes) {
+            Ok(()) => eprintln!("\nreport written to {}", report_path.display()),
+            Err(e) => eprintln!("\nfailed to write report to {}: {e}", report_path.display()),
+        }
+    }
+
     let failures = outcomes.iter().filter(|o| !o.errors.is_empty()).count();
     if cli.strict && failures > 0 { 1 } else { 0 }
+}
+
+fn write_report(path: &Path, slt_root: &Path, outcomes: &[FileOutcome]) -> std::io::Result<()> {
+    use std::fmt::Write as _;
+
+    let mut by_dir: BTreeMap<PathBuf, (usize, usize)> = BTreeMap::new();
+    let mut total_pass = 0usize;
+    let mut total_fail = 0usize;
+    let mut total_ms = 0u128;
+
+    for outcome in outcomes {
+        total_ms += outcome.duration_ms;
+        let dir = outcome
+            .path
+            .parent()
+            .and_then(|p| p.strip_prefix(slt_root).ok())
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let entry = by_dir.entry(dir).or_default();
+        if outcome.errors.is_empty() {
+            entry.0 += 1;
+            total_pass += 1;
+        } else {
+            entry.1 += 1;
+            total_fail += 1;
+        }
+    }
+
+    let mut buf = String::new();
+    let _ = writeln!(buf, "# sqllogictest report");
+    let _ = writeln!(buf);
+    let _ = writeln!(
+        buf,
+        "**Total:** {} pass, {} fail ({} ms)",
+        total_pass, total_fail, total_ms
+    );
+    let _ = writeln!(buf);
+    let _ = writeln!(buf, "## Per-directory");
+    let _ = writeln!(buf);
+    let _ = writeln!(buf, "| Directory | Pass | Fail |");
+    let _ = writeln!(buf, "|---|---:|---:|");
+    for (dir, (pass, fail)) in &by_dir {
+        let dir_str = if dir.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            dir.display().to_string()
+        };
+        let _ = writeln!(buf, "| `{dir_str}` | {pass} | {fail} |");
+    }
+
+    if total_fail > 0 {
+        let _ = writeln!(buf);
+        let _ = writeln!(buf, "## Failing files");
+        let _ = writeln!(buf);
+        for outcome in outcomes.iter().filter(|o| !o.errors.is_empty()) {
+            let rel = outcome
+                .path
+                .strip_prefix(slt_root)
+                .unwrap_or(&outcome.path)
+                .display();
+            let _ = writeln!(buf, "### `{}` ({} error(s))", rel, outcome.errors.len());
+            let _ = writeln!(buf);
+            let _ = writeln!(buf, "```");
+            for err in &outcome.errors {
+                let _ = writeln!(buf, "{err}");
+            }
+            let _ = writeln!(buf, "```");
+            let _ = writeln!(buf);
+        }
+    }
+
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, buf)
 }
 
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -152,9 +319,6 @@ fn collect_files(root: &Path, cli: &Cli) -> Vec<PathBuf> {
         walk(root, &mut acc);
     }
     acc.retain(|p| p.extension().is_some_and(|e| e == "slt"));
-    if !cli.include_databend {
-        acc.retain(|p| !p.components().any(|c| c.as_os_str() == "databend"));
-    }
     if !cli.filters.is_empty() {
         acc.retain(|p| {
             let s = p.to_string_lossy();
@@ -183,35 +347,35 @@ async fn run_file(path: PathBuf) -> FileOutcome {
     let start = Instant::now();
     let mut errors = Vec::new();
 
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
+    let profile = match profile_for(&path) {
+        Ok(p) => p,
         Err(e) => {
             return FileOutcome {
                 path,
-                errors: vec![format!("read error: {e}")],
+                errors: vec![format!("tempdir error: {e}")],
                 duration_ms: start.elapsed().as_millis(),
+                _catalog_tempdir: None,
             };
         }
     };
+    let FileProfile {
+        catalog_url,
+        catalog_tempdir,
+    } = profile;
 
-    let cleaned = strip_custom_directives(&raw);
-    let file_name = path.to_string_lossy().to_string();
-
-    let records = match parse_with_name::<embucket_sqllogictest::output::DFColumnType>(
-        &cleaned,
-        file_name.as_str(),
-    ) {
+    let records = match parse_file::<embucket_sqllogictest::output::DFColumnType>(&path) {
         Ok(r) => r,
         Err(e) => {
             return FileOutcome {
                 path,
                 errors: vec![format!("parse error: {e}")],
                 duration_ms: start.elapsed().as_millis(),
+                _catalog_tempdir: catalog_tempdir,
             };
         }
     };
 
-    let session = create_df_session_with_catalog_url("/dev").await;
+    let session = create_df_session_with_catalog_url(&catalog_url).await;
     let make_session = move || {
         let session = Arc::clone(&session);
         async move { Ok::<_, embucket_sqllogictest::error::Error>(EmbucketSession::new(session)) }
@@ -220,6 +384,13 @@ async fn run_file(path: PathBuf) -> FileOutcome {
     let mut runner = Runner::new(make_session);
     runner.add_label("embucket");
     runner.with_validator(embucket_validator);
+    // Published for `control substitution on` blocks (e.g. snowplow setup
+    // referencing `${CRATE_ROOT}/tests/fixtures/snowplow/events.csv`).
+    // Harmless for files that don't reference the variable.
+    runner.set_var(
+        "CRATE_ROOT".to_string(),
+        env!("CARGO_MANIFEST_DIR").to_string(),
+    );
 
     for record in records {
         if errors.len() >= ERRS_PER_FILE_LIMIT {
@@ -237,6 +408,7 @@ async fn run_file(path: PathBuf) -> FileOutcome {
         path,
         errors,
         duration_ms: start.elapsed().as_millis(),
+        _catalog_tempdir: catalog_tempdir,
     }
 }
 
@@ -282,8 +454,9 @@ fn print_summary(slt_root: &Path, outcomes: &[FileOutcome]) {
         eprintln!();
         eprintln!("--- failing files ---");
         for outcome in outcomes.iter().filter(|o| !o.errors.is_empty()) {
+            eprintln!();
             eprintln!(
-                "  {} ({} error(s))",
+                "===== {} ({} error(s)) =====",
                 outcome
                     .path
                     .strip_prefix(slt_root)
@@ -291,11 +464,11 @@ fn print_summary(slt_root: &Path, outcomes: &[FileOutcome]) {
                     .display(),
                 outcome.errors.len()
             );
-            for err in outcome.errors.iter().take(3) {
-                eprintln!("    - {}", err.lines().next().unwrap_or(""));
-            }
-            if outcome.errors.len() > 3 {
-                eprintln!("    ... ({} more)", outcome.errors.len() - 3);
+            for (i, err) in outcome.errors.iter().enumerate() {
+                eprintln!("--- error {} ---", i + 1);
+                for line in err.lines() {
+                    eprintln!("  {line}");
+                }
             }
         }
     }

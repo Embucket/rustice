@@ -1,4 +1,4 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE monthly_sales(
   empid INT,
@@ -8,7 +8,7 @@ CREATE OR REPLACE TABLE monthly_sales(
   mar INT,
   apr INT);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO monthly_sales VALUES
   (1, 'electronics', 100, 200, 300, 100),
@@ -86,11 +86,11 @@ electronics	APR	100
 
 # Test UNPIVOT excluding completely NULL values
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE unp_test(id INT, attr1 INT, attr2 INT);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO unp_test VALUES (1, 10, 20), (2, NULL, NULL);
 

@@ -1,0 +1,39 @@
+# dbt-snowplow-web: full_refresh/snowplow_web_pv_engaged_time
+# Source: test-dbt-snowplow-web/queries/full-refresh/page_views/scratch/snowplow_web_pv_engaged_time.sql
+
+include ../../../fixtures/snowplow/setup.slt
+
+statement ok
+select
+  ev.page_view_id,
+  ev.domain_sessionid,
+  max(ev.derived_tstamp) as end_tstamp,
+  -- aggregate pings:
+    -- divides epoch tstamps by snowplow__heartbeat to get distinct intervals
+    -- floor rounds to nearest integer - duplicates all evaluate to the same number
+    -- count(distinct) counts duplicates only once
+    -- adding snowplow__min_visit_length accounts for the page view event itself.
+  10 * (count(distinct(floor(date_part('epoch_seconds', ev.dvce_created_tstamp)/10))) - 1) + 5 as engaged_time_in_s
+from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run as ev
+where ev.event_name = 'page_ping'
+and ev.page_view_id is not null
+group by 1 , 2 
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query TI
+select page_view_id, engaged_time_in_s from embucket.public_snowplow_manifest_scratch.snowplow_web_pv_engaged_time order by page_view_id limit 10
+----
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO

@@ -1,19 +1,19 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE tab1 (col1 INTEGER);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE tab2 (col1 INTEGER);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO tab1 VALUES 
    (2),
    (3),
    (4);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO tab2 (col1) VALUES 
    (1),
@@ -93,28 +93,28 @@ SELECT tab1.col1, tab2.col1
 2	2
 3	3
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE d1 (
   id number,
   name string
   );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO d1 (id, name) VALUES
   (1,'a'),
   (2,'b'),
   (4,'c');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE d2 (
   id number,
   value string
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO d2 (id, value) VALUES
   (1,'xx'),
@@ -139,11 +139,11 @@ SELECT *
 4	c	NULL
 5	NULL	zz
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE t3 (col1 INTEGER);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO t3 (col1) VALUES 
    (2),

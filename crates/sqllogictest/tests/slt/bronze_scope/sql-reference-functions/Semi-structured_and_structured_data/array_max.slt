@@ -18,7 +18,7 @@ SELECT ARRAY_MAX([NULL, NULL, NULL])
 ----
 NULL
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER SESSION SET DATE_OUTPUT_FORMAT = 'YYYY-MM-DD';
 

@@ -1,19 +1,19 @@
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE departments (department_id INTEGER, name VARCHAR);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE employees (employee_ID INTEGER, last_name VARCHAR, 
                         department_ID INTEGER, project_names ARRAY);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO departments (department_ID, name) VALUES 
     (1, 'Engineering'), 
     (2, 'Support');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO employees (employee_ID, last_name, department_ID) VALUES
     (101, 'Richards', 1),
@@ -29,11 +29,11 @@ SELECT *
 1	Engineering	102	Paulson	1	NULL
 2	Support	103	Johnson	2	NULL
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE table1 AS SELECT 1 AS dummy;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE employees_with_projects AS
 SELECT employee_ID,
@@ -46,11 +46,11 @@ SELECT employee_ID,
        END AS project_names
 FROM employees;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE employees;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 ALTER TABLE employees_with_projects RENAME TO employees;
 
@@ -75,19 +75,19 @@ SELECT *
 
 # Test LATERAL subquery with LEFT JOIN returning no rows from subquery
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE t_main(id INT, val STRING);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE TABLE t_sub(x INT);
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO t_main VALUES (1,'A'),(2,'B');
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO t_sub VALUES (1);
 

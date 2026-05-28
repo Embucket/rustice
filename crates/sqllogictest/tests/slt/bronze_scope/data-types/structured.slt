@@ -10,7 +10,7 @@ CREATE OR REPLACE TABLE test_basic_array (
     float_array ARRAY
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_basic_array
 SELECT 1, ARRAY_CONSTRUCT(1, 2, 3), ARRAY_CONSTRUCT('apple', 'banana', 'cherry'), ARRAY_CONSTRUCT(1.1, 2.2, 3.3)
@@ -35,7 +35,7 @@ CREATE OR REPLACE TABLE test_basic_nested_array (
     matrix ARRAY
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_basic_nested_array
 SELECT 1, ARRAY_CONSTRUCT(ARRAY_CONSTRUCT(1, 2), ARRAY_CONSTRUCT(3, 4), ARRAY_CONSTRUCT(5, 6))
@@ -61,7 +61,7 @@ CREATE OR REPLACE TABLE test_basic_object (
     coordinates OBJECT
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_basic_object
 SELECT 1, OBJECT_CONSTRUCT('name', 'Alice', 'age', 30, 'active', true), OBJECT_CONSTRUCT('x', 1.0, 'y', 2.0, 'z', 3.0)
@@ -85,7 +85,7 @@ CREATE OR REPLACE TABLE test_map_alternative (
     string_to_float OBJECT
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_map_alternative
 SELECT 1, OBJECT_CONSTRUCT('apple', 1, 'banana', 2, 'cherry', 3), OBJECT_CONSTRUCT('pi', 3.14, 'e', 2.71)
@@ -110,7 +110,7 @@ CREATE OR REPLACE TABLE test_complex_nested (
     complex_data OBJECT
 );
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 INSERT INTO test_complex_nested
 SELECT 1, OBJECT_CONSTRUCT(
@@ -230,22 +230,22 @@ SELECT
 PASS
 
 # Cleanup
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_basic_array;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_basic_nested_array;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_basic_object;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_map_alternative;
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 DROP TABLE IF EXISTS test_complex_nested;

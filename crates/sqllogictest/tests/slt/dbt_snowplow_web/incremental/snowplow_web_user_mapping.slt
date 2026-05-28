@@ -1,0 +1,37 @@
+# dbt-snowplow-web: incremental/snowplow_web_user_mapping
+# Source: test-dbt-snowplow-web/queries/incremental/user_mapping/snowplow_web_user_mapping.sql
+
+include ../../../fixtures/snowplow/setup.slt
+
+statement ok
+select distinct
+  domain_userid,
+  last_value(user_id) over(
+    partition by domain_userid
+    order by collector_tstamp
+    rows between unbounded preceding and unbounded following
+  ) as user_id,
+  max(collector_tstamp) over (partition by domain_userid) as end_tstamp
+from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run
+where True --returns false if run doesn't contain new events.
+and user_id is not null
+and domain_userid is not null
+
+# Verification (vs Snowflake on the same 200-row fixture).
+# TODO(snowflake-verify): replace TODO placeholders with the row(s)
+# returned by running this query against the dbt-snowplow-web tables
+# in Snowflake. Numeric cells should match exactly; text cells should
+# match verbatim (UUIDs, hostnames, etc.).
+query TT
+select domain_userid, user_id from embucket.public_snowplow_manifest_derived.snowplow_web_user_mapping order by domain_userid limit 10
+----
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO
+TODO	TODO

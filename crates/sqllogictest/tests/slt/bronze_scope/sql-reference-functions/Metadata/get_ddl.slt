@@ -1,6 +1,6 @@
 
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE SCHEMA BOOKS_SCHEMA;
 
@@ -9,7 +9,7 @@ SELECT GET_DDL('SCHEMA', 'books_schema')
 ----
 create or replace schema BOOKS_SCHEMA;\n
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE WAREHOUSE my_wh
   WAREHOUSE_SIZE=LARGE
@@ -20,7 +20,7 @@ SELECT REPLACE(REPLACE(REPLACE(GET_DDL('WAREHOUSE', 'my_wh'), '\n', ' '), '\t', 
 ----
 <REGEX>:(?is)^create or replace warehouse MY_WH .*statement_timeout_in_seconds\s*=\s*172800.*;$
 
-exclude-from-coverage
+# exclude-from-coverage
 statement ok
 CREATE OR REPLACE HYBRID TABLE ht_weather
  (id INT PRIMARY KEY,
