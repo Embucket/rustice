@@ -22,4 +22,4 @@ statement ok
 query I
 select count(*) from embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_base_quarantined_sessions
 ----
-TODO
+0

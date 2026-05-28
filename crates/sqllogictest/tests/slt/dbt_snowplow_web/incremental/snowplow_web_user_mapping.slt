@@ -25,13 +25,3 @@ and domain_userid is not null
 query TT
 select domain_userid, user_id from embucket.public_snowplow_manifest_derived.snowplow_web_user_mapping order by domain_userid limit 10
 ----
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO

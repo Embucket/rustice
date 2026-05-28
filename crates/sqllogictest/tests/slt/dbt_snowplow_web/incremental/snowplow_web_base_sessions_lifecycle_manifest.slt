@@ -62,13 +62,13 @@ statement ok
 query TT
 select session_identifier, user_identifier from embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_base_sessions_lifecycle_manifest order by session_identifier limit 10
 ----
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
-TODO	TODO
+019ec1a0-1152-323f-ad72-670891a6a81b	cookie_d34dd17
+08a22e1e-ba5b-3eff-b271-53971811ec54	cookie_119bd174
+09c489df-70bc-3e3d-a679-351e8975a817	cookie_0
+0a7c37ee-765f-36a7-9870-830a39b26f11	cookie_8cde8ba
+127e2ed2-3b39-3caa-97f6-544106cf339a	cookie_119bd174
+1438951e-08bb-346e-896f-5b3fb855e6a2	cookie_0
+1c06bc65-613e-3e9d-8525-f9760d33dce5	cookie_0
+1d8b66dc-1cc1-3c2d-93bd-0bf1399a90b0	cookie_8cde8ba
+1e1c0f68-1e33-35ed-833e-6e127ebdeb3e	cookie_d34dd17
+2070e69b-6582-3b60-9b58-7329fc036a2c	cookie_8cde8ba

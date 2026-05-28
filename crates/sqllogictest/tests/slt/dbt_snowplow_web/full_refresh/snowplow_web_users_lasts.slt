@@ -32,13 +32,8 @@ on a.domain_sessionid = b.last_domain_sessionid
 query TTT
 select domain_userid, last_page_urlhost, last_geo_country from embucket.public_snowplow_manifest_scratch.snowplow_web_users_lasts order by domain_userid limit 10
 ----
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
+cookie_0	i9MS5n7.tr	NULL
+cookie_119bd174	www.2bKnQX3.ie	DE
+cookie_466f45d	YntZmAq.bg	CA
+cookie_8cde8ba	www.Z0Lft6R.co.uk	CA
+cookie_d34dd17	www.FrDPWn5.net	BE

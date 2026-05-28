@@ -23,4 +23,4 @@ statement ok
 query I
 select count(*) from embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_incremental_manifest
 ----
-TODO
+12
