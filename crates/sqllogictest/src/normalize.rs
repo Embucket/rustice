@@ -122,13 +122,46 @@ pub fn cell_to_string(col: &ArrayRef, row: usize) -> Result<String> {
             let key = dict.normalized_keys()[row];
             cell_to_string(dict.values(), key)
         }
-        _ => {
-            let mut format_options = datafusion::arrow::util::display::FormatOptions::default();
-            format_options = format_options.with_null("NULL");
-            let f = ArrayFormatter::try_new(col.as_ref(), &format_options).map_err(Error::Arrow)?;
-            Ok(f.value(row).to_string())
-        }
+        // Snowflake-style binary literal: x'<lowercase hex>'
+        DataType::Binary => Ok(format!(
+            "x'{}'",
+            hex::encode(get_row_value!(array::BinaryArray, col, row))
+        )),
+        DataType::LargeBinary => Ok(format!(
+            "x'{}'",
+            hex::encode(get_row_value!(array::LargeBinaryArray, col, row))
+        )),
+        DataType::BinaryView => Ok(format!(
+            "x'{}'",
+            hex::encode(get_row_value!(array::BinaryViewArray, col, row))
+        )),
+        DataType::FixedSizeBinary(_) => Ok(format!(
+            "x'{}'",
+            hex::encode(get_row_value!(array::FixedSizeBinaryArray, col, row))
+        )),
+        // Snowflake renders DATE/TIME/TIMESTAMP values in single-quoted ISO form.
+        DataType::Date32
+        | DataType::Date64
+        | DataType::Time32(_)
+        | DataType::Time64(_)
+        | DataType::Timestamp(_, _) => Ok(format!("'{}'", arrow_formatted(col, row)?)),
+        // VARIANT/ARRAY/OBJECT-style columns: wrap structured payloads in quotes.
+        DataType::List(_)
+        | DataType::LargeList(_)
+        | DataType::FixedSizeList(_, _)
+        | DataType::ListView(_)
+        | DataType::LargeListView(_)
+        | DataType::Struct(_)
+        | DataType::Map(_, _) => Ok(format!("'{}'", arrow_formatted(col, row)?)),
+        _ => arrow_formatted(col, row),
     }
+}
+
+fn arrow_formatted(col: &ArrayRef, row: usize) -> Result<String> {
+    let mut format_options = datafusion::arrow::util::display::FormatOptions::default();
+    format_options = format_options.with_null("NULL");
+    let f = ArrayFormatter::try_new(col.as_ref(), &format_options).map_err(Error::Arrow)?;
+    Ok(f.value(row).to_string())
 }
 
 /// Map Arrow schema fields to the sqllogictest `ColumnType` chars.
