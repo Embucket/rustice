@@ -8,12 +8,15 @@
 
 set -euo pipefail
 
-SRC_ROOT="${DBT_QUERIES_DIR:-/home/work/workspace/github/test-dbt-snowplow-web/queries}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
+# Default to a sibling checkout of test-dbt-snowplow-web. Override with
+# DBT_QUERIES_DIR for non-default layouts.
+SRC_ROOT="${DBT_QUERIES_DIR:-${HERE}/../../../test-dbt-snowplow-web/queries}"
 DST_ROOT="${HERE}/tests/slt/dbt_snowplow_web"
 
 if [[ ! -d "${SRC_ROOT}" ]]; then
   echo "Source not found: ${SRC_ROOT}" >&2
+  echo "  Set DBT_QUERIES_DIR to the path of test-dbt-snowplow-web/queries." >&2
   exit 1
 fi
 

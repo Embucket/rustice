@@ -203,36 +203,56 @@ other workspace crates with `-p` so the harness isn't built twice.
 
 `tests/slt/dbt_snowplow_web/` contains 36 `.slt` files (18 dbt models × incremental
 and full_refresh modes) that run the compiled dbt-snowplow-web SQL verbatim
-against a session pre-loaded with a 200-row slice of canonical Snowplow events
-and the full dbt-snowplow-web DAG materialised.
+against a session pre-loaded with two 200-row slices of canonical Snowplow
+events and the full dbt-snowplow-web DAG materialised through a cold-start
+then incremental-refresh cycle.
 
 Path-based dispatch (`FILE_CATALOG_SUITES` in `tests/sqllogictests.rs`)
 switches these files onto a per-file `tempfile::tempdir()` `file://` catalog
-so `COPY INTO file://` can reach the TSV fixture; all other suites stay on
+so `COPY INTO file://` can reach the TSV fixtures; all other suites stay on
 the in-memory `/dev` catalog.
 
 Each leaf `.slt` does `include ../../../fixtures/snowplow/setup.slt`; the
 upstream parser resolves relative include paths against the including
-file's directory automatically. `setup.header.slt` wraps its `COPY INTO`
-with `control substitution on/off` and reads the TSV via
-`'file://${CRATE_ROOT}/tests/fixtures/snowplow/events.csv'` (tab-delimited
-content; the `.csv` extension is required for the listing-table filter).
+file's directory automatically. `setup.header.slt` declares the typed
+`events` table and `COPY INTO`s the committed parquet fixture
+(`events1.parquet`) directly into it — no staging table, no runtime CTAS.
+The parquet files are copies of the upstream `snowplow-events-parquet`
+pipeline output (`runs/*/parquet/data.parquet`).
 
-`setup.slt` materialises the dbt-snowplow-web DAG by, for each of the 18
-models in dependency order, running its full-refresh SQL as `CREATE TABLE AS`
-to lay down the schema and then either `INSERT INTO` (for `+materialized: table`
-models) or the verbatim **MERGE INTO** that dbt-snowflake writes to
-`target/run/` (for the 4 `+materialized: incremental` derived models:
-`snowplow_web_sessions`, `_page_views`, `_users`, `_user_mapping`). Mirrors
-how production dbt boots a cold warehouse and then runs an incremental cycle,
-including the canonical incremental upsert.
+`setup.slt` runs two phases over the dbt-snowplow-web DAG:
 
-Regenerate both the leaf files and `setup.slt` after the upstream dbt
-compiler output changes:
+- **Phase A — cold start** processes `events1.csv` only. For each of the
+  18 models, the full-refresh CTAS lays down the schema (empty due to dbt's
+  9999 sentinels) and then either `INSERT INTO` (`+materialized: table`)
+  or `__dbt_tmp + MERGE INTO` (`+materialized: incremental`) populates it.
+- **Phase B — incremental refresh** appends `events2.csv` to
+  `enriched_raw`, rebuilds the typed `events` table, then re-runs the
+  per-model incremental SQL: scratch tables `DROP + CREATE TABLE AS`
+  (matches dbt's per-run rebuild of `_this_run` tables); the 4 derived
+  models (`snowplow_web_sessions`, `_page_views`, `_users`,
+  `_user_mapping`) DROP their `__dbt_tmp`, rebuild it, and re-MERGE into
+  the persistent table — the canonical late-arriving-events upsert.
+
+Both files have disjoint event_ids but share the same 20 sessions and 5
+users, exercising the MERGE-upsert path on every derived model.
+
+Regenerate the leaf files and `setup.slt` after the upstream dbt compiler
+output changes:
 
 ```bash
-bash crates/sqllogictest/dev/regen-snowplow-slt.sh    # the 36 leaf .slt files
+bash crates/sqllogictest/dev/regen-snowplow-slt.sh    # 36 leaf .slt files
 bash crates/sqllogictest/dev/regen-snowplow-setup.sh  # tests/fixtures/snowplow/setup.slt
+```
+
+Refresh the parquet fixtures by copying from the upstream `snowplow-events-parquet`
+pipeline (replace `<runs-dir>` with the absolute path to its `runs/` directory):
+
+```bash
+cp <runs-dir>/<run1>/parquet/data.parquet \
+   crates/sqllogictest/tests/fixtures/snowplow/events1.parquet
+cp <runs-dir>/<run2>/parquet/data.parquet \
+   crates/sqllogictest/tests/fixtures/snowplow/events2.parquet
 ```
 
 See `tests/fixtures/snowplow/README.md` for fixture provenance and how the
