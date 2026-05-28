@@ -270,12 +270,56 @@ complement byte representation for values `2` and `5`. A likely fix is in
 `iceberg-rust`'s Parquet-to-DataFile statistics conversion path for decimal
 types, especially small-precision decimals that Arrow/Parquet stores as `INT32`.
 
-Reverse-direction conclusion: Rustice can currently read Snowflake-managed
-Iceberg snapshots written by Snowflake, but writes performed through Rustice are
-not visible to Snowflake-managed Iceberg readers. Treat Rustice writes to
-Snowflake-managed Horizon tables that contain small-precision decimal/number
-columns as unsupported until Rustice's DataFile statistics conversion is made
-compatible with Snowflake's managed Iceberg reader expectations.
+## Small Decimal Retest
+
+Run date: 2026-05-28
+
+After the `iceberg-rust` fix in
+[`Embucket/iceberg-rust#58`](https://github.com/Embucket/iceberg-rust/pull/58),
+Rustice was rebuilt and deployed to SPCS as:
+
+```text
+iwuwgvk-lv71752.registry.snowflakecomputing.com/rustice_app/public/rustice_repo/rustice:iceberg-decimal-fix-20260529
+```
+
+The Rustice dependency rev used for this image was:
+
+```text
+f3481358ec2e4abadb1533b1dbe11644c4e07e74
+```
+
+Retest:
+
+| Test table | Types | Rustice result | Snowflake result | Status |
+| --- | --- | --- | --- | --- |
+| `compat_rustice_number5_fix_embucket` | `DECIMAL(5,0)` | `2`, `5` | `2`, `5` | Pass |
+
+Rustice query:
+
+```sql
+CREATE TABLE rustice_spcs.public.compat_rustice_number5_fix_embucket (
+  small_num DECIMAL(5,0)
+);
+INSERT INTO rustice_spcs.public.compat_rustice_number5_fix_embucket VALUES (2), (5);
+SELECT small_num
+FROM rustice_spcs.public.compat_rustice_number5_fix_embucket
+ORDER BY small_num;
+```
+
+Snowflake query:
+
+```sql
+SELECT "small_num"
+FROM RUSTICE_SPCS."public"."compat_rustice_number5_fix_embucket"
+ORDER BY "small_num";
+```
+
+Snowflake returned the same two rows: `2`, `5`.
+
+Reverse-direction conclusion: the isolated small-precision decimal failure is
+fixed by `iceberg-rust#58`. Wider Rustice write compatibility and Rustice
+`MERGE` behavior still need to be rerun after Rustice consumes that
+`iceberg-rust` commit.
 
 ## Cache Fix Verified
 
