@@ -235,11 +235,47 @@ write issue. The simple PyIceberg and Spark positive controls confirm that
 Snowflake can see successful external writes committed through Horizon REST for
 Snowflake-managed Iceberg tables.
 
+## Rustice Type Isolation Checks
+
+The reverse Rustice-write issue is not a generic write/commit failure. After
+the external-writer controls, smaller Rustice writes were run through SPCS to
+isolate the failing type family.
+
+| Test table | Types | Rustice result | Snowflake result | Status |
+| --- | --- | --- | --- | --- |
+| `compat_rustice_append_simple` | `DOUBLE`, `STRING`, `BOOLEAN` | `3,92001.0,92003.0,276006.0,2` | Same | Pass |
+| `compat_rustice_no_numeric_probe` | `STRING`, `BOOLEAN`, `BINARY`, `DATE`, `TIME`, `TIMESTAMP_NTZ`, `TIMESTAMP_LTZ` | `3,k1,k3,2,3,2024-01-01,03:04:05,2024-01-03T03:04:05` | Same | Pass |
+| `compat_rustice_temporal_probe` | `DOUBLE`, `DATE`, `TIME`, `TIMESTAMP_NTZ`, `TIMESTAMP_LTZ` | `2,1.0,2.0,2024-01-01,02:03:04,2024-01-02T02:03:04` | Same | Pass |
+| `compat_rustice_binary_probe` | `DOUBLE`, `BINARY` | `2,1.0,2.0,2` | Same | Pass |
+| `compat_rustice_number38_probe` | `NUMBER(38,0)` | `2,1,4,5` | Same | Pass |
+| `compat_rustice_number5_probe` | `NUMBER(5,0)` | `2,2,5,7` | `0,,,` | Fail |
+| `compat_rustice_decimal18_probe` | `NUMBER(18,4)` | `2,3.2500,6.5000,9.7500` | Same | Pass |
+| `compat_rustice_decimal_probe` | `NUMBER(38,0)`, `NUMBER(5,0)`, `NUMBER(18,4)` | `2` rows | `0` rows | Fail |
+
+The failing wide reverse table includes `small_num NUMBER(5,0)`, matching the
+isolated failing probe. This points to Rustice's Iceberg metadata/statistics
+generation for small-precision decimal values rather than Horizon commit
+visibility in general.
+
+For `compat_rustice_number5_probe`, the manifest data-file lower/upper bounds
+for field `1` were:
+
+```text
+lower {1: b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02\\x00\\x00\\x00'}
+upper {1: b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x05\\x00\\x00\\x00'}
+```
+
+Those bounds do not look like Iceberg decimal's minimal big-endian two's
+complement byte representation for values `2` and `5`. A likely fix is in
+`iceberg-rust`'s Parquet-to-DataFile statistics conversion path for decimal
+types, especially small-precision decimals that Arrow/Parquet stores as `INT32`.
+
 Reverse-direction conclusion: Rustice can currently read Snowflake-managed
 Iceberg snapshots written by Snowflake, but writes performed through Rustice are
 not visible to Snowflake-managed Iceberg readers. Treat Rustice writes to
-Snowflake-managed Horizon tables as unsupported until Rustice's commit path is
-made compatible with Snowflake's managed Iceberg metadata expectations.
+Snowflake-managed Horizon tables that contain small-precision decimal/number
+columns as unsupported until Rustice's DataFile statistics conversion is made
+compatible with Snowflake's managed Iceberg reader expectations.
 
 ## Cache Fix Verified
 
