@@ -164,6 +164,7 @@ Reverse results:
 | --- | --- | --- | --- |
 | Rustice-created table, Rustice `INSERT` | `10000,1,10000,50005000,62506250.0000,5000,10000` | `0,,,,,,0` | Fail |
 | Snowflake-created table, Rustice `INSERT` | `10000,1,10000,50005000,62506250.0000,5000,10000` | `0,,,,,,0` | Fail |
+| Snowflake-created table, Rustice `INSERT`, then SPCS restart | `10000,1,10000,50005000,62506250.0000,5000,10000` | `0,,,,,,0` | Fail |
 | Snowflake-created table, Rustice `MERGE` matched update | Planning failed: `column 'id' not found in 't'` / target field resolution failure | Not written | Fail |
 | Snowflake-created table, Rustice `MERGE` insert branch with `ON FALSE` | Planning failed: `No field named rustice_spcs.compat_iceberg.compat_reverse_sf_merge.id` | Not written | Fail |
 
@@ -175,6 +176,19 @@ syntactically, but still returned zero rows.
 `ALTER ICEBERG TABLE ... REFRESH` is not applicable for these managed tables:
 Snowflake reports that `REFRESH` requires an external catalog integration and
 that the table type is `MANAGED`.
+
+`SYSTEM$GET_ICEBERG_TABLE_INFORMATION` also did not make Snowflake see the
+Rustice insert. Snowflake returned the original managed metadata location:
+
+```json
+{
+  "metadataLocation": "s3://sfc-oh-ds1-51-customer-interop-fs-wb5f0000-s/iceberg/RUSTICE_SPCS/compat_iceberg/compat_reverse_sf_insert.40iT802O/metadata/00000-40bba4c9-ea29-4c2d-83e1-3e581c7e6457.metadata.json",
+  "status": "success"
+}
+```
+
+After that call, Snowflake still returned `0` rows for the table while Rustice
+returned `10,000` rows after an SPCS service restart.
 
 Reverse-direction conclusion: Rustice can currently read Snowflake-managed
 Iceberg snapshots written by Snowflake, but writes performed through Rustice are
