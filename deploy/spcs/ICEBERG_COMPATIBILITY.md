@@ -15,7 +15,9 @@ Run date: 2026-05-28
 - SPCS service: `RUSTICE_APP.PUBLIC.RUSTICE_SERVICE`
 - SPCS image:
   `iwuwgvk-lv71752.registry.snowflakecomputing.com/rustice_app/public/rustice_repo/rustice:iceberg-compat-20260528`
-- SPCS ingress: `ilxz2e-iwuwgvk-lv71752.snowflakecomputing.app`
+- SPCS ingress:
+  - Forward Snowflake-write run: `ilxz2e-iwuwgvk-lv71752.snowflakecomputing.app`
+  - Reverse Rustice-write run: `mlxz2e-iwuwgvk-lv71752.snowflakecomputing.app`
 - Horizon database/schema:
   `RUSTICE_SPCS."compat_iceberg"`
 - Test mode: default Snowflake-managed Iceberg behavior. The run did not enable
@@ -120,6 +122,65 @@ Combined scenario row-level checks:
 
 Timestamp string formatting differs between Snowflake CLI and Rustice CLI, but
 the tested values match.
+
+## Reverse Direction: Rustice Writes, Snowflake Reads
+
+The reverse direction was also tested to check whether writes committed through
+the SPCS Rustice service become visible to Snowflake-managed Iceberg tables.
+This direction is not compatible yet.
+
+Reverse test tables:
+
+| Table | Created by | Written by | Purpose |
+| --- | --- | --- | --- |
+| `compat_rustice_insert_only` | Rustice | Rustice `INSERT` | Checks whether Snowflake can read a Rustice-created and Rustice-written Iceberg table |
+| `compat_reverse_sf_insert` | Snowflake | Rustice `INSERT` | Checks whether Snowflake can read Rustice inserts into a Snowflake-created managed Iceberg table |
+| `compat_reverse_sf_merge` | Snowflake | Rustice `MERGE` attempt | Checks whether Rustice can merge into a Snowflake-created managed Iceberg table and Snowflake can read the result |
+
+Rustice insert statement shape:
+
+```sql
+INSERT INTO rustice_spcs.compat_iceberg.compat_reverse_sf_insert
+SELECT
+  value + 1,
+  ((value + 1) % 99999),
+  ((value + 1) * 1.25)::NUMBER(18,4),
+  (value + 1) / 3.0,
+  (value + 1) * 0.5,
+  ((value + 1) % 2) = 0,
+  'str-' || (value + 1),
+  'varchar-' || (value + 1),
+  TO_BINARY('ABCD', 'HEX'),
+  '2022-01-01'::DATE,
+  '00:00:00'::TIME,
+  '2022-08-21 00:00:00'::TIMESTAMP_NTZ,
+  '2022-08-21 00:00:00'::TIMESTAMP_LTZ
+FROM range(10000);
+```
+
+Reverse results:
+
+| Test | Rustice result | Snowflake result | Status |
+| --- | --- | --- | --- |
+| Rustice-created table, Rustice `INSERT` | `10000,1,10000,50005000,62506250.0000,5000,10000` | `0,,,,,,0` | Fail |
+| Snowflake-created table, Rustice `INSERT` | `10000,1,10000,50005000,62506250.0000,5000,10000` | `0,,,,,,0` | Fail |
+| Snowflake-created table, Rustice `MERGE` matched update | Planning failed: `column 'id' not found in 't'` / target field resolution failure | Not written | Fail |
+| Snowflake-created table, Rustice `MERGE` insert branch with `ON FALSE` | Planning failed: `No field named rustice_spcs.compat_iceberg.compat_reverse_sf_merge.id` | Not written | Fail |
+
+For the Rustice-created table, Snowflake also exposed the columns as quoted
+lowercase identifiers (`"id"`, `"small_num"`, and so on), so unquoted Snowflake
+queries failed with `invalid identifier 'ID'`. Quoted lowercase reads succeeded
+syntactically, but still returned zero rows.
+
+`ALTER ICEBERG TABLE ... REFRESH` is not applicable for these managed tables:
+Snowflake reports that `REFRESH` requires an external catalog integration and
+that the table type is `MANAGED`.
+
+Reverse-direction conclusion: Rustice can currently read Snowflake-managed
+Iceberg snapshots written by Snowflake, but writes performed through Rustice are
+not visible to Snowflake-managed Iceberg readers. Treat Rustice writes to
+Snowflake-managed Horizon tables as unsupported until the commit path is made
+compatible with Snowflake's managed Iceberg metadata expectations.
 
 ## Cache Fix Verified
 
