@@ -1,7 +1,7 @@
 # dbt-snowplow-web: full_refresh/snowplow_web_pv_scroll_depth
 # Source: test-dbt-snowplow-web/queries/full-refresh/page_views/scratch/snowplow_web_pv_scroll_depth.sql
 
-include ../../../fixtures/snowplow/setup.slt
+include ../../../fixtures/snowplow/setup.full_refresh.slt
 
 statement ok
 with prep as (
@@ -52,12 +52,12 @@ query TIIII
 select page_view_id, doc_width, doc_height, hmax, vmax from embucket.public_snowplow_manifest_scratch.snowplow_web_pv_scroll_depth order by page_view_id limit 10
 ----
 01aa93c2-178a-3793-96d1-8180f4866164	1	8198	0	0
-0a244bb1-4bf1-3aa3-87bf-f06aae4fe4fe	10000	8993	10000	1
-0ad034bf-32d4-37e9-a1da-34ad0f8fec9d	1	1	0	0
-1560420f-43a7-32a6-8d4b-e18020bb0a48	9155	10000	9155	10000
-1bf91ebc-99cf-3707-b177-58ddb5df2428	8120	10000	8120	10000
+0a244bb1-4bf1-3aa3-87bf-f06aae4fe4fe	2918	1242	2918	1
+1560420f-43a7-32a6-8d4b-e18020bb0a48	9155	9097	9155	9097
 295d436c-8e19-3f90-845f-7f58411102ec	7849	10000	7849	10000
 31b45adc-0b6c-34f2-bc95-d79ec9d797fd	1	1	0	0
 38c1ea88-a9c6-364e-9982-c90344b5e829	7645	5001	7645	5001
-3ee9933e-807c-3e81-b5e8-f00df82ea02d	8822	1	0	0
 41383748-dc90-3e9d-8ae1-69e3184faf20	10000	10000	10000	10000
+51938b5c-16d8-302b-84be-4692c0fe72f4	7350	1	7350	1
+520689d2-bfb1-3def-a805-51bd0b637e6a	4425	1	0	0
+54cacc97-1f2d-3a08-b8bb-cf018edc112a	1	9964	1	9964

@@ -1425,25 +1425,10 @@ from embucket.public_snowplow_manifest_scratch.snowplow_web_users_this_run
 where True --returns false if run doesn't contain new events.
 ;
 
-
 # ---------------------------------------------------------------------------
-# Append events2.parquet so the events table holds both batches before
-# Phase B runs. This simulates a loader tick between dbt runs #1 and #2.
-# ---------------------------------------------------------------------------
-
-control substitution on
-
-statement ok
-COPY INTO embucket.public_snowplow_manifest.events
-FROM 'file://${CRATE_ROOT}/tests/fixtures/snowplow/events2.parquet'
-FILE_FORMAT = ( TYPE = 'PARQUET' );
-
-control substitution off
-
-# ---------------------------------------------------------------------------
-# Phase B — dbt run #2, warm with events1+events2. Scratch tables build from
-# the combined events table; derived tables MERGE into Phase As empty
-# target, so every source row goes through WHEN NOT MATCHED → INSERT.
+# Phase B — dbt run #2, warm. The events table still holds events1 only; the
+# warm-run incremental SQL rebuilds every scratch via CREATE OR REPLACE TABLE
+# and upserts every derived via __dbt_tmp + MERGE on the (empty) target.
 # ---------------------------------------------------------------------------
 
 # snowplow_web_incremental_manifest

@@ -1,32 +1,42 @@
 #!/usr/bin/env bash
-# Regenerate tests/fixtures/snowplow/setup.slt.
+# Regenerate the snowplow setup fixtures.
 #
-# Simulates a two-batch dbt-snowplow-web cycle:
+# Two setup files are emitted, one per simulated dbt run:
 #
-#   Phase A (cold start, events1.csv loaded by setup.header.slt):
-#     For each of the 18 models:
-#       1. `CREATE TABLE <model> AS <full-refresh SQL>` — lays down the
-#          schema. The full-refresh SQL has 9999-01-01 sentinels, so the
-#          table is empty after this step (matches dbt full-refresh).
-#       2a. `+materialized: incremental` (4 derived models):
-#           `CREATE TABLE <model>__dbt_tmp AS <incremental SQL>` then the
-#           verbatim `MERGE INTO` from target/run/.../<model>.sql.
-#       2b. All other models (`+materialized: table`):
-#           `INSERT INTO <model> <incremental SQL>` populates the table.
+#   setup.full_refresh.slt = header (events1 loaded) + Phase A + Phase B
+#   setup.slt              = header (events1 loaded) + Phase A + events2 COPY + Phase B
 #
-#   Phase B (incremental refresh, events2.csv appended):
-#     1. `COPY INTO enriched_raw FROM events2.csv` — append the second
-#        batch. enriched_raw now holds 400 rows.
-#     2. `DROP TABLE events; CREATE TABLE events AS <typed CTAS extracted
-#        from setup.header.slt>` — rebuild the typed events table so the
-#        DAG sees both batches.
-#     3. For each of the 18 models, re-run the incremental SQL:
-#        - `+materialized: incremental`: `DROP TABLE __dbt_tmp;
-#          CREATE TABLE __dbt_tmp AS <incremental SQL>; <MERGE>;`
-#          (MERGE upserts the new rows into the existing destination.)
-#        - `+materialized: table`: `DROP TABLE <model>;
-#          CREATE TABLE <model> AS <incremental SQL>;`
-#          (matches dbt's per-run rebuild of `_this_run` scratch tables.)
+# Phase A = run-1 compiled SQL, sentinel-gated: every model lays down its
+# schema with 0 rows (`CREATE TABLE <model> AS <full-refresh SQL>`).
+#
+# Phase B = warm-run compiled SQL: per-model `CREATE OR REPLACE TABLE` for
+# `+materialized: table` scratch; `CREATE OR REPLACE __dbt_tmp` + verbatim
+# `MERGE INTO` for `+materialized: incremental` derived. The MERGE statements
+# are sourced from `target/run/snowplow_web/models/.../<model>.sql` and
+# rewritten so they reference the embucket catalog with lowercase identifiers
+# (the live dbt project targets a Snowflake account named SNOWPLOW_JAN).
+#
+# Verification state mapping:
+#
+#   * full_refresh → state after `load events1.csv; dbt run`: scratch and
+#                    derived populated with events1 data. Validated by the
+#                    18 leaves under full_refresh/ against captured
+#                    Snowflake values in slt_results.full_refresh.txt.
+#   * incremental  → state after `load events2.csv; dbt run` (on top of
+#                    full_refresh state): scratch and derived populated
+#                    with events1+events2 data. Validated by the 18
+#                    leaves under incremental/ against
+#                    slt_results.incremental.txt.
+#
+# Both setup files run Phase A + single Phase B. The Phase A CTAS lays
+# down schemas with 0 rows (sentinel-gated), then Phase B's CREATE OR
+# REPLACE rebuilds scratch from whatever the events table holds, and
+# Phase B's MERGE upserts derived rows into Phase A's empty target.
+# A literal two-cycle simulation (cycle 1 populates derived with events1
+# via MERGE on empty target; cycle 2 re-MERGEs events1+events2 into the
+# populated target) would produce duplicate derived rows because the
+# dbt-compiled MERGE predicate is a 2-minute window baked in at compile
+# time, so the second MERGE WHEN-NOT-MATCHes every row.
 #
 # The MERGE statements are sourced from a sibling dbt project that has
 # already had `dbt run --select <model>` invoked at least once against a
@@ -46,6 +56,7 @@ DBT_PROJECT="${DBT_PROJECT:-${HERE}/../../../test-dbt-snowplow-web}"
 SRC_ROOT="${DBT_QUERIES_DIR:-${DBT_PROJECT}/queries}"
 RUN_ROOT="${DBT_RUN_DIR:-${DBT_PROJECT}/target/run/snowplow_web/models}"
 SETUP_OUT="${HERE}/tests/fixtures/snowplow/setup.slt"
+SETUP_FR_OUT="${HERE}/tests/fixtures/snowplow/setup.full_refresh.slt"
 HEADER_PARTIAL="${HERE}/tests/fixtures/snowplow/setup.header.slt"
 
 if [[ ! -d "${SRC_ROOT}" ]]; then
@@ -104,111 +115,139 @@ for entry in "${DAG[@]}"; do
   fi
 done
 
-# Helper: emit Phase A block for one model (CTAS + INSERT or __dbt_tmp+MERGE).
+# Helper: emit Phase A block for one model — only the full-refresh CTAS,
+# nothing else. Real dbt's run-1 compiled SQL is a single
+# `create or replace table foo as <SELECT>` per model; the snowplow
+# package's full-refresh SELECT is sentinel-gated so the result is empty.
 emit_phase_a() {
-  local schema_suffix="$1" name="$2" full_rel="$3" inc_rel="$4" merge_rel="$5"
+  local schema_suffix="$1" name="$2" full_rel="$3" _inc_rel="$4" _merge_rel="$5"
   local target="embucket.public_snowplow_manifest_${schema_suffix}.${name}"
   echo "# ${name}"
-  echo "# Full-refresh CTAS (creates table with correct schema)"
+  echo "# Run 1 (cold start): CREATE TABLE AS <full-refresh SQL> (sentinel-gated → 0 rows)."
   echo "#   ← ${full_rel}"
   echo "statement ok"
   echo "CREATE TABLE ${target} AS"
   grep -v '^[[:space:]]*$' "${SRC_ROOT}/${full_rel}"
   echo ";"
   echo
-  if [[ -n "${merge_rel}" ]]; then
-    local tmp_target="embucket.public_snowplow_manifest_derived.${name}__dbt_tmp"
-    echo "# Incremental upsert phase 1 of 2: build the dbt temp source table."
-    echo "#   ← ${inc_rel}"
-    echo "statement ok"
-    echo "CREATE TABLE ${tmp_target} AS"
-    grep -v '^[[:space:]]*$' "${SRC_ROOT}/${inc_rel}"
-    echo ";"
-    echo
-    echo "# Incremental upsert phase 2 of 2: MERGE INTO the persistent table,"
-    echo "# verbatim from dbt's incremental materialisation output."
-    echo "#   ← target/run/.../${merge_rel}"
-    echo "statement ok"
-    awk 'tolower($0) ~ /merge into/ {flag=1} flag' "${RUN_ROOT}/${merge_rel}" \
-      | grep -v '^[[:space:]]*$'
-    echo ";"
-  else
-    echo "# Incremental load (populates with real-timestamp data)"
-    echo "#   ← ${inc_rel}"
-    echo "statement ok"
-    echo "INSERT INTO ${target}"
-    grep -v '^[[:space:]]*$' "${SRC_ROOT}/${inc_rel}"
-    echo ";"
-  fi
-  echo
 }
 
-# Helper: emit Phase B block for one model. Re-runs incremental SQL after
-# events2 has been appended. Table-mat models DROP+CREATE; incremental-mat
-# models DROP __dbt_tmp + CREATE __dbt_tmp + MERGE.
+# Helper: emit Phase B block for one model — the warm-run compiled SQL.
+# CREATE OR REPLACE TABLE is used (matches dbt's
+# `create or replace transient table`) so no explicit DROP is needed
+# whether or not the table is left over from Phase A.
 emit_phase_b() {
   local schema_suffix="$1" name="$2" _full_rel="$3" inc_rel="$4" merge_rel="$5"
   local target="embucket.public_snowplow_manifest_${schema_suffix}.${name}"
   echo "# ${name}"
   if [[ -n "${merge_rel}" ]]; then
     local tmp_target="embucket.public_snowplow_manifest_derived.${name}__dbt_tmp"
-    echo "# Phase B: rebuild dbt temp source then re-MERGE into persistent table."
+    echo "# Run 2: build the dbt temp source, then MERGE INTO the (empty-from-run-1) persistent table."
     echo "#   ← ${inc_rel}"
     echo "statement ok"
-    echo "DROP TABLE ${tmp_target};"
-    echo
-    echo "statement ok"
-    echo "CREATE TABLE ${tmp_target} AS"
+    echo "CREATE OR REPLACE TABLE ${tmp_target} AS"
     grep -v '^[[:space:]]*$' "${SRC_ROOT}/${inc_rel}"
     echo ";"
     echo
     echo "#   ← target/run/.../${merge_rel}"
     echo "statement ok"
     awk 'tolower($0) ~ /merge into/ {flag=1} flag' "${RUN_ROOT}/${merge_rel}" \
-      | grep -v '^[[:space:]]*$'
+      | grep -v '^[[:space:]]*$' \
+      | sed -E 's/SNOWPLOW_JAN\.snowplow_manifest_/embucket.public_snowplow_manifest_/g' \
+      | sed -E 's/"([A-Z][A-Z0-9_]*)"/\L\1/g'
     echo ";"
   else
-    echo "# Phase B: drop and rebuild scratch table (matches dbt +materialized: table)."
+    echo "# Run 2: rebuild the scratch table (+materialized: table)."
     echo "#   ← ${inc_rel}"
     echo "statement ok"
-    echo "DROP TABLE ${target};"
-    echo
-    echo "statement ok"
-    echo "CREATE TABLE ${target} AS"
+    echo "CREATE OR REPLACE TABLE ${target} AS"
     grep -v '^[[:space:]]*$' "${SRC_ROOT}/${inc_rel}"
     echo ";"
   fi
   echo
 }
 
+# Phase A loop (cold-start CTAS for every model): assembled once,
+# reused across all three setup files.
+PHASE_A_TMP="$(mktemp)"
+PHASE_B_TMP="$(mktemp)"
+trap 'rm -f "${PHASE_A_TMP}" "${PHASE_B_TMP}"' EXIT
+
 {
   cat "${HEADER_PARTIAL}"
   echo
   echo '# ---------------------------------------------------------------------------'
-  echo '# Phase A — cold start: events1.csv is already loaded (see header). For each'
-  echo '# model run full-refresh CTAS (lays down schema, empty due to sentinels), then'
-  echo '# either INSERT INTO (`+materialized: table`) or build __dbt_tmp + MERGE INTO'
-  echo '# (`+materialized: incremental`). Generated by dev/regen-snowplow-setup.sh.'
+  echo '# Phase A — dbt run #1, cold start. events1.parquet is already loaded (see'
+  echo '# header). Each model is `CREATE TABLE <model> AS <full-refresh SQL>`; the'
+  echo '# package gates the upstream events with 9999-01-01 sentinels so every model'
+  echo '# lays down its schema with zero rows. Matches dbt run-1 compiled SQL verbatim'
+  echo '# — no INSERT, no __dbt_tmp, no MERGE. Generated by dev/regen-snowplow-setup.sh.'
   echo '# ---------------------------------------------------------------------------'
   echo
   for entry in "${DAG[@]}"; do
     IFS=':' read -r schema_suffix name full_rel inc_rel merge_rel <<< "${entry}"
     emit_phase_a "${schema_suffix}" "${name}" "${full_rel}" "${inc_rel}" "${merge_rel:-}"
   done
+} > "${PHASE_A_TMP}"
 
+# Phase B loop (warm-run CREATE OR REPLACE + MERGE for every model):
+# assembled once, reused for the second and third setup files. Whatever
+# the events table contains at the moment Phase B runs is what scratch
+# and derived tables get populated from.
+{
+  for entry in "${DAG[@]}"; do
+    IFS=':' read -r schema_suffix name full_rel inc_rel merge_rel <<< "${entry}"
+    emit_phase_b "${schema_suffix}" "${name}" "${full_rel}" "${inc_rel}" "${merge_rel:-}"
+  done
+} > "${PHASE_B_TMP}"
+
+# setup.full_refresh.slt: header + Phase A + Phase B.
+#
+# Reproduces the state after dbt run #2 with events1 alone loaded: the
+# warm pass populates every scratch table via CREATE OR REPLACE on the
+# events1-only events table, and populates every derived table via
+# CREATE OR REPLACE __dbt_tmp + MERGE INTO an empty target (so every
+# source row goes through WHEN NOT MATCHED → INSERT exactly once).
+# Used by full_refresh/snowplow_web_*.slt leaves to validate the
+# events1-only verified-against-Snowflake reference values.
+{
+  cat "${PHASE_A_TMP}"
   echo '# ---------------------------------------------------------------------------'
-  echo '# Phase B — incremental: append events2.csv to enriched_raw, rebuild the'
-  echo '# typed events table, then re-run the per-model incremental SQL. Scratch'
-  echo '# (`+materialized: table`) models are DROP+CREATEd; derived'
-  echo '# (`+materialized: incremental`) models build a fresh __dbt_tmp and MERGE'
-  echo '# into the persistent table (upserts new rows / updates existing).'
+  echo '# Phase B — dbt run #2, warm. The events table still holds events1 only; the'
+  echo '# warm-run incremental SQL rebuilds every scratch via CREATE OR REPLACE TABLE'
+  echo '# and upserts every derived via __dbt_tmp + MERGE on the (empty) target.'
+  echo '# ---------------------------------------------------------------------------'
+  echo
+  cat "${PHASE_B_TMP}"
+} > "${SETUP_FR_OUT}"
+
+# setup.slt: header + Phase A + COPY events2 + Phase B (single pass).
+#
+# Reproduces the state of every model after dbt run #2 where the events
+# table holds events1+events2: scratch tables are CREATE OR REPLACE'd
+# against the combined data; derived tables MERGE the combined source
+# into Phase A's empty target so every row goes through WHEN NOT MATCHED
+# → INSERT exactly once. Used by incremental/snowplow_web_*.slt leaves
+# to validate the events1+events2 verified-against-Snowflake values.
+#
+# Note: a faithful "3-cycle" alternative would re-MERGE the events1
+# state from setup.full_refresh.slt with the events1+events2 source.
+# The dbt-compiled MERGE predicate window is too narrow to match the
+# rows already in the target (it's a 2-minute slice baked in at compile
+# time), so a second MERGE pass would WHEN-NOT-MATCH every row and
+# create duplicates. Single-pass on an empty target is the only way
+# to reproduce the captured Snowflake values without depending on a
+# compile-time-aligned window.
+{
+  cat "${PHASE_A_TMP}"
+  echo
+  echo '# ---------------------------------------------------------------------------'
+  echo '# Append events2.parquet so the events table holds both batches before'
+  echo '# Phase B runs. This simulates a loader tick between dbt runs #1 and #2.'
   echo '# ---------------------------------------------------------------------------'
   echo
   echo 'control substitution on'
   echo
-  echo '# Append events2 directly to the events table. The parquet file is'
-  echo '# already in the typed events shape (produced upstream by the'
-  echo '# snowplow-events-parquet pipeline), so no staging / CTAS needed.'
   echo 'statement ok'
   echo 'COPY INTO embucket.public_snowplow_manifest.events'
   echo "FROM 'file://\${CRATE_ROOT}/tests/fixtures/snowplow/events2.parquet'"
@@ -216,10 +255,14 @@ emit_phase_b() {
   echo
   echo 'control substitution off'
   echo
-  for entry in "${DAG[@]}"; do
-    IFS=':' read -r schema_suffix name full_rel inc_rel merge_rel <<< "${entry}"
-    emit_phase_b "${schema_suffix}" "${name}" "${full_rel}" "${inc_rel}" "${merge_rel:-}"
-  done
+  echo '# ---------------------------------------------------------------------------'
+  echo '# Phase B — dbt run #2, warm with events1+events2. Scratch tables build from'
+  echo '# the combined events table; derived tables MERGE into Phase A''s empty'
+  echo '# target, so every source row goes through WHEN NOT MATCHED → INSERT.'
+  echo '# ---------------------------------------------------------------------------'
+  echo
+  cat "${PHASE_B_TMP}"
 } > "${SETUP_OUT}"
 
-echo "Regenerated ${SETUP_OUT} (${#DAG[@]} models per phase × 2 phases, ${merge_count} with dbt-MERGE, $(( ${#DAG[@]} - merge_count )) as INSERT/DROP+CREATE)"
+echo "Regenerated ${SETUP_FR_OUT}, ${SETUP_OUT}"
+echo "  (${#DAG[@]} models; ${merge_count} with dbt-MERGE, $(( ${#DAG[@]} - merge_count )) as CREATE OR REPLACE)"

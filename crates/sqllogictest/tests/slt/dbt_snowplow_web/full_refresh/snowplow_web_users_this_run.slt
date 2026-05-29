@@ -1,7 +1,7 @@
 # dbt-snowplow-web: full_refresh/snowplow_web_users_this_run
 # Source: test-dbt-snowplow-web/queries/full-refresh/users/scratch/snowplow_web_users_this_run.sql
 
-include ../../../fixtures/snowplow/setup.slt
+include ../../../fixtures/snowplow/setup.full_refresh.slt
 
 statement ok
 select
@@ -81,8 +81,7 @@ on b.domain_userid = c.domain_userid
 query TIII
 select domain_userid, page_views, sessions, engaged_time_in_s from embucket.public_snowplow_manifest_scratch.snowplow_web_users_this_run order by domain_userid limit 10
 ----
-cookie_0	52	20	235
-cookie_119bd174	2	2	0
+cookie_0	28	15	100
 cookie_466f45d	2	2	5
-cookie_8cde8ba	4	4	5
-cookie_d34dd17	6	6	10
+cookie_8cde8ba	3	3	5
+cookie_d34dd17	3	3	5

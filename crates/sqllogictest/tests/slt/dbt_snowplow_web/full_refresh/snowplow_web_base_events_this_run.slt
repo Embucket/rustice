@@ -1,7 +1,7 @@
 # dbt-snowplow-web: full_refresh/snowplow_web_base_events_this_run
 # Source: test-dbt-snowplow-web/queries/full-refresh/base/scratch/snowflake/snowplow_web_base_events_this_run.sql
 
-include ../../../fixtures/snowplow/setup.slt
+include ../../../fixtures/snowplow/setup.full_refresh.slt
 
 statement ok
 with base_query as (
@@ -56,4 +56,4 @@ from base_query a
 query IIII
 select count(*), count(distinct event_id), count(distinct domain_sessionid), count(distinct domain_userid) from embucket.public_snowplow_manifest_scratch.snowplow_web_base_events_this_run
 ----
-325	325	64	5
+159	159	48	5

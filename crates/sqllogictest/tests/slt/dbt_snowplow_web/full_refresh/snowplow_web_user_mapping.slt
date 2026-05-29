@@ -1,7 +1,7 @@
 # dbt-snowplow-web: full_refresh/snowplow_web_user_mapping
 # Source: test-dbt-snowplow-web/queries/full-refresh/user_mapping/snowplow_web_user_mapping.sql
 
-include ../../../fixtures/snowplow/setup.slt
+include ../../../fixtures/snowplow/setup.full_refresh.slt
 
 statement ok
 select distinct

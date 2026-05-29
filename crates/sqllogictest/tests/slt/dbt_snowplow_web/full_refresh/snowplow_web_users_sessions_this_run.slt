@@ -1,7 +1,7 @@
 # dbt-snowplow-web: full_refresh/snowplow_web_users_sessions_this_run
 # Source: test-dbt-snowplow-web/queries/full-refresh/users/scratch/snowplow_web_users_sessions_this_run.sql
 
-include ../../../fixtures/snowplow/setup.slt
+include ../../../fixtures/snowplow/setup.full_refresh.slt
 
 statement ok
 select
@@ -19,13 +19,13 @@ where exists (select 1 from embucket.public_snowplow_manifest_scratch.snowplow_w
 query TTII
 select domain_sessionid, domain_userid, page_views, engaged_time_in_s from embucket.public_snowplow_manifest_scratch.snowplow_web_users_sessions_this_run order by domain_sessionid limit 10
 ----
-019ec1a0-1152-323f-ad72-670891a6a81b	cookie_d34dd17	1	0
-08a22e1e-ba5b-3eff-b271-53971811ec54	cookie_119bd174	1	0
-09c489df-70bc-3e3d-a679-351e8975a817	cookie_0	2	15
-1438951e-08bb-346e-896f-5b3fb855e6a2	cookie_0	3	10
-1c06bc65-613e-3e9d-8525-f9760d33dce5	cookie_0	2	5
+09c489df-70bc-3e3d-a679-351e8975a817	cookie_0	1	5
+1c06bc65-613e-3e9d-8525-f9760d33dce5	cookie_0	1	0
 1d8b66dc-1cc1-3c2d-93bd-0bf1399a90b0	cookie_8cde8ba	1	0
 2070e69b-6582-3b60-9b58-7329fc036a2c	cookie_8cde8ba	1	0
 29afa0ca-7b41-3feb-b06e-11d716e7de1f	cookie_0	2	20
-2f7b562b-b9a5-31c9-aba7-0c50b4687211	cookie_0	1	25
 396b99cd-a01e-3a7b-ae97-6c6733419996	cookie_d34dd17	1	0
+3ef2891e-885e-3d2b-a674-c91d64e6eefc	cookie_0	1	5
+3f84979b-5f0d-32b8-aaeb-e69b8ffcc444	cookie_466f45d	1	0
+4371655d-a634-3736-aa97-a2f6c32df9b7	cookie_0	1	0
+59ca5f0c-b687-3d3a-a053-f240883cf2b4	cookie_0	1	5
