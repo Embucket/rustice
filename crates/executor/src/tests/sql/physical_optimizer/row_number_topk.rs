@@ -417,6 +417,65 @@ async fn synthetic_row_number_topk_perf() {
     );
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[ignore = "perf benchmark harness; emits OPTIMIZED_MS for autoresearch verify. Run with --ignored --nocapture"]
+#[tokio::test]
+async fn snowplow_dedup_topk_bench() {
+    let groups = env_usize("SNOWPLOW_BENCH_GROUPS", 300_000);
+    let duplicates = env_usize("SNOWPLOW_BENCH_DUPLICATES", 4);
+    let payload_columns = env_usize("SNOWPLOW_BENCH_PAYLOAD_COLUMNS", 16);
+    let limit = env_usize("SNOWPLOW_BENCH_LIMIT", 1);
+    let repeats = env_usize("SNOWPLOW_BENCH_REPEATS", 7);
+    assert!(duplicates >= limit, "duplicates must be >= limit");
+    assert!(repeats > 0, "repeats must be greater than zero");
+
+    let table = synthetic_topk_table(groups, duplicates, payload_columns);
+    let ctx = synthetic_perf_context(table, true);
+    let payload_projection = (0..payload_columns)
+        .map(|index| format!("payload_{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    // Canonical Snowplow event deduplication: keep the earliest row per event_id.
+    let sql = format!(
+        "
+        SELECT event_id, collector_tstamp, dvce_created_tstamp, {payload_projection}
+        FROM events
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY event_id
+            ORDER BY collector_tstamp, dvce_created_tstamp
+        ) <= {limit}
+        "
+    );
+
+    // Anti-gaming: the grouped top-K rewrite must actually fire and avoid the window/sort path.
+    let plan = explain_datafusion(&ctx, &sql).await;
+    assert!(
+        plan.contains("GroupedTopKExec"),
+        "bench requires the grouped top-K rewrite to fire:\n{plan}"
+    );
+    assert!(
+        !plan.contains("WindowAggExec") && !plan.contains("SortExec"),
+        "bench plan must avoid the window/sort path:\n{plan}"
+    );
+
+    let expected_rows = groups * limit;
+    assert_eq!(
+        run_datafusion_query(&ctx, &sql).await,
+        expected_rows,
+        "bench row count must match dedup expectation"
+    );
+
+    // Warm up once (paging / first-touch), then report the best of N to suppress noise.
+    let _ = time_datafusion_query(&ctx, &sql).await;
+    let mut best = Duration::from_secs(u64::MAX);
+    for _ in 0..repeats {
+        best = best.min(time_datafusion_query(&ctx, &sql).await);
+    }
+
+    println!("OPTIMIZED_MS={:.3}", best.as_secs_f64() * 1000.0);
+}
+
 fn synthetic_perf_context(table: Arc<MemTable>, use_topk: bool) -> SessionContext {
     let mut rules: Vec<Arc<dyn PhysicalOptimizerRule + Send + Sync>> =
         PhysicalOptimizer::default().rules;

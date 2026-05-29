@@ -21,3 +21,6 @@ metastore.yaml
 metastore.yaml
 docs/superpowers/
 autoresearch/
+
+# autoresearch local log
+autoresearch-results.tsv
