@@ -266,7 +266,6 @@ fn select_top1_batches(
     struct Top1Winner {
         batch_index: usize,
         row_index: usize,
-        order: OwnedRow,
     }
 
     let Some(first_batch) = input_batches.first() else {
@@ -295,26 +294,37 @@ fn select_top1_batches(
             .collect::<Result<Vec<_>>>()?,
     )?;
 
+    // Convert every batch up front and keep the encoded rows alive, so a winner only needs
+    // to remember its (batch, row) coordinates. Comparisons then read sort-encoded bytes
+    // straight from the retained buffers — no per-winner order allocation on replacement.
+    let mut all_partition_rows = Vec::with_capacity(input_batches.len());
+    let mut all_order_rows = Vec::with_capacity(input_batches.len());
+    for batch in input_batches {
+        let partition_columns = evaluate_exprs(partition_by, batch)?;
+        let order_columns = evaluate_sort_exprs(order_by, batch)?;
+        all_partition_rows.push(partition_converter.convert_columns(&partition_columns)?);
+        all_order_rows.push(order_converter.convert_columns(&order_columns)?);
+    }
+
     let mut winners: datafusion_common::HashMap<OwnedRow, Top1Winner> =
         datafusion_common::HashMap::default();
 
-    for (batch_index, batch) in input_batches.iter().enumerate() {
-        let partition_columns = evaluate_exprs(partition_by, batch)?;
-        let order_columns = evaluate_sort_exprs(order_by, batch)?;
-        let partition_rows = partition_converter.convert_columns(&partition_columns)?;
-        let order_rows = order_converter.convert_columns(&order_columns)?;
+    for batch_index in 0..input_batches.len() {
+        let partition_rows = &all_partition_rows[batch_index];
+        let order_rows = &all_order_rows[batch_index];
 
-        for row_index in 0..batch.num_rows() {
-            let order_row = order_rows.row(row_index);
+        for row_index in 0..order_rows.num_rows() {
             match winners.entry(partition_rows.row(row_index).owned()) {
                 Entry::Occupied(mut slot) => {
                     // Sort-encoded rows compare bytewise in the configured sort order, so a
                     // strictly smaller row replaces the winner; ties keep the earliest seen.
-                    if order_row < slot.get().order.row() {
+                    let winner = slot.get();
+                    if order_rows.row(row_index)
+                        < all_order_rows[winner.batch_index].row(winner.row_index)
+                    {
                         slot.insert(Top1Winner {
                             batch_index,
                             row_index,
-                            order: order_row.owned(),
                         });
                     }
                 }
@@ -322,7 +332,6 @@ fn select_top1_batches(
                     slot.insert(Top1Winner {
                         batch_index,
                         row_index,
-                        order: order_row.owned(),
                     });
                 }
             }
