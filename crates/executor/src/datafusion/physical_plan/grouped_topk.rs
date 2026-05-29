@@ -209,6 +209,10 @@ fn select_topk_batches(
     limit: usize,
     output_schema: SchemaRef,
 ) -> Result<Vec<RecordBatch>> {
+    if limit == 1 {
+        return select_top1_batches(input_batches, partition_by, order_by, output_schema);
+    }
+
     let mut winners: HashMap<Vec<ScalarValue>, Vec<Candidate>> = HashMap::new();
     let mut input_order = 0_usize;
 
@@ -247,6 +251,64 @@ fn select_topk_batches(
         }
     }
 
+    build_output_batches(input_batches, selected_by_batch, &output_schema)
+}
+
+fn select_top1_batches(
+    input_batches: &[RecordBatch],
+    partition_by: &[Arc<dyn datafusion::physical_expr::PhysicalExpr>],
+    order_by: &[PhysicalSortExpr],
+    output_schema: SchemaRef,
+) -> Result<Vec<RecordBatch>> {
+    use std::collections::hash_map::Entry;
+
+    let mut winners: HashMap<Vec<ScalarValue>, Candidate> = HashMap::new();
+    let mut input_order = 0_usize;
+
+    for (batch_index, batch) in input_batches.iter().enumerate() {
+        let partition_columns = evaluate_exprs(partition_by, batch)?;
+        let order_columns = evaluate_sort_exprs(order_by, batch)?;
+
+        for row_index in 0..batch.num_rows() {
+            let key = scalar_row(&partition_columns, row_index)?;
+            let order_values = scalar_row(&order_columns, row_index)?;
+            let candidate = Candidate {
+                batch_index,
+                row_index,
+                input_order,
+                order_values,
+            };
+            input_order += 1;
+
+            match winners.entry(key) {
+                Entry::Occupied(mut slot) => {
+                    if compare_candidates(&candidate, slot.get(), order_by)?.is_lt() {
+                        slot.insert(candidate);
+                    }
+                }
+                Entry::Vacant(slot) => {
+                    slot.insert(candidate);
+                }
+            }
+        }
+    }
+
+    let mut selected_by_batch = vec![Vec::new(); input_batches.len()];
+    for candidate in winners.into_values() {
+        selected_by_batch[candidate.batch_index].push(SelectedRow {
+            row_index: candidate.row_index,
+            row_number: 1,
+        });
+    }
+
+    build_output_batches(input_batches, selected_by_batch, &output_schema)
+}
+
+fn build_output_batches(
+    input_batches: &[RecordBatch],
+    selected_by_batch: Vec<Vec<SelectedRow>>,
+    output_schema: &SchemaRef,
+) -> Result<Vec<RecordBatch>> {
     let mut output_batches = Vec::new();
     for (batch, mut selected_rows) in input_batches.iter().zip(selected_by_batch) {
         if selected_rows.is_empty() {
@@ -273,7 +335,7 @@ fn select_topk_batches(
 
         let mut columns: Vec<ArrayRef> = selected.columns().to_vec();
         columns.push(Arc::new(UInt64Array::from(row_numbers)));
-        output_batches.push(RecordBatch::try_new(Arc::clone(&output_schema), columns)?);
+        output_batches.push(RecordBatch::try_new(Arc::clone(output_schema), columns)?);
     }
 
     Ok(output_batches)
