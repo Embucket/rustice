@@ -19,14 +19,18 @@ pub mod output;
 use sqllogictest::Normalizer;
 
 /// Row-comparison validator: per-row, an expected value beginning with
-/// `<REGEX>:` is compiled and matched against the actual row; everything
-/// else is compared after running both expected and actual through the
-/// upstream normalizer (which trims and collapses runs of whitespace).
+/// `<REGEX>:` or `<!REGEX>:` is compiled and matched (or negative-matched)
+/// against the actual row; everything else is compared after running both
+/// expected and actual through the upstream normalizer (which trims and
+/// collapses runs of whitespace).
 ///
 /// We normalize both sides so that the literal tab the `.slt` parser
 /// embeds between columns doesn't have to match the literal join
 /// character used here. Joining actual with `" "` mirrors what the
 /// upstream `default_validator` does.
+///
+/// Regex semantics match the Python runner's `matches_regex`: the pattern
+/// is anchored (`fullmatch`) and `.` matches newlines (`re.DOTALL`).
 #[must_use]
 pub fn embucket_validator(
     normalizer: Normalizer,
@@ -51,10 +55,12 @@ pub fn embucket_validator(
     }
 
     for (actual_row, expected_row) in actual_rows.iter().zip(expected.iter()) {
-        if let Some(pattern) = expected_row.strip_prefix("<REGEX>:") {
-            match regex::Regex::new(pattern) {
+        if let Some((pattern, want_match)) = strip_regex_prefix(expected_row) {
+            // (?s) = DOTALL; \A...\z = fullmatch.
+            let wrapped = format!("(?s)\\A(?:{pattern})\\z");
+            match regex::Regex::new(&wrapped) {
                 Ok(re) => {
-                    if !re.is_match(actual_row) {
+                    if re.is_match(actual_row) != want_match {
                         return false;
                     }
                 }
@@ -65,6 +71,16 @@ pub fn embucket_validator(
         }
     }
     true
+}
+
+/// Returns `(pattern, want_match)` for `<REGEX>:` / `<!REGEX>:` prefixed
+/// expected rows. `None` if neither prefix is present.
+fn strip_regex_prefix(s: &str) -> Option<(&str, bool)> {
+    if let Some(rest) = s.strip_prefix("<REGEX>:") {
+        Some((rest, true))
+    } else {
+        s.strip_prefix("<!REGEX>:").map(|rest| (rest, false))
+    }
 }
 
 #[cfg(test)]
@@ -141,6 +157,48 @@ mod tests {
             id_norm,
             &[vec!["FOX".to_string()]],
             &["<REGEX>:^[FO|]{3}$".to_string()],
+        ));
+    }
+
+    #[test]
+    fn regex_fullmatch_anchored() {
+        // Pattern matches `abc` exactly; actual `abcd` should NOT match
+        // because we anchor the pattern (fullmatch semantics) the same way
+        // Python's `re.fullmatch` does.
+        assert!(!embucket_validator(
+            id_norm,
+            &[vec!["abcd".to_string()]],
+            &["<REGEX>:abc".to_string()],
+        ));
+    }
+
+    #[test]
+    fn regex_dotall_matches_newline() {
+        // `.` should match newlines (DOTALL). The default `regex` crate
+        // would otherwise refuse a `.` against `\n`.
+        assert!(embucket_validator(
+            id_norm,
+            &[vec!["a\nb".to_string()]],
+            &["<REGEX>:a.b".to_string()],
+        ));
+    }
+
+    #[test]
+    fn negative_regex_blocks_match() {
+        // `<!REGEX>:` returns true only when the pattern does NOT match.
+        assert!(!embucket_validator(
+            id_norm,
+            &[vec!["FOO".to_string()]],
+            &["<!REGEX>:^[FO|]{3}$".to_string()],
+        ));
+    }
+
+    #[test]
+    fn negative_regex_passes_on_nonmatch() {
+        assert!(embucket_validator(
+            id_norm,
+            &[vec!["FOX".to_string()]],
+            &["<!REGEX>:^[FO|]{3}$".to_string()],
         ));
     }
 

@@ -28,8 +28,17 @@ pub(crate) fn varchar_to_str(value: &str) -> String {
     // object keys sorted alphabetically (snowflake-connector-python passes
     // the result through `json.dumps`, which sorts keys when fed a `dict`
     // — and Snowflake's VARIANT serialiser is also key-sorted).
+    //
+    // The Python runner runs `value.replace("undefined", "null")` before
+    // `json.loads`, so VARIANT cells holding JavaScript-style `undefined`
+    // still parse. Mirror that here.
     if matches!(value.as_bytes().first(), Some(b'{' | b'[')) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(value) {
+        let candidate = if value.contains("undefined") {
+            value.replace("undefined", "null")
+        } else {
+            value.to_string()
+        };
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&candidate) {
             if json.is_array() || json.is_object() {
                 let sorted = sort_json_keys(json);
                 if let Ok(rendered) = serde_json::to_string(&sorted) {
