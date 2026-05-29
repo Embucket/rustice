@@ -63,9 +63,9 @@ The service was dropped and the compute pool was suspended after the run.
 | Rustice writes, Snowflake reads | `NUMBER(5,0)` insert | Pass | Latest SPCS run: Rustice inserted `(2), (5)` and Snowflake read `2`, `5` |
 | Rustice writes, Snowflake reads | Wide all-types insert | Pass | Rustice-created and Snowflake-created wide tables both read back in Snowflake with matching aggregates |
 | Rustice writes, Snowflake reads | Simple Rustice `MERGE` | Pass | Rustice updated one row and inserted one row; Snowflake read the same result |
-| Rustice writes, Snowflake reads | Standalone Rustice `UPDATE` | Fail | Returned success but did not change table rows |
-| Rustice writes, Snowflake reads | Rustice `DELETE` | Fail | `DELETE not supported for Base table` |
-| Mixed Snowflake/Rustice writers | Snowflake-created table | Fail | Rustice `INSERT` after Snowflake `INSERT` replaced the table with only Rustice rows |
+| Rustice writes, Snowflake reads | Standalone Rustice `UPDATE` | Unsupported | Currently returns success but does not change table rows; it should reject until implemented |
+| Rustice writes, Snowflake reads | Rustice `DELETE` | Unsupported | `DELETE not supported for Base table` |
+| Mixed Snowflake/Rustice writers | Snowflake-created table | Fail | Rustice used stale table metadata after Snowflake `INSERT`; Rustice `INSERT` replaced the table with only Rustice rows |
 | Mixed Snowflake/Rustice writers | Rustice-created table | Fail | Snowflake `INSERT` was visible to Snowflake but Rustice read a stale snapshot and the next Rustice write failed with `409 Conflict` |
 | External writer controls | PyIceberg simple append | Pass | Snowflake read `3,90001.0,90003.0,270006.0,2` |
 | External writer controls | Spark Iceberg simple insert | Pass | Snowflake read `3,91001.0,91003.0,273006.0,2` |
@@ -183,7 +183,8 @@ Run date: 2026-05-29
 
 Mixed writer tables were tested to check whether Snowflake and Rustice can write
 to the same managed Iceberg table in alternating order. This is not compatible
-yet.
+yet. The failure mode is stale Rustice table metadata/snapshot state after
+Snowflake commits a new snapshot.
 
 ### Snowflake-Created Table
 
@@ -203,10 +204,10 @@ Sequence:
 | 4 | Rustice | Read table | Rustice still read stale `3,4` |
 | 5 | Rustice | Insert `id` `6` | Failed with Horizon `409 Conflict` because branch `main` changed |
 
-The first Rustice write after the Snowflake write lost the existing Snowflake
-rows. After Snowflake wrote again, Rustice did not refresh to the new snapshot
-and the next Rustice write failed with a commit conflict instead of silently
-overwriting.
+The first Rustice write after the Snowflake write used stale table metadata and
+lost the existing Snowflake rows. After Snowflake wrote again, Rustice did not
+refresh to the new snapshot and the next Rustice write failed with a commit
+conflict instead of silently overwriting.
 
 Conflict message:
 
@@ -251,13 +252,15 @@ Results:
 | Operation | Rustice result | Snowflake result | Status |
 | --- | --- | --- | --- |
 | `INSERT` rows `1,2,3` | Rows visible | Same | Pass |
-| Standalone `UPDATE id = 1` | Statement returned success, but rows stayed unchanged | Same unchanged rows | Fail |
-| `DELETE id = 2` | Failed: `DELETE not supported for Base table` | No delete committed | Fail |
+| Standalone `UPDATE id = 1` | Statement returned success, but rows stayed unchanged | Same unchanged rows | Unsupported |
+| `DELETE id = 2` | Failed: `DELETE not supported for Base table` | No delete committed | Unsupported |
 | `MERGE` update `id = 1`, insert `id = 4` | `1` row updated and `1` row inserted | Snowflake read `1,111,111.0000,one-merged`; `2,2,2.0000,two`; `3,3,3.0000,three`; `4,4,4.0000,four-merged` | Pass |
 
 This means Rustice can commit a simple Iceberg `MERGE` result that Snowflake can
-read, but standalone `UPDATE` and `DELETE` are not currently reliable for
-Iceberg tables.
+read. The supported Rustice write surface for this run is `INSERT` and simple
+`MERGE`; standalone `UPDATE` and `DELETE` are outside the supported Iceberg
+write surface. `UPDATE` currently has a correctness bug because it should reject
+instead of returning success as a no-op.
 
 ## Snowflake-Write Test Model
 
@@ -411,10 +414,10 @@ Iceberg tables.
 - Fix mixed Snowflake/Rustice writer support by refreshing table metadata before
   reads and before commits, and by handling Horizon `409 Conflict` with a clear
   retry/error path.
-- Fix standalone Rustice `UPDATE` on Iceberg tables; it currently reports
-  success without changing data.
-- Implement or explicitly reject Rustice `DELETE` for Iceberg tables; it
-  currently fails with `DELETE not supported for Base table`.
+- Explicitly reject standalone Rustice `UPDATE` on Iceberg tables until it is
+  implemented; it currently reports success without changing data.
+- Keep Rustice `DELETE` marked unsupported for Iceberg tables until it is
+  implemented; it currently fails with `DELETE not supported for Base table`.
 - Retest Rustice `MERGE` on Snowflake-created tables and wider schemas. The
   clean Rustice-created simple-table `MERGE` path passes.
 - Test `ICEBERG_MERGE_ON_READ_BEHAVIOR = enabled` and positional delete files
