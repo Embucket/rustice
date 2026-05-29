@@ -35,7 +35,15 @@ pub fn embucket_validator(
 ) -> bool {
     let actual_rows: Vec<String> = actual
         .iter()
-        .map(|row| row.iter().map(&normalizer).collect::<Vec<_>>().join(" "))
+        .map(|row| {
+            // Renormalize the joined row so that a whitespace-only cell
+            // (e.g. `"   "` → empty after `trim`) doesn't leave a stray
+            // separator behind. Without the outer pass, an empty cell
+            // would produce `" 0"` where the upstream-normalized
+            // expected line is just `"0"`.
+            let joined = row.iter().map(&normalizer).collect::<Vec<_>>().join(" ");
+            normalizer(&joined)
+        })
         .collect();
 
     if actual_rows.len() != expected.len() {
@@ -97,6 +105,25 @@ mod tests {
             &[vec!["1".to_string(), "a".to_string()]],
             &["1\ta".to_string()],
         ));
+    }
+
+    #[test]
+    fn rtrimmed_length_repro() {
+        // The actual values are the multi-space strings the test originally
+        // emitted; the expected lines use tabs between columns. The default
+        // normalizer collapses both into "<inner> <count>".
+        let norm = sqllogictest::default_normalizer;
+        let actual = vec![
+            vec!["  hello  ".to_string(), "7".to_string()],
+            vec!["''".to_string(), "0".to_string()],
+            vec!["test   ".to_string(), "4".to_string()],
+        ];
+        let expected = vec![
+            "  hello  \t7".to_string(),
+            "''\t0".to_string(),
+            "test   \t4".to_string(),
+        ];
+        assert!(embucket_validator(norm, &actual, &expected));
     }
 
     #[test]

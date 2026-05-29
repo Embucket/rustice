@@ -11,9 +11,13 @@ use crate::conversion::{
 use crate::error::{Error, Result};
 use crate::output::DFColumnType;
 use datafusion::arrow::array::{Array, AsArray};
-use datafusion::arrow::datatypes::{Fields, Schema};
+use datafusion::arrow::datatypes::{
+    Fields, Float16Type, Float32Type, Float64Type, Int8Type, Int16Type, Int32Type, Int64Type,
+    Schema, UInt8Type, UInt16Type, UInt32Type, UInt64Type,
+};
 use datafusion::arrow::util::display::ArrayFormatter;
 use datafusion::arrow::{array, array::ArrayRef, datatypes::DataType, record_batch::RecordBatch};
+use serde_json::Value as JsonValue;
 
 /// Convert a `Vec<RecordBatch>` to the row-of-strings format used by sqllogictest.
 pub fn convert_batches(schema: &Schema, batches: Vec<RecordBatch>) -> Result<Vec<Vec<String>>> {
@@ -148,15 +152,139 @@ pub fn cell_to_string(col: &ArrayRef, row: usize) -> Result<String> {
             "'{}'",
             pad_subseconds_to_microseconds(arrow_formatted(col, row)?)
         )),
-        // VARIANT/ARRAY/OBJECT-style columns: wrap structured payloads in quotes.
+        // VARIANT/ARRAY/OBJECT-style columns: serialise as compact JSON
+        // (sorted object keys, primitives stringified the same way as
+        // top-level cells) so the output matches snowflake-connector-python's
+        // `json.dumps` rendering instead of Arrow's debug-format
+        // `[a, b, c]` / `{a: 1, b: 2}`.
         DataType::List(_)
         | DataType::LargeList(_)
         | DataType::FixedSizeList(_, _)
         | DataType::ListView(_)
         | DataType::LargeListView(_)
         | DataType::Struct(_)
-        | DataType::Map(_, _) => Ok(format!("'{}'", arrow_formatted(col, row)?)),
+        | DataType::Map(_, _) => {
+            let json = array_value_to_json(col, row);
+            Ok(format!("'{}'", serde_json::to_string(&json).unwrap_or_default()))
+        }
         _ => arrow_formatted(col, row),
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn array_value_to_json(col: &ArrayRef, row: usize) -> JsonValue {
+    if col.is_null(row) {
+        return JsonValue::Null;
+    }
+    match col.data_type() {
+        DataType::Null => JsonValue::Null,
+        DataType::Boolean => JsonValue::Bool(get_row_value!(array::BooleanArray, col, row)),
+        DataType::Int8 => JsonValue::from(col.as_primitive::<Int8Type>().value(row)),
+        DataType::Int16 => JsonValue::from(col.as_primitive::<Int16Type>().value(row)),
+        DataType::Int32 => JsonValue::from(col.as_primitive::<Int32Type>().value(row)),
+        DataType::Int64 => JsonValue::from(col.as_primitive::<Int64Type>().value(row)),
+        DataType::UInt8 => JsonValue::from(col.as_primitive::<UInt8Type>().value(row)),
+        DataType::UInt16 => JsonValue::from(col.as_primitive::<UInt16Type>().value(row)),
+        DataType::UInt32 => JsonValue::from(col.as_primitive::<UInt32Type>().value(row)),
+        DataType::UInt64 => JsonValue::from(col.as_primitive::<UInt64Type>().value(row)),
+        DataType::Float16 => JsonValue::from(f32::from(col.as_primitive::<Float16Type>().value(row))),
+        DataType::Float32 => JsonValue::from(col.as_primitive::<Float32Type>().value(row)),
+        DataType::Float64 => JsonValue::from(col.as_primitive::<Float64Type>().value(row)),
+        DataType::Utf8 => JsonValue::String(
+            get_row_value!(array::StringArray, col, row).to_string(),
+        ),
+        DataType::LargeUtf8 => JsonValue::String(
+            get_row_value!(array::LargeStringArray, col, row).to_string(),
+        ),
+        DataType::Utf8View => JsonValue::String(
+            get_row_value!(array::StringViewArray, col, row).to_string(),
+        ),
+        DataType::List(_) => {
+            let list = col.as_list::<i32>();
+            let values = list.value(row);
+            JsonValue::Array(
+                (0..values.len())
+                    .map(|i| array_value_to_json(&values, i))
+                    .collect(),
+            )
+        }
+        DataType::LargeList(_) => {
+            let list = col.as_list::<i64>();
+            let values = list.value(row);
+            JsonValue::Array(
+                (0..values.len())
+                    .map(|i| array_value_to_json(&values, i))
+                    .collect(),
+            )
+        }
+        DataType::FixedSizeList(_, _) => {
+            let list = col.as_fixed_size_list();
+            let values = list.value(row);
+            JsonValue::Array(
+                (0..values.len())
+                    .map(|i| array_value_to_json(&values, i))
+                    .collect(),
+            )
+        }
+        DataType::Struct(fields) => {
+            let s = col.as_struct();
+            let mut obj = serde_json::Map::new();
+            // Sort by field name to match snowflake-connector-python's
+            // sorted-key JSON output.
+            let mut keyed: Vec<(String, ArrayRef)> = fields
+                .iter()
+                .enumerate()
+                .map(|(idx, f)| (f.name().clone(), s.column(idx).clone()))
+                .collect();
+            keyed.sort_by(|a, b| a.0.cmp(&b.0));
+            for (name, child) in keyed {
+                obj.insert(name, array_value_to_json(&child, row));
+            }
+            JsonValue::Object(obj)
+        }
+        DataType::Map(_, _) => {
+            let map = col.as_map();
+            let keys = map.keys();
+            let values = map.values();
+            let offsets = map.value_offsets();
+            let start = offsets[row] as usize;
+            let end = offsets[row + 1] as usize;
+            let mut entries: Vec<(String, JsonValue)> = (start..end)
+                .map(|i| {
+                    let k = match keys.data_type() {
+                        DataType::Utf8 => keys
+                            .as_any()
+                            .downcast_ref::<array::StringArray>()
+                            .unwrap()
+                            .value(i)
+                            .to_string(),
+                        DataType::LargeUtf8 => keys
+                            .as_any()
+                            .downcast_ref::<array::LargeStringArray>()
+                            .unwrap()
+                            .value(i)
+                            .to_string(),
+                        _ => serde_json::to_string(&array_value_to_json(keys, i))
+                            .unwrap_or_default(),
+                    };
+                    (k, array_value_to_json(values, i))
+                })
+                .collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut obj = serde_json::Map::new();
+            for (k, v) in entries {
+                obj.insert(k, v);
+            }
+            JsonValue::Object(obj)
+        }
+        DataType::Dictionary(_, _) => {
+            let dict = col.as_any_dictionary();
+            let key = dict.normalized_keys()[row];
+            array_value_to_json(dict.values(), key)
+        }
+        // Fall back to arrow's formatted form for less-common types.
+        _ => arrow_formatted(col, row)
+            .map_or(JsonValue::Null, JsonValue::String),
     }
 }
 
