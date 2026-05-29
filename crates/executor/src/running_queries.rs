@@ -90,11 +90,11 @@ impl RunningQuery {
         // use loop here to bypass default query status we posted at init
         // it should not go to the actual loop and should resolve as soon as results are ready
         loop {
-            rx.changed().await?;
-            let status = *rx.borrow();
+            let status = *rx.borrow_and_update();
             if let Some(status) = status {
                 break Ok(status);
             }
+            rx.changed().await?;
         }
     }
 

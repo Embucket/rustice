@@ -325,6 +325,42 @@ async fn test_parallel_run() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::expect_used)]
+async fn test_concurrent_fast_alter_session_does_not_miss_completion() {
+    const QUERY_COUNT: usize = 64;
+    let execution_svc =
+        make_test_execution_svc(Config::default().with_max_concurrency_level(QUERY_COUNT)).await;
+
+    execution_svc
+        .create_session("test_session_id")
+        .await
+        .expect("Failed to create session");
+
+    let mut futures = Vec::new();
+    for _ in 0..QUERY_COUNT {
+        let svc = execution_svc.clone();
+        futures.push(tokio::task::spawn(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                svc.query(
+                    "test_session_id",
+                    "ALTER SESSION SET query_tag = 'snowplow_dbt'",
+                    QueryContext::default(),
+                ),
+            )
+            .await
+        }));
+    }
+
+    let results = join_all(futures).await;
+    for result in results {
+        let timed_result = result.expect("Task panicked");
+        let query_result = timed_result.expect("Fast ALTER SESSION query timed out");
+        query_result.expect("Fast ALTER SESSION query failed");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::expect_used)]
 async fn test_query_timeout() {
     let execution_svc = make_test_execution_svc(Config::default().with_query_timeout(1)).await;
 
