@@ -260,44 +260,79 @@ fn select_top1_batches(
     order_by: &[PhysicalSortExpr],
     output_schema: SchemaRef,
 ) -> Result<Vec<RecordBatch>> {
+    use datafusion::arrow::row::{OwnedRow, RowConverter, SortField};
     use datafusion_common::hash_map::Entry;
 
-    let mut winners: datafusion_common::HashMap<Vec<ScalarValue>, Candidate> =
+    struct Top1Winner {
+        batch_index: usize,
+        row_index: usize,
+        order: OwnedRow,
+    }
+
+    let Some(first_batch) = input_batches.first() else {
+        return Ok(Vec::new());
+    };
+    let schema = first_batch.schema();
+
+    // Encode partition keys canonically (for grouping) and order values in sort order, so
+    // the hot loop hashes/compares contiguous byte rows instead of materializing a
+    // ScalarValue vector per input row.
+    let partition_converter = RowConverter::new(
+        partition_by
+            .iter()
+            .map(|expr| Ok(SortField::new(expr.data_type(schema.as_ref())?)))
+            .collect::<Result<Vec<_>>>()?,
+    )?;
+    let order_converter = RowConverter::new(
+        order_by
+            .iter()
+            .map(|sort_expr| {
+                Ok(SortField::new_with_options(
+                    sort_expr.expr.data_type(schema.as_ref())?,
+                    sort_expr.options,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?,
+    )?;
+
+    let mut winners: datafusion_common::HashMap<OwnedRow, Top1Winner> =
         datafusion_common::HashMap::default();
-    let mut input_order = 0_usize;
 
     for (batch_index, batch) in input_batches.iter().enumerate() {
         let partition_columns = evaluate_exprs(partition_by, batch)?;
         let order_columns = evaluate_sort_exprs(order_by, batch)?;
+        let partition_rows = partition_converter.convert_columns(&partition_columns)?;
+        let order_rows = order_converter.convert_columns(&order_columns)?;
 
         for row_index in 0..batch.num_rows() {
-            let key = scalar_row(&partition_columns, row_index)?;
-            let order_values = scalar_row(&order_columns, row_index)?;
-            let candidate = Candidate {
-                batch_index,
-                row_index,
-                input_order,
-                order_values,
-            };
-            input_order += 1;
-
-            match winners.entry(key) {
+            let order_row = order_rows.row(row_index);
+            match winners.entry(partition_rows.row(row_index).owned()) {
                 Entry::Occupied(mut slot) => {
-                    if compare_candidates(&candidate, slot.get(), order_by)?.is_lt() {
-                        slot.insert(candidate);
+                    // Sort-encoded rows compare bytewise in the configured sort order, so a
+                    // strictly smaller row replaces the winner; ties keep the earliest seen.
+                    if order_row < slot.get().order.row() {
+                        slot.insert(Top1Winner {
+                            batch_index,
+                            row_index,
+                            order: order_row.owned(),
+                        });
                     }
                 }
                 Entry::Vacant(slot) => {
-                    slot.insert(candidate);
+                    slot.insert(Top1Winner {
+                        batch_index,
+                        row_index,
+                        order: order_row.owned(),
+                    });
                 }
             }
         }
     }
 
     let mut selected_by_batch = vec![Vec::new(); input_batches.len()];
-    for candidate in winners.into_values() {
-        selected_by_batch[candidate.batch_index].push(SelectedRow {
-            row_index: candidate.row_index,
+    for winner in winners.into_values() {
+        selected_by_batch[winner.batch_index].push(SelectedRow {
+            row_index: winner.row_index,
             row_number: 1,
         });
     }
