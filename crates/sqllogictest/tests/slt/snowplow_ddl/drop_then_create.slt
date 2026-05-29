@@ -1,0 +1,45 @@
+# Snowplow Phase B pattern: DROP TABLE; CREATE TABLE AS <incremental
+# select>. The fresh CREATE must produce exactly the SELECT'd rows with
+# no carryover from the dropped table.
+
+statement ok
+CREATE TABLE phase_b (id INTEGER, name VARCHAR)
+
+statement ok
+INSERT INTO phase_b VALUES (1, 'a'), (2, 'b'), (3, 'c')
+
+query I
+SELECT count(*) FROM phase_b
+----
+3
+
+statement ok
+DROP TABLE phase_b
+
+# Re-create with different shape — old rows must not bleed through.
+statement ok
+CREATE TABLE phase_b AS SELECT * FROM (VALUES (10, 'x'), (20, 'y')) AS v(id, name)
+
+query I
+SELECT count(*) FROM phase_b
+----
+2
+
+query IT
+SELECT id, name FROM phase_b ORDER BY id
+----
+10	x
+20	y
+
+# Re-create the same table again with an empty seed body — count must
+# go to 0, not 4.
+statement ok
+DROP TABLE phase_b
+
+statement ok
+CREATE TABLE phase_b AS SELECT * FROM (VALUES (0, 'z')) AS v(id, name) WHERE FALSE
+
+query I
+SELECT count(*) FROM phase_b
+----
+0

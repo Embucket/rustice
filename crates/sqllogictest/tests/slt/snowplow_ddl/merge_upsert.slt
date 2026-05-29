@@ -1,0 +1,163 @@
+# MERGE INTO target USING source ... WHEN MATCHED ... WHEN NOT MATCHED ...
+# is how dbt-snowplow-web upserts the `+materialized: incremental` derived
+# tables (snowplow_web_sessions, _page_views, _users, _user_mapping).
+#
+# The setup pattern is:
+#   1. CREATE TABLE target AS SELECT * FROM source_this_run
+#   2. CREATE TABLE source__dbt_tmp AS SELECT * FROM source_this_run
+#   3. MERGE INTO target USING source__dbt_tmp ON (gating window) AND key
+#        WHEN MATCHED THEN UPDATE ...
+#        WHEN NOT MATCHED THEN INSERT ...
+#
+# Failure mode if MERGE is buggy: every source row is treated as NOT MATCHED
+# and INSERTed alongside the existing target rows — producing 2× duplicates.
+
+# ---------------------------------------------------------------------------
+# Setup: a `target` with three rows and a `source` that overlaps on id=2
+# (update) and id=4 (insert).
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE merge_target (id INTEGER, val VARCHAR)
+
+statement ok
+INSERT INTO merge_target VALUES (1, 'one'), (2, 'two'), (3, 'three')
+
+statement ok
+CREATE TABLE merge_source (id INTEGER, val VARCHAR)
+
+statement ok
+INSERT INTO merge_source VALUES (2, 'TWO'), (4, 'four')
+
+# ---------------------------------------------------------------------------
+# Plain key-only MERGE: matched updates, unmatched inserts. Total = 4.
+# ---------------------------------------------------------------------------
+
+statement ok
+MERGE INTO merge_target AS t
+USING merge_source AS s
+ON s.id = t.id
+WHEN MATCHED THEN UPDATE SET val = s.val
+WHEN NOT MATCHED THEN INSERT (id, val) VALUES (s.id, s.val)
+
+query I
+SELECT count(*) FROM merge_target
+----
+4
+
+query IT
+SELECT id, val FROM merge_target ORDER BY id
+----
+1	one
+2	TWO
+3	three
+4	four
+
+# ---------------------------------------------------------------------------
+# Running the SAME MERGE again must be idempotent — every source row is
+# now MATCHED, so the update fires and no new rows are inserted. Total
+# stays at 4.
+# ---------------------------------------------------------------------------
+
+statement ok
+MERGE INTO merge_target AS t
+USING merge_source AS s
+ON s.id = t.id
+WHEN MATCHED THEN UPDATE SET val = s.val
+WHEN NOT MATCHED THEN INSERT (id, val) VALUES (s.id, s.val)
+
+query I
+SELECT count(*) FROM merge_target
+----
+4
+
+# ---------------------------------------------------------------------------
+# Snowplow-style MERGE with a window predicate on the target side. When
+# the predicate matches no target rows, every source row goes through
+# the WHEN NOT MATCHED branch.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE merge_target_ts (id INTEGER, val VARCHAR, ts TIMESTAMP)
+
+statement ok
+INSERT INTO merge_target_ts VALUES
+  (1, 'one',   CAST('2026-05-27 20:00:00' AS TIMESTAMP)),
+  (2, 'two',   CAST('2026-05-27 21:00:00' AS TIMESTAMP)),
+  (3, 'three', CAST('2026-05-27 22:00:00' AS TIMESTAMP))
+
+statement ok
+CREATE TABLE merge_source_ts (id INTEGER, val VARCHAR, ts TIMESTAMP)
+
+statement ok
+INSERT INTO merge_source_ts VALUES
+  (1, 'ONE',   CAST('2026-05-27 20:00:00' AS TIMESTAMP)),
+  (2, 'TWO',   CAST('2026-05-27 21:00:00' AS TIMESTAMP)),
+  (4, 'four',  CAST('2026-05-27 23:00:00' AS TIMESTAMP))
+
+# Case A: gating window covers ALL existing target rows. id=1,2 match
+# (update), id=4 doesn't match (insert). Total = 4.
+statement ok
+MERGE INTO merge_target_ts AS t
+USING merge_source_ts AS s
+ON (t.ts BETWEEN CAST('2026-05-27 20:00:00' AS TIMESTAMP) AND CAST('2026-05-27 23:00:00' AS TIMESTAMP))
+   AND s.id = t.id
+WHEN MATCHED THEN UPDATE SET val = s.val
+WHEN NOT MATCHED THEN INSERT (id, val, ts) VALUES (s.id, s.val, s.ts)
+
+query I
+SELECT count(*) FROM merge_target_ts
+----
+4
+
+query IT
+SELECT id, val FROM merge_target_ts ORDER BY id
+----
+1	ONE
+2	TWO
+3	three
+4	four
+
+# Case B: gating window covers NO existing target rows. Every source row
+# becomes NOT MATCHED → INSERTed. Pre-existing target rows stay. The
+# count must increase by exactly |source| (not double or more).
+#
+# This is the snowplow regression shape: setup.slt's derived-table MERGE
+# predicates reference April 2026 timestamps while the events fixture is
+# stamped May 2026, so every source row is NOT MATCHED and gets inserted
+# alongside the rows already placed there by the preceding CTAS.
+
+statement ok
+CREATE TABLE merge_target_b (id INTEGER, val VARCHAR, ts TIMESTAMP)
+
+statement ok
+INSERT INTO merge_target_b VALUES
+  (1, 'one',   CAST('2026-05-27 20:00:00' AS TIMESTAMP)),
+  (2, 'two',   CAST('2026-05-27 21:00:00' AS TIMESTAMP)),
+  (3, 'three', CAST('2026-05-27 22:00:00' AS TIMESTAMP))
+
+statement ok
+MERGE INTO merge_target_b AS t
+USING merge_source_ts AS s
+ON (t.ts BETWEEN CAST('2030-01-01 00:00:00' AS TIMESTAMP) AND CAST('2030-12-31 23:59:59' AS TIMESTAMP))
+   AND s.id = t.id
+WHEN MATCHED THEN UPDATE SET val = s.val
+WHEN NOT MATCHED THEN INSERT (id, val, ts) VALUES (s.id, s.val, s.ts)
+
+# Expected total: 3 (pre-existing, untouched) + 3 (all source inserted
+# because no match) = 6. NOT 9 or 12 — the MERGE must only emit each
+# source row once when it falls through to the NOT MATCHED branch.
+query I
+SELECT count(*) FROM merge_target_b
+----
+6
+
+# All three pre-existing rows are still present, AND each source row
+# appears exactly once.
+query II
+SELECT id, count(*) FROM merge_target_b GROUP BY id ORDER BY id
+----
+1	2
+2	2
+3	1
+4	1

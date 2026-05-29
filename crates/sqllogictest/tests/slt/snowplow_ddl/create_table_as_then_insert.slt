@@ -1,0 +1,80 @@
+# Snowplow Phase A pattern: CREATE TABLE ... AS <seed select>; INSERT
+# INTO ... <real-data select>. The two must compose correctly:
+#   * if the seed select returns zero rows, the table holds exactly the
+#     INSERT'd rows
+#   * if the seed select returns rows, the table holds seed + insert
+# Neither path should silently duplicate.
+
+# ---------------------------------------------------------------------------
+# Case A: seed CTAS is empty (the canonical "9999-01-01" sentinel pattern
+# in the snowplow full-refresh bodies). Total count = INSERT'd rows only.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE seed_empty AS SELECT * FROM (VALUES (0, 'seed')) AS v(id, name) WHERE FALSE
+
+query I
+SELECT count(*) FROM seed_empty
+----
+0
+
+statement ok
+INSERT INTO seed_empty SELECT * FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) AS v(id, name)
+
+query I
+SELECT count(*) FROM seed_empty
+----
+3
+
+# ---------------------------------------------------------------------------
+# Case B: seed CTAS returns rows. Total = seed + insert (NOT 2*insert).
+# This is the case that breaks the snowplow Phase A flow when the
+# full-refresh CTAS bounds match the incremental INSERT bounds.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE seed_nonempty AS SELECT * FROM (VALUES (1, 'a'), (2, 'b')) AS v(id, name)
+
+query I
+SELECT count(*) FROM seed_nonempty
+----
+2
+
+statement ok
+INSERT INTO seed_nonempty SELECT * FROM (VALUES (3, 'c'), (4, 'd'), (5, 'e')) AS v(id, name)
+
+query I
+SELECT count(*) FROM seed_nonempty
+----
+5
+
+# ---------------------------------------------------------------------------
+# Case C: seed CTAS and INSERT use the SAME source select. This is exactly
+# the snowplow regression: if the seed body and the incremental body
+# select the same rows, the table ends up with 2× duplicates.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE src_rows (id INTEGER, name VARCHAR)
+
+statement ok
+INSERT INTO src_rows VALUES (1, 'a'), (2, 'b'), (3, 'c')
+
+statement ok
+CREATE TABLE dup_check AS SELECT * FROM src_rows
+
+statement ok
+INSERT INTO dup_check SELECT * FROM src_rows
+
+# Expected: 6 rows (3 from CTAS + 3 from INSERT). This is engine-correct;
+# the snowplow setup avoids this by gating the CTAS to zero rows. Test
+# documents the behaviour so a future change is caught.
+query I
+SELECT count(*) FROM dup_check
+----
+6
+
+query I
+SELECT count(*) FROM (SELECT DISTINCT id FROM dup_check)
+----
+3
