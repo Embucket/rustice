@@ -60,6 +60,11 @@ impl SchemaProvider for CachingSchema {
     #[tracing::instrument(name = "CachingSchema::table", level = "debug", skip(self), err)]
     async fn table(&self, name: &str) -> Result<Option<Arc<dyn TableProvider>>, DataFusionError> {
         if self.iceberg_catalog.is_some() {
+            if let Some(table) = self.tables_cache.get(name)
+                && table.table_type() == TableType::View
+            {
+                return Ok(Some(Arc::clone(table.value()) as Arc<dyn TableProvider>));
+            }
             return self.load_fresh_iceberg_table(name).await;
         }
 
