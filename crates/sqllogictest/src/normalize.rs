@@ -165,7 +165,10 @@ pub fn cell_to_string(col: &ArrayRef, row: usize) -> Result<String> {
         | DataType::Struct(_)
         | DataType::Map(_, _) => {
             let json = array_value_to_json(col, row);
-            Ok(format!("'{}'", serde_json::to_string(&json).unwrap_or_default()))
+            Ok(format!(
+                "'{}'",
+                serde_json::to_string(&json).unwrap_or_default()
+            ))
         }
         _ => arrow_formatted(col, row),
     }
@@ -187,18 +190,20 @@ fn array_value_to_json(col: &ArrayRef, row: usize) -> JsonValue {
         DataType::UInt16 => JsonValue::from(col.as_primitive::<UInt16Type>().value(row)),
         DataType::UInt32 => JsonValue::from(col.as_primitive::<UInt32Type>().value(row)),
         DataType::UInt64 => JsonValue::from(col.as_primitive::<UInt64Type>().value(row)),
-        DataType::Float16 => JsonValue::from(f32::from(col.as_primitive::<Float16Type>().value(row))),
+        DataType::Float16 => {
+            JsonValue::from(f32::from(col.as_primitive::<Float16Type>().value(row)))
+        }
         DataType::Float32 => JsonValue::from(col.as_primitive::<Float32Type>().value(row)),
         DataType::Float64 => JsonValue::from(col.as_primitive::<Float64Type>().value(row)),
-        DataType::Utf8 => JsonValue::String(
-            get_row_value!(array::StringArray, col, row).to_string(),
-        ),
-        DataType::LargeUtf8 => JsonValue::String(
-            get_row_value!(array::LargeStringArray, col, row).to_string(),
-        ),
-        DataType::Utf8View => JsonValue::String(
-            get_row_value!(array::StringViewArray, col, row).to_string(),
-        ),
+        DataType::Utf8 => {
+            JsonValue::String(get_row_value!(array::StringArray, col, row).to_string())
+        }
+        DataType::LargeUtf8 => {
+            JsonValue::String(get_row_value!(array::LargeStringArray, col, row).to_string())
+        }
+        DataType::Utf8View => {
+            JsonValue::String(get_row_value!(array::StringViewArray, col, row).to_string())
+        }
         DataType::List(_) => {
             let list = col.as_list::<i32>();
             let values = list.value(row);
@@ -264,8 +269,9 @@ fn array_value_to_json(col: &ArrayRef, row: usize) -> JsonValue {
                             .unwrap()
                             .value(i)
                             .to_string(),
-                        _ => serde_json::to_string(&array_value_to_json(keys, i))
-                            .unwrap_or_default(),
+                        _ => {
+                            serde_json::to_string(&array_value_to_json(keys, i)).unwrap_or_default()
+                        }
                     };
                     (k, array_value_to_json(values, i))
                 })
@@ -283,8 +289,7 @@ fn array_value_to_json(col: &ArrayRef, row: usize) -> JsonValue {
             array_value_to_json(dict.values(), key)
         }
         // Fall back to arrow's formatted form for less-common types.
-        _ => arrow_formatted(col, row)
-            .map_or(JsonValue::Null, JsonValue::String),
+        _ => arrow_formatted(col, row).map_or(JsonValue::Null, JsonValue::String),
     }
 }
 
