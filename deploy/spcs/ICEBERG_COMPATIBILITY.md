@@ -61,7 +61,7 @@ The service was dropped and the compute pool was suspended after the run.
 | Rustice writes, Snowflake reads | `NUMBER(38,0)` insert | Pass | Snowflake read `2,1,4,5` |
 | Rustice writes, Snowflake reads | `NUMBER(18,4)` insert | Pass | Snowflake read `2,3.2500,6.5000,9.7500` |
 | Rustice writes, Snowflake reads | `NUMBER(5,0)` insert | Pass | Latest SPCS run: Rustice inserted `(2), (5)` and Snowflake read `2`, `5` |
-| Rustice writes, Snowflake reads | Wide all-types insert | Needs rerun | Before the small-decimal fix this failed because of `NUMBER(5,0)` metadata bounds |
+| Rustice writes, Snowflake reads | Wide all-types insert | Pass | Rustice-created and Snowflake-created wide tables both read back in Snowflake with matching aggregates |
 | Rustice writes, Snowflake reads | Rustice `MERGE` | Not verified | Historical run failed in Rustice planning before writing data |
 | External writer controls | PyIceberg simple append | Pass | Snowflake read `3,90001.0,90003.0,270006.0,2` |
 | External writer controls | Spark Iceberg simple insert | Pass | Snowflake read `3,91001.0,91003.0,273006.0,2` |
@@ -140,6 +140,39 @@ Row-level result:
 
 Boolean display casing differs between CLIs, but the values match.
 
+Full reverse-table retest:
+
+Two wide reverse-write variants were rerun after the small-decimal metadata fix.
+Both tables used the same all-types shape as the larger Snowflake-write model:
+`NUMBER(38,0)`, `NUMBER(5,0)`, `NUMBER(18,4)`, `DOUBLE`, `FLOAT`, `BOOLEAN`,
+`STRING`, `VARCHAR`, `BINARY`, `DATE`, `TIME`, `TIMESTAMP_NTZ`, and
+`TIMESTAMP_LTZ`.
+
+| Table | Created by | Written by | Rustice result | Snowflake result | Status |
+| --- | --- | --- | --- | --- | --- |
+| `compat_rustice_all_types_retest` | Rustice | Rustice `INSERT` | `10000,1,10000,50005000,62506250.0000,5000,10000` | Same | Pass |
+| `compat_reverse_sf_all_types_retest` | Snowflake | Rustice `INSERT` | `10000,1,10000,50005000,62506250.0000,5000,10000` | Same | Pass |
+
+Result tuple order:
+
+```text
+row_count,min_id,max_id,sum_small,sum_dec,true_count,bin_count
+```
+
+Sample rows checked in Snowflake for both tables:
+
+| `id` | `small_num` | `dec_col` | `dbl_col` | `float_col` | `bool_col` | `str_col` | `varchar_col` | `bin_col` | `date_col` | `time_col` | `ts_ntz` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `1` | `1` | `1.2500` | `0.3333` | `0.5` | `false` | `str-1` | `varchar-1` | `abcd` | `2022-01-01` | `00:00:00` | `2022-08-21T00:00:00` |
+| `42` | `42` | `52.5000` | `14.0` | `21.0` | `true` | `str-42` | `varchar-42` | `abcd` | `2022-01-01` | `00:00:00` | `2022-08-21T00:00:00` |
+| `10000` | `10000` | `12500.0000` | `3333.3333` | `5000.0` | `true` | `str-10000` | `varchar-10000` | `abcd` | `2022-01-01` | `00:00:00` | `2022-08-21T00:00:00` |
+
+`TIMESTAMP_LTZ` display depends on Snowflake session timezone. The same inserted
+instant was visible in Snowflake as `2022-08-21T07:00:00` for the
+Rustice-created table and `2022-08-20T23:00:00-08:00` for the Snowflake-created
+table. This did not affect aggregate or row-value compatibility for the tested
+non-timezone columns.
+
 ## Snowflake-Write Test Model
 
 The larger Snowflake-write run used five independent tables, each starting from
@@ -213,7 +246,8 @@ Observed Snowflake-managed Iceberg DDL limits:
 Before the small-decimal fix in `iceberg-rust`, Rustice writes containing
 `NUMBER(5,0)` were visible to Rustice but Snowflake returned zero rows. This was
 isolated to generated Iceberg data-file statistics for small-precision decimals,
-not to Horizon commit visibility in general.
+not to Horizon commit visibility in general. The full reverse-table retest above
+confirms that the wide table now works after the fix.
 
 Historical failing table:
 
@@ -288,8 +322,6 @@ Iceberg tables.
 
 ## Remaining Gaps
 
-- Rerun the full wide Rustice-write table after the small-decimal fix to mark
-  the all-types reverse path as pass.
 - Fix and retest Rustice `MERGE` planning for Horizon tables.
 - Test `ICEBERG_MERGE_ON_READ_BEHAVIOR = enabled` and positional delete files
   separately.
