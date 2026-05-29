@@ -20,10 +20,10 @@ Rustice image:
 iwuwgvk-lv71752.registry.snowflakecomputing.com/rustice_app/public/rustice_repo/rustice:spcs-20260529-stale-fix
 ```
 
-Rustice commit:
+Rustice revision:
 
 ```text
-PR #35 local build with fresh Horizon table metadata lookup
+PR #35 build with fresh Horizon table metadata lookup
 ```
 
 `iceberg-rust` rev:
@@ -72,9 +72,10 @@ The service was dropped and the compute pool was suspended after the run.
 | External writer controls | PyIceberg simple append | Pass | Snowflake read `3,90001.0,90003.0,270006.0,2` |
 | External writer controls | Spark Iceberg simple insert | Pass | Snowflake read `3,91001.0,91003.0,273006.0,2` |
 
-## Latest Retest Details
+## Broad Compatibility Retest Details
 
-The latest run used this deployment shape:
+The broad compatibility run before the stale metadata retest used this
+deployment shape:
 
 ```bash
 SNOW_CONFIG_FILE=/home/artem/.snowflake/config.toml \
