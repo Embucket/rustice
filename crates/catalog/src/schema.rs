@@ -11,6 +11,7 @@ use datafusion_iceberg::DataFusionTable;
 use iceberg_rust::catalog::Catalog;
 use iceberg_rust::catalog::create::CreateTableBuilder;
 use iceberg_rust::catalog::tabular::Tabular as IcebergTabular;
+use iceberg_rust::error::Error as IcebergError;
 use iceberg_rust_spec::identifier::Identifier;
 use snafu::ResultExt;
 use std::any::Any;
@@ -58,6 +59,10 @@ impl SchemaProvider for CachingSchema {
     #[allow(clippy::as_conversions)]
     #[tracing::instrument(name = "CachingSchema::table", level = "debug", skip(self), err)]
     async fn table(&self, name: &str) -> Result<Option<Arc<dyn TableProvider>>, DataFusionError> {
+        if self.iceberg_catalog.is_some() {
+            return self.load_fresh_iceberg_table(name).await;
+        }
+
         if self.iceberg_catalog.is_none()
             && let Some(table) = self.tables_cache.get(name)
         {
@@ -150,6 +155,35 @@ impl SchemaProvider for CachingSchema {
 }
 
 impl CachingSchema {
+    async fn load_fresh_iceberg_table(
+        &self,
+        requested_name: &str,
+    ) -> Result<Option<Arc<dyn TableProvider>>, DataFusionError> {
+        let catalog = self.iceberg_catalog.clone().ok_or_else(|| {
+            DataFusionError::Internal("Iceberg catalog missing from Iceberg schema".to_string())
+        })?;
+
+        let table_name = self
+            .tables_cache
+            .get(requested_name)
+            .map_or_else(|| requested_name.to_string(), |table| table.name.clone());
+        let namespace = vec![self.iceberg_namespace.clone()];
+        let ident = Identifier::new(&namespace, &table_name);
+
+        match catalog.load_tabular(&ident).await {
+            Ok(tabular) => {
+                let provider: Arc<dyn TableProvider> =
+                    Arc::new(DataFusionTable::new(tabular, None, None, None));
+                let caching_table: Arc<CachingTable> =
+                    Arc::new(CachingTable::new(table_name, provider));
+                let table_provider: Arc<dyn TableProvider> = caching_table;
+                Ok(Some(table_provider))
+            }
+            Err(IcebergError::CatalogNotFound | IcebergError::NotFound(_)) => Ok(None),
+            Err(error) => Err(DataFusionError::External(Box::new(error))),
+        }
+    }
+
     /// Asynchronously create an iceberg table from a `CreateTableBuilder` and
     /// reflect it in the in-memory mirror and local cache. Use this from async
     /// SQL handlers instead of the sync `register_table` trait method.
