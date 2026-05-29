@@ -163,7 +163,10 @@ impl EmbucketCatalogList {
                 for table_alias in case_aliases(&table_name) {
                     caching_schema.tables_cache.insert(
                         table_alias.clone(),
-                        Arc::new(CachingTable::new(table_alias, Arc::clone(&table_provider))),
+                        Arc::new(CachingTable::new(
+                            table_name.clone(),
+                            Arc::clone(&table_provider),
+                        )),
                     );
                 }
             }

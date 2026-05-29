@@ -11,6 +11,7 @@ spec:
         CATALOG_URL: {{ catalog_url }}
         ICEBERG_REST_PREFIX: {{ horizon_database }}
         ICEBERG_REST_CATALOG: {{ client_database }}
+        ICEBERG_REST_ACCESS_DELEGATION: "vended-credentials"
         ICEBERG_REST_SCOPE: {{ horizon_scope }}
         ICEBERG_REST_SCHEMAS: {{ horizon_schemas }}
         ICEBERG_REST_TABLES: {{ horizon_tables }}

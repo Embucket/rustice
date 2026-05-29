@@ -247,7 +247,7 @@ The default mode is `RUSTICE_HORIZON_AUTH=pat`:
 4. Stores the PAT in a Snowflake `SECRET`.
 5. Mounts the secret into the SPCS container as `ICEBERG_REST_CREDENTIAL`.
 
-`rustice` exchanges that credential for a Horizon Catalog access token at startup and uses `ICEBERG_REST_PREFIX` as the Horizon database/prefix.
+`rustice` exchanges that credential for a Horizon Catalog access token at startup, sets `ICEBERG_REST_ACCESS_DELEGATION=vended-credentials` so Horizon returns temporary object-store credentials on table load/create, and uses `ICEBERG_REST_PREFIX` as the Horizon database/prefix.
 The SQL catalog name exposed by Rustice is configured separately through `RUSTICE_CLIENT_DATABASE` and is passed to the container as `ICEBERG_REST_CATALOG`. For example, `RUSTICE_HORIZON_DATABASE=RUSTICE_SPCS` with `RUSTICE_CLIENT_DATABASE=rustice_spcs` lets users query `rustice_spcs.public.<table>` while Horizon stores the tables under Snowflake database `RUSTICE_SPCS`.
 
 ## Dry Run SQL

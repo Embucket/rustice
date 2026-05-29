@@ -1,31 +1,457 @@
 # Snowflake Horizon Iceberg Compatibility
 
-This file records a manual compatibility run against Snowflake-managed Iceberg
-tables through the Horizon REST catalog. The purpose is to verify whether
-Rustice can read table snapshots written by Snowflake directly to Horizon,
-bypassing Rustice/SPCS for writes.
+This file records live compatibility checks for Rustice running in Snowpark
+Container Services against Snowflake-managed Iceberg tables through the Horizon
+REST catalog.
 
-Run date: 2026-05-28
+The current verified scope is read compatibility in both directions for
+copy-on-write Snowflake-managed Iceberg snapshots. Merge-on-read and positional
+delete files were not enabled for these runs. The latest SPCS retest also
+verifies sequential mixed-writer `INSERT` compatibility when Snowflake and
+Rustice alternate commits against the same table, plus sequential mixed-writer
+`MERGE` compatibility for lower-case/quoted Iceberg schemas.
 
-## Environment
+## Latest Verified Run
 
-- Snowflake connection: `/home/artem/.snowflake/config.toml`, profile `snowflake`
-- Rustice SPCS client config:
-  `deploy/spcs/generated/config.toml`, profile `embucket_spcs`
-- SPCS service: `RUSTICE_APP.PUBLIC.RUSTICE_SERVICE`
-- SPCS image:
-  `iwuwgvk-lv71752.registry.snowflakecomputing.com/rustice_app/public/rustice_repo/rustice:iceberg-compat-20260528`
-- SPCS ingress:
-  - Forward Snowflake-write run: `ilxz2e-iwuwgvk-lv71752.snowflakecomputing.app`
-  - Reverse Rustice-write run: `mlxz2e-iwuwgvk-lv71752.snowflakecomputing.app`
-- Horizon database/schema:
-  `RUSTICE_SPCS."compat_iceberg"`
-- Test mode: default Snowflake-managed Iceberg behavior. The run did not enable
-  `ICEBERG_MERGE_ON_READ_BEHAVIOR`.
+Run date: 2026-05-29
 
-## Type Coverage
+Rustice image:
 
-Each test table was created as a Snowflake-managed Iceberg table:
+```text
+iwuwgvk-lv71752.registry.snowflakecomputing.com/rustice_app/public/rustice_repo/rustice:spcs-20260529-stale-fix
+```
+
+Rustice revision:
+
+```text
+PR #35 build with fresh Horizon table metadata lookup
+```
+
+`iceberg-rust` rev:
+
+```text
+211bd611e53628eb26de1ff9f5f31901c5cd7d60
+```
+
+SPCS service:
+
+```text
+RUSTICE_APP.PUBLIC.RUSTICE_SERVICE
+```
+
+Latest observed ingress:
+
+```text
+mnxz2e-iwuwgvk-lv71752.snowflakecomputing.app
+```
+
+The service was dropped and the compute pool was suspended after the run.
+
+## Current Compatibility Matrix
+
+| Direction | Operation | Status | Evidence |
+| --- | --- | --- | --- |
+| Snowflake writes, Rustice reads | Baseline table read | Pass | `RUSTICE_SPCS.PUBLIC.SMOKE` returned `1, ok` through both Snowflake CLI and `embucket-snow` |
+| Snowflake writes, Rustice reads | `INSERT` | Pass | 10,010-row aggregate matched Snowflake |
+| Snowflake writes, Rustice reads | `DELETE` | Pass | 9,000-row aggregate matched Snowflake |
+| Snowflake writes, Rustice reads | `UPDATE` | Pass | Updated row values matched Snowflake |
+| Snowflake writes, Rustice reads | `MERGE` | Pass | Matched update plus insert aggregate matched Snowflake |
+| Snowflake writes, Rustice reads | Combined `INSERT`, `DELETE`, `UPDATE`, `MERGE` | Pass | Latest compact run returned `3,1,4,23,23.2500` through both engines |
+| Rustice writes, Snowflake reads | `DOUBLE`, `STRING`, `BOOLEAN` insert | Pass | Snowflake read `3,92001.0,92003.0,276006.0,2` |
+| Rustice writes, Snowflake reads | Non-numeric mixed insert | Pass | Snowflake read `3,k1,k3,2,3,2024-01-01,03:04:05,2024-01-03T03:04:05` |
+| Rustice writes, Snowflake reads | Temporal insert | Pass | Snowflake read `2,1.0,2.0,2024-01-01,02:03:04,2024-01-02T02:03:04` |
+| Rustice writes, Snowflake reads | Binary insert | Pass | Snowflake read `2,1.0,2.0,2` |
+| Rustice writes, Snowflake reads | `NUMBER(38,0)` insert | Pass | Snowflake read `2,1,4,5` |
+| Rustice writes, Snowflake reads | `NUMBER(18,4)` insert | Pass | Snowflake read `2,3.2500,6.5000,9.7500` |
+| Rustice writes, Snowflake reads | `NUMBER(5,0)` insert | Pass | Latest SPCS run: Rustice inserted `(2), (5)` and Snowflake read `2`, `5` |
+| Rustice writes, Snowflake reads | Wide all-types insert | Pass | Rustice-created and Snowflake-created wide tables both read back in Snowflake with matching aggregates |
+| Rustice writes, Snowflake reads | Simple Rustice `MERGE` | Pass | Rustice updated one row and inserted one row; Snowflake read the same result |
+| Rustice writes, Snowflake reads | Standalone Rustice `UPDATE` | Unsupported | Currently returns success but does not change table rows; it should reject until implemented |
+| Rustice writes, Snowflake reads | Rustice `DELETE` | Unsupported | `DELETE not supported for Base table` |
+| Mixed Snowflake/Rustice writers | Snowflake-created table, sequential `INSERT` commits | Pass | Snowflake inserted `1,2`; Rustice inserted `3,4`; Snowflake inserted `5`; Rustice inserted `6`; both engines read `1..6` |
+| Mixed Snowflake/Rustice writers | Rustice-created table, sequential `INSERT` commits | Pass | Rustice inserted `1,2`; Snowflake inserted `3`; Rustice read `1,2,3`; Rustice inserted `4`; Snowflake read `1..4` |
+| Mixed Snowflake/Rustice writers | Snowflake-created lower-case table, sequential `MERGE` commits | Pass | Snowflake `MERGE` updated `2` and inserted `3`; Rustice read that snapshot, then Rustice `MERGE` updated `2` and inserted `4`; a final Snowflake `MERGE` updated `4` and inserted `5`; Rustice read rows `1..5` |
+| Mixed Snowflake/Rustice writers | Rustice-created table, sequential `MERGE` commits | Pass | Snowflake `MERGE` updated `2` and inserted `3`; Rustice read that snapshot, then Rustice `MERGE` updated `3` and inserted `4`; a final Snowflake `MERGE` updated `4` and inserted `5`; Rustice read rows `1..5` |
+| Mixed Snowflake/Rustice writers | Snowflake-created default uppercase table, Rustice `MERGE` | Known issue | Rustice `SELECT` can read the table, but `MERGE` fails with `column 'id' not found in 't'`; the MERGE target path does not yet rewrite case-sensitive target columns |
+| External writer controls | PyIceberg simple append | Pass | Snowflake read `3,90001.0,90003.0,270006.0,2` |
+| External writer controls | Spark Iceberg simple insert | Pass | Snowflake read `3,91001.0,91003.0,273006.0,2` |
+
+## Broad Compatibility Retest Details
+
+The broad compatibility run before the stale metadata retest used this
+deployment shape:
+
+```bash
+SNOW_CONFIG_FILE=/home/artem/.snowflake/config.toml \
+SNOW_CONNECTION=snowflake \
+RUSTICE_HORIZON_DATABASE=RUSTICE_SPCS \
+RUSTICE_HORIZON_ROLE=RUSTICE_SPCS_ROLE \
+RUSTICE_GRANT_TO_ROLE=ACCOUNTADMIN \
+RUSTICE_CLIENT_DATABASE=rustice_spcs \
+RUSTICE_CLIENT_SCHEMA=public \
+RUSTICE_BUILD_LOCAL=1 \
+RUSTICE_IMAGE_TAG=spcs-20260529-b8603be \
+RUSTICE_HORIZON_SCHEMAS=PUBLIC,public \
+RUSTICE_HORIZON_TABLES=PUBLIC.SMOKE \
+RUSTICE_INSTANCE_FAMILY=CPU_X64_XS \
+RUSTICE_POOL_MIN_NODES=1 \
+RUSTICE_POOL_MAX_NODES=1 \
+RUSTICE_MIN_INSTANCES=1 \
+RUSTICE_MAX_INSTANCES=1 \
+RUSTICE_AUTO_SUSPEND_SECS=0 \
+RUSTICE_READY_TIMEOUT_SECS=900 \
+./deploy/spcs/deploy.sh
+```
+
+The first start failed because `ICEBERG_REST_TABLES=PUBLIC.SMOKE` was configured
+before `RUSTICE_SPCS.PUBLIC.SMOKE` existed. After creating that Snowflake-managed
+Iceberg table and redeploying, the service reached `READY`.
+
+Smoke check:
+
+| Engine | Query | Result |
+| --- | --- | --- |
+| Snowflake | `SELECT * FROM RUSTICE_SPCS.PUBLIC.SMOKE` | `1, ok` |
+| Rustice through SPCS | `SELECT * FROM rustice_spcs.public.smoke` | `1, ok` |
+
+Small decimal check:
+
+```sql
+CREATE TABLE rustice_spcs.public.compat_number5_spcs_retest (
+  small_num NUMBER(5,0)
+);
+INSERT INTO rustice_spcs.public.compat_number5_spcs_retest VALUES (2), (5);
+```
+
+| Engine | Query | Result |
+| --- | --- | --- |
+| Rustice through SPCS | `SELECT small_num FROM rustice_spcs.public.compat_number5_spcs_retest ORDER BY small_num` | `2`, `5` |
+| Snowflake | `SELECT "small_num" FROM RUSTICE_SPCS.PUBLIC."compat_number5_spcs_retest" ORDER BY "small_num"` | `2`, `5` |
+
+Mixed Snowflake-write check:
+
+Snowflake created `RUSTICE_SPCS.PUBLIC."sf_ops_spcs_retest"`, inserted three
+rows, deleted one row, updated one row, and ran one `MERGE` with a matched update
+and an insert. Rustice read the new snapshot through SPCS after the table was
+included in `RUSTICE_HORIZON_TABLES`.
+
+Aggregate result:
+
+| Engine | `count,min,max,sum_small,sum_dec` |
+| --- | --- |
+| Snowflake | `3,1,4,23,23.2500` |
+| Rustice through SPCS | `3,1,4,23,23.2500` |
+
+Row-level result:
+
+| Engine | Rows |
+| --- | --- |
+| Snowflake | `1,-1,-1.2500,false,one-merged,2024-01-11,2024-01-11 11:00:00`; `2,20,20.5000,false,two-updated,2024-01-02,2024-01-02 02:00:00`; `4,4,4.0000,true,four,2024-01-04,2024-01-04 04:00:00` |
+| Rustice through SPCS | `1,-1,-1.2500,False,one-merged,2024-01-11,2024-01-11 11:00:00`; `2,20,20.5000,False,two-updated,2024-01-02,2024-01-02 02:00:00`; `4,4,4.0000,True,four,2024-01-04,2024-01-04 04:00:00` |
+
+Boolean display casing differs between CLIs, but the values match.
+
+Full reverse-table retest:
+
+Two wide reverse-write variants were rerun after the small-decimal metadata fix.
+Both tables used the same all-types shape as the larger Snowflake-write model:
+`NUMBER(38,0)`, `NUMBER(5,0)`, `NUMBER(18,4)`, `DOUBLE`, `FLOAT`, `BOOLEAN`,
+`STRING`, `VARCHAR`, `BINARY`, `DATE`, `TIME`, `TIMESTAMP_NTZ`, and
+`TIMESTAMP_LTZ`.
+
+| Table | Created by | Written by | Rustice result | Snowflake result | Status |
+| --- | --- | --- | --- | --- | --- |
+| `compat_rustice_all_types_retest` | Rustice | Rustice `INSERT` | `10000,1,10000,50005000,62506250.0000,5000,10000` | Same | Pass |
+| `compat_reverse_sf_all_types_retest` | Snowflake | Rustice `INSERT` | `10000,1,10000,50005000,62506250.0000,5000,10000` | Same | Pass |
+
+Result tuple order:
+
+```text
+row_count,min_id,max_id,sum_small,sum_dec,true_count,bin_count
+```
+
+Sample rows checked in Snowflake for both tables:
+
+| `id` | `small_num` | `dec_col` | `dbl_col` | `float_col` | `bool_col` | `str_col` | `varchar_col` | `bin_col` | `date_col` | `time_col` | `ts_ntz` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `1` | `1` | `1.2500` | `0.3333` | `0.5` | `false` | `str-1` | `varchar-1` | `abcd` | `2022-01-01` | `00:00:00` | `2022-08-21T00:00:00` |
+| `42` | `42` | `52.5000` | `14.0` | `21.0` | `true` | `str-42` | `varchar-42` | `abcd` | `2022-01-01` | `00:00:00` | `2022-08-21T00:00:00` |
+| `10000` | `10000` | `12500.0000` | `3333.3333` | `5000.0` | `true` | `str-10000` | `varchar-10000` | `abcd` | `2022-01-01` | `00:00:00` | `2022-08-21T00:00:00` |
+
+`TIMESTAMP_LTZ` display depends on Snowflake session timezone. The same inserted
+instant was visible in Snowflake as `2022-08-21T07:00:00` for the
+Rustice-created table and `2022-08-20T23:00:00-08:00` for the Snowflake-created
+table. This did not affect aggregate or row-value compatibility for the tested
+non-timezone columns.
+
+## Stale Metadata Fix Retest
+
+Run date: 2026-05-29
+
+The stale metadata fix was checked with a locally built SPCS image:
+
+```text
+iwuwgvk-lv71752.registry.snowflakecomputing.com/rustice_app/public/rustice_repo/rustice:spcs-20260529-stale-fix
+```
+
+Deployment differences from the broad compatibility run:
+
+```bash
+RUSTICE_BUILD_LOCAL=1 \
+RUSTICE_IMAGE_TAG=spcs-20260529-stale-fix \
+RUSTICE_HORIZON_TABLES=PUBLIC.MIXED_SF_STALE_FIX \
+./deploy/spcs/deploy.sh
+```
+
+### Snowflake-Created Table
+
+Table:
+
+```text
+RUSTICE_SPCS.PUBLIC.MIXED_SF_STALE_FIX
+```
+
+Sequence:
+
+| Step | Writer | Operation | Observed result |
+| --- | --- | --- | --- |
+| 1 | Snowflake | Truncate, then insert `1,2` | Snowflake and Rustice both read `1,2` |
+| 2 | Rustice | Insert `3,4` | Snowflake read `1,2,3,4`; no row loss |
+| 3 | Snowflake | Insert `5` | Snowflake read `1,2,3,4,5` |
+| 4 | Rustice | Read table | Rustice read `1,2,3,4,5`; no stale snapshot |
+| 5 | Rustice | Insert `6` | Snowflake read `1,2,3,4,5,6` |
+
+Final Snowflake result:
+
+```text
+1 sf-1
+2 sf-2
+3 rt-3
+4 rt-4
+5 sf-5
+6 rt-6
+```
+
+### Rustice-Created Table
+
+Table:
+
+```text
+RUSTICE_SPCS.PUBLIC."mixed_rustice_stale_fix"
+```
+
+Rustice-created table identifiers are lower-case Iceberg identifiers, so
+Snowflake queries used quoted table and column names.
+
+Sequence:
+
+| Step | Writer | Operation | Observed result |
+| --- | --- | --- | --- |
+| 1 | Rustice | Create table and insert `1,2` | Snowflake read `1,2` with quoted identifiers |
+| 2 | Snowflake | Insert `3` | Snowflake read `1,2,3` |
+| 3 | Rustice | Read table | Rustice read `1,2,3`; no stale snapshot |
+| 4 | Rustice | Insert `4` | Snowflake read `1,2,3,4` |
+
+Final Snowflake result:
+
+```text
+1 rt-1
+2 rt-2
+3 sf-3
+4 rt-4
+```
+
+The fixed path forces Horizon-backed table lookup to load fresh table metadata
+from the REST catalog using the canonical namespace before each DataFusion table
+resolution. Bootstrap aliases still work, but they no longer reuse the
+startup-time `TableProvider`.
+
+## Mixed MERGE Retest
+
+Run date: 2026-05-29
+
+The mixed `MERGE` retest reused the already pushed fixed image:
+
+```text
+iwuwgvk-lv71752.registry.snowflakecomputing.com/rustice_app/public/rustice_repo/rustice:spcs-20260529-stale-fix
+```
+
+Deployment differences:
+
+```bash
+RUSTICE_SKIP_IMAGE_PUSH=1 \
+RUSTICE_IMAGE_TAG=spcs-20260529-stale-fix \
+RUSTICE_HORIZON_TABLES=PUBLIC.MIXED_SF_MERGE_FIX \
+./deploy/spcs/deploy.sh
+```
+
+### Snowflake-Created Lower-Case Table
+
+Table:
+
+```text
+RUSTICE_SPCS.PUBLIC."mixed_sf_merge_lower_fix"
+```
+
+The table was created in Snowflake with quoted lower-case table and column
+identifiers to isolate mixed `MERGE` behavior from the separate uppercase
+case-sensitive MERGE bug.
+
+Sequence:
+
+| Step | Writer | Operation | Observed result |
+| --- | --- | --- | --- |
+| 1 | Snowflake | Insert `1,2` | Rustice read `1,100,sf-1`; `2,200,sf-2` |
+| 2 | Snowflake | `MERGE` update `2`, insert `3` | Snowflake read `1,100,sf-1`; `2,250,sf-merge-2`; `3,300,sf-merge-3` |
+| 3 | Rustice | Read table | Rustice read the Snowflake `MERGE` snapshot exactly |
+| 4 | Rustice | `MERGE` update `2`, insert `4` | Snowflake read `1,100,sf-1`; `2,222,rt-merge-2`; `3,300,sf-merge-3`; `4,400,rt-merge-4` |
+| 5 | Snowflake | `MERGE` update `4`, insert `5` | Snowflake read `1,100,sf-1`; `2,222,rt-merge-2`; `3,300,sf-merge-3`; `4,444,sf-merge-4`; `5,500,sf-merge-5` |
+| 6 | Rustice | Read table | Rustice read the same five rows |
+
+Status: pass.
+
+### Rustice-Created Table
+
+Table:
+
+```text
+RUSTICE_SPCS.PUBLIC."mixed_rustice_merge_fix"
+```
+
+Sequence:
+
+| Step | Writer | Operation | Observed result |
+| --- | --- | --- | --- |
+| 1 | Rustice | Create table and insert `1,2` | Snowflake read `1,100,rt-1`; `2,200,rt-2` |
+| 2 | Snowflake | `MERGE` update `2`, insert `3` | Snowflake read `1,100,rt-1`; `2,250,sf-merge-2`; `3,300,sf-merge-3` |
+| 3 | Rustice | Read table | Rustice read the Snowflake `MERGE` snapshot exactly |
+| 4 | Rustice | `MERGE` update `3`, insert `4` | Snowflake read `1,100,rt-1`; `2,250,sf-merge-2`; `3,333,rt-merge-3`; `4,400,rt-merge-4` |
+| 5 | Snowflake | `MERGE` update `4`, insert `5` | Snowflake read `1,100,rt-1`; `2,250,sf-merge-2`; `3,333,rt-merge-3`; `4,444,sf-merge-4`; `5,500,sf-merge-5` |
+| 6 | Rustice | Read table | Rustice read the same five rows |
+
+Status: pass.
+
+### Uppercase Snowflake Table Limitation
+
+Table:
+
+```text
+RUSTICE_SPCS.PUBLIC.MIXED_SF_MERGE_FIX
+```
+
+Rustice could read this Snowflake-created table and could see a Snowflake
+`MERGE` that updated `2` and inserted `3`. Rustice `MERGE` then failed even
+when the SQL used quoted uppercase identifiers:
+
+```text
+column 'id' not found in 't'
+```
+
+The DataFusion error showed the valid fields as `t."ID"`, `t."VAL"`, and
+`t."MSG"`. This appears to be a Rustice `MERGE` planning/case-rewrite gap for
+case-sensitive target schemas, not a Horizon stale metadata issue. Lower-case
+Snowflake-created tables and Rustice-created tables pass the mixed `MERGE`
+sequence above.
+
+## Historical Mixed Writer Failure
+
+Run date: 2026-05-29
+
+Mixed writer tables were tested to check whether Snowflake and Rustice can write
+to the same managed Iceberg table in alternating order. This is not compatible
+before the fresh metadata lookup fix. The failure mode was stale Rustice table
+metadata/snapshot state after Snowflake committed a new snapshot.
+
+### Snowflake-Created Table
+
+Table:
+
+```text
+RUSTICE_SPCS.PUBLIC."mixed_sf_created_retest"
+```
+
+Sequence:
+
+| Step | Writer | Operation | Observed result |
+| --- | --- | --- | --- |
+| 1 | Snowflake | Insert `id` `1,2` | Snowflake read `1,2` |
+| 2 | Rustice | Insert `id` `3,4` | Rustice read only `3,4`; Snowflake also read only `3,4` |
+| 3 | Snowflake | Insert `id` `5` | Snowflake read `3,4,5` |
+| 4 | Rustice | Read table | Rustice still read stale `3,4` |
+| 5 | Rustice | Insert `id` `6` | Failed with Horizon `409 Conflict` because branch `main` changed |
+
+The first Rustice write after the Snowflake write used stale table metadata and
+lost the existing Snowflake rows. After Snowflake wrote again, Rustice did not
+refresh to the new snapshot and the next Rustice write failed with a commit
+conflict instead of silently overwriting.
+
+Conflict message:
+
+```text
+Requirement failed: branch main has changed
+```
+
+### Rustice-Created Table
+
+Table:
+
+```text
+RUSTICE_SPCS.PUBLIC."mixed_rustice_created_retest"
+```
+
+Sequence:
+
+| Step | Writer | Operation | Observed result |
+| --- | --- | --- | --- |
+| 1 | Rustice | Create table and insert `id` `1,2` | Rustice and Snowflake read `1,2` |
+| 2 | Snowflake | Insert `id` `3` | Snowflake read `1,2,3` |
+| 3 | Rustice | Read table | Rustice still read stale `1,2` |
+| 4 | Rustice | Insert `id` `4` | Failed with Horizon `409 Conflict` because branch `main` changed |
+
+The Rustice-created path avoids silent row loss in this sequence, but Rustice
+still serves stale data after the Snowflake write and cannot continue writing
+without refreshing or reloading table metadata.
+
+## Rustice DML Retest
+
+Run date: 2026-05-29
+
+Rustice DML was checked on a clean Rustice-created table without concurrent
+Snowflake writes:
+
+```text
+RUSTICE_SPCS.PUBLIC."rustice_ops_clean_retest"
+```
+
+Results:
+
+| Operation | Rustice result | Snowflake result | Status |
+| --- | --- | --- | --- |
+| `INSERT` rows `1,2,3` | Rows visible | Same | Pass |
+| Standalone `UPDATE id = 1` | Statement returned success, but rows stayed unchanged | Same unchanged rows | Unsupported |
+| `DELETE id = 2` | Failed: `DELETE not supported for Base table` | No delete committed | Unsupported |
+| `MERGE` update `id = 1`, insert `id = 4` | `1` row updated and `1` row inserted | Snowflake read `1,111,111.0000,one-merged`; `2,2,2.0000,two`; `3,3,3.0000,three`; `4,4,4.0000,four-merged` | Pass |
+
+This means Rustice can commit a simple Iceberg `MERGE` result that Snowflake can
+read. The supported Rustice write surface for this run is `INSERT` and simple
+`MERGE`; standalone `UPDATE` and `DELETE` are outside the supported Iceberg
+write surface. `UPDATE` currently has a correctness bug because it should reject
+instead of returning success as a no-op.
+
+## Snowflake-Write Test Model
+
+The larger Snowflake-write run used five independent tables, each starting from
+the same 10,000-row dataset:
+
+| Table | Purpose |
+| --- | --- |
+| `compat_insert_only` | Snowflake `INSERT`, then Rustice read |
+| `compat_delete_only` | Snowflake `DELETE`, then Rustice read |
+| `compat_update_only` | Snowflake `UPDATE`, then Rustice read |
+| `compat_merge_only` | Snowflake `MERGE`, then Rustice read |
+| `compat_combined` | `INSERT`, `DELETE`, `UPDATE`, `MERGE` in sequence, then Rustice read |
+
+Table shape:
 
 ```sql
 CREATE OR REPLACE ICEBERG TABLE RUSTICE_SPCS."compat_iceberg"."<table_name>" (
@@ -47,6 +473,30 @@ CREATE OR REPLACE ICEBERG TABLE RUSTICE_SPCS."compat_iceberg"."<table_name>" (
   EXTERNAL_VOLUME = 'SNOWFLAKE_MANAGED';
 ```
 
+Baseline aggregate for each table:
+
+```text
+10000,1,10000,50005000,62506250.0000,5000
+```
+
+Result tuple order:
+
+```text
+row_count,min_id,max_id,sum_small,sum_dec,true_count
+```
+
+Snowflake-write results:
+
+| Test | Snowflake write | Snowflake result | Rustice result | Status |
+| --- | --- | --- | --- | --- |
+| Insert-only | Insert `id` `10001..10010` | `10010,1,10010,50105055,62631318.7500,5005` | Same | Pass |
+| Delete-only | `DELETE WHERE MOD(id, 10) = 0` | `9000,1,9999,45000000,56250000.0000,4000` | Same | Pass |
+| Update-only | Update `id = 42` | Row values matched | Row values matched | Pass |
+| Merge-only | Matched update for `id = 1` plus insert for `id = 20001` | `10001,1,20001,50025001,62526249.0000,5001` | Same | Pass |
+| Combined | `INSERT`, `DELETE`, `UPDATE`, `MERGE` | `9010,1,20001,45110046,56382460.7500,4004` | Same | Pass |
+
+## Type Coverage
+
 Observed Snowflake-managed Iceberg DDL limits:
 
 | Type probe | Result |
@@ -56,144 +506,102 @@ Observed Snowflake-managed Iceberg DDL limits:
 | `TIMESTAMP_TZ` | Rejected |
 | `ARRAY`, `VARIANT` | Rejected |
 
-## Test Tables
+## Historical Investigation
 
-Five independent tables were created. Each table started with the same 10,000
-rows so a failure can be attributed to one Snowflake write operation:
+Before the small-decimal fix in `iceberg-rust`, Rustice writes containing
+`NUMBER(5,0)` were visible to Rustice but Snowflake returned zero rows. This was
+isolated to generated Iceberg data-file statistics for small-precision decimals,
+not to Horizon commit visibility in general. The full reverse-table retest above
+confirms that the wide table now works after the fix.
 
-| Table | Purpose |
-| --- | --- |
-| `compat_insert_only` | Snowflake `INSERT`, then Rustice read |
-| `compat_delete_only` | Snowflake `DELETE`, then Rustice read |
-| `compat_update_only` | Snowflake `UPDATE`, then Rustice read |
-| `compat_merge_only` | Snowflake `MERGE`, then Rustice read |
-| `compat_combined` | `INSERT`, `DELETE`, `UPDATE`, `MERGE` in sequence, then Rustice read |
+Historical failing table:
 
-Base load:
-
-```sql
-INSERT INTO RUSTICE_SPCS."compat_iceberg"."<table_name>"
-SELECT
-  n,
-  MOD(n, 99999),
-  (n * 1.25)::NUMBER(18,4),
-  n / 3.0,
-  n * 0.5,
-  MOD(n, 2) = 0,
-  'str-' || n,
-  'varchar-' || LPAD(n::STRING, 5, '0'),
-  TO_BINARY('ABCD', 'HEX'),
-  DATEADD(day, MOD(n, 365), '2022-01-01'::DATE),
-  TIMEADD(second, MOD(n, 86400), '00:00:00'::TIME),
-  DATEADD(second, n, '2022-08-21 00:00:00'::TIMESTAMP_NTZ),
-  DATEADD(second, n, '2022-08-21 00:00:00'::TIMESTAMP_LTZ)
-FROM (SELECT SEQ4() + 1 AS n FROM TABLE(GENERATOR(ROWCOUNT => 10000)));
-```
-
-Baseline Rustice read matched Snowflake for every table:
-
-| Table | Baseline result |
-| --- | --- |
-| All five tables | `10000,1,10000,50005000,62506250.0000,5000` |
-
-Result tuple order:
-`row_count,min_id,max_id,sum_small,sum_dec,true_count`.
-
-## Results
-
-All reads below were run through `embucket-snow` against the SPCS ingress, after
-Snowflake performed the write directly against Horizon. The SPCS service was not
-restarted between the Snowflake write and Rustice read.
-
-| Test | Snowflake write | Snowflake result | Rustice result | Status |
+| Test table | Types | Rustice result | Snowflake result | Status before fix |
 | --- | --- | --- | --- | --- |
-| Insert-only | Insert `id` `10001..10010` into `compat_insert_only` | `10010,1,10010,50105055,62631318.7500,5005` | Same | Pass |
-| Delete-only | `DELETE WHERE MOD(id, 10) = 0` on `compat_delete_only` | `9000,1,9999,45000000,56250000.0000,4000` | Same | Pass |
-| Update-only | Update `id = 42` on `compat_update_only` | `42,42,-42.0000,False,updated-42,updated-42,2022-02-12,00:00:42,2022-08-21 00:00:42.000` | `42,42,-42.0000,False,updated-42,updated-42,2022-02-12,00:00:42,2022-08-21T00:00:42` | Pass |
-| Merge-only | `MERGE` one matched update for `id = 1` and one insert for `id = 20001` on `compat_merge_only` | `10001,1,20001,50025001,62526249.0000,5001` | Same | Pass |
-| Combined | `INSERT`, `DELETE`, `UPDATE`, `MERGE` in sequence on `compat_combined` | `9010,1,20001,45110046,56382460.7500,4004` | Same | Pass |
+| `compat_rustice_number5_probe` | `NUMBER(5,0)` | `2,2,5,7` | `0,,,` | Fail |
+| `compat_rustice_decimal_probe` | `NUMBER(38,0)`, `NUMBER(5,0)`, `NUMBER(18,4)` | `2` rows | `0` rows | Fail |
 
-Combined scenario row-level checks:
+The data-file lower/upper bounds for field `1` looked like:
 
-| Engine | Rows |
-| --- | --- |
-| Snowflake | `1,1,-1.0000,True,merged-one,merged-one,2024-01-01,01:02:03,2024-01-01 01:02:03.000`; `42,42,-42.0000,False,updated-42,updated-42,2022-02-12,00:00:42,2022-08-21 00:00:42.000`; `20001,20001,20001.2500,False,merged-insert,merged-insert,2024-01-02,02:03:04,2024-01-02 02:03:04.000` |
-| Rustice | `1,1,-1.0000,True,merged-one,merged-one,2024-01-01,01:02:03,2024-01-01T01:02:03`; `42,42,-42.0000,False,updated-42,updated-42,2022-02-12,00:00:42,2022-08-21T00:00:42`; `20001,20001,20001.2500,False,merged-insert,merged-insert,2024-01-02,02:03:04,2024-01-02T02:03:04` |
-
-Timestamp string formatting differs between Snowflake CLI and Rustice CLI, but
-the tested values match.
-
-## Reverse Direction: Rustice Writes, Snowflake Reads
-
-The reverse direction was also tested to check whether writes committed through
-the SPCS Rustice service become visible to Snowflake-managed Iceberg tables.
-This direction is not compatible yet.
-
-Reverse test tables:
-
-| Table | Created by | Written by | Purpose |
-| --- | --- | --- | --- |
-| `compat_rustice_insert_only` | Rustice | Rustice `INSERT` | Checks whether Snowflake can read a Rustice-created and Rustice-written Iceberg table |
-| `compat_reverse_sf_insert` | Snowflake | Rustice `INSERT` | Checks whether Snowflake can read Rustice inserts into a Snowflake-created managed Iceberg table |
-| `compat_reverse_sf_merge` | Snowflake | Rustice `MERGE` attempt | Checks whether Rustice can merge into a Snowflake-created managed Iceberg table and Snowflake can read the result |
-
-Rustice insert statement shape:
-
-```sql
-INSERT INTO rustice_spcs.compat_iceberg.compat_reverse_sf_insert
-SELECT
-  value + 1,
-  ((value + 1) % 99999),
-  ((value + 1) * 1.25)::NUMBER(18,4),
-  (value + 1) / 3.0,
-  (value + 1) * 0.5,
-  ((value + 1) % 2) = 0,
-  'str-' || (value + 1),
-  'varchar-' || (value + 1),
-  TO_BINARY('ABCD', 'HEX'),
-  '2022-01-01'::DATE,
-  '00:00:00'::TIME,
-  '2022-08-21 00:00:00'::TIMESTAMP_NTZ,
-  '2022-08-21 00:00:00'::TIMESTAMP_LTZ
-FROM range(10000);
+```text
+lower {1: b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02\\x00\\x00\\x00'}
+upper {1: b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x05\\x00\\x00\\x00'}
 ```
 
-Reverse results:
+Those bytes were not Iceberg decimal's minimal big-endian two's-complement
+encoding for values `2` and `5`. The fix landed in `iceberg-rust#58` and is
+included in the current Rustice dependency rev through `iceberg-rust#59`.
 
-| Test | Rustice result | Snowflake result | Status |
+Other Rustice write probes already passed before the small-decimal fix:
+
+| Test table | Types | Snowflake result | Status |
 | --- | --- | --- | --- |
-| Rustice-created table, Rustice `INSERT` | `10000,1,10000,50005000,62506250.0000,5000,10000` | `0,,,,,,0` | Fail |
-| Snowflake-created table, Rustice `INSERT` | `10000,1,10000,50005000,62506250.0000,5000,10000` | `0,,,,,,0` | Fail |
-| Snowflake-created table, Rustice `MERGE` matched update | Planning failed: `column 'id' not found in 't'` / target field resolution failure | Not written | Fail |
-| Snowflake-created table, Rustice `MERGE` insert branch with `ON FALSE` | Planning failed: `No field named rustice_spcs.compat_iceberg.compat_reverse_sf_merge.id` | Not written | Fail |
+| `compat_rustice_append_simple` | `DOUBLE`, `STRING`, `BOOLEAN` | `3,92001.0,92003.0,276006.0,2` | Pass |
+| `compat_rustice_no_numeric_probe` | `STRING`, `BOOLEAN`, `BINARY`, `DATE`, `TIME`, `TIMESTAMP_NTZ`, `TIMESTAMP_LTZ` | `3,k1,k3,2,3,2024-01-01,03:04:05,2024-01-03T03:04:05` | Pass |
+| `compat_rustice_temporal_probe` | `DOUBLE`, `DATE`, `TIME`, `TIMESTAMP_NTZ`, `TIMESTAMP_LTZ` | `2,1.0,2.0,2024-01-01,02:03:04,2024-01-02T02:03:04` | Pass |
+| `compat_rustice_binary_probe` | `DOUBLE`, `BINARY` | `2,1.0,2.0,2` | Pass |
+| `compat_rustice_number38_probe` | `NUMBER(38,0)` | `2,1,4,5` | Pass |
+| `compat_rustice_decimal18_probe` | `NUMBER(18,4)` | `2,3.2500,6.5000,9.7500` | Pass |
 
-For the Rustice-created table, Snowflake also exposed the columns as quoted
-lowercase identifiers (`"id"`, `"small_num"`, and so on), so unquoted Snowflake
-queries failed with `invalid identifier 'ID'`. Quoted lowercase reads succeeded
-syntactically, but still returned zero rows.
-
-`ALTER ICEBERG TABLE ... REFRESH` is not applicable for these managed tables:
-Snowflake reports that `REFRESH` requires an external catalog integration and
+`ALTER ICEBERG TABLE ... REFRESH` did not help with the historical failure:
+Snowflake reported that `REFRESH` requires an external catalog integration and
 that the table type is `MANAGED`.
 
-Reverse-direction conclusion: Rustice can currently read Snowflake-managed
-Iceberg snapshots written by Snowflake, but writes performed through Rustice are
-not visible to Snowflake-managed Iceberg readers. Treat Rustice writes to
-Snowflake-managed Horizon tables as unsupported until the commit path is made
-compatible with Snowflake's managed Iceberg metadata expectations.
+`SYSTEM$GET_ICEBERG_TABLE_INFORMATION` returned the managed metadata location,
+but Snowflake still read zero rows for the old failing table.
 
-## Cache Fix Verified
+## External Writer Controls
 
-Before this run, the deployed image cached the Iceberg `TableProvider`, so a
-Snowflake `INSERT` was invisible until the SPCS service restarted. The fix in
-`crates/catalog/src/schema.rs` makes REST/Iceberg schemas bypass the
-table-provider cache on lookup. The `insert-only` case above verifies that a new
-Snowflake snapshot is visible without restarting SPCS.
+The same Snowflake account and Horizon REST endpoint were checked with external
+writers that bypass Rustice entirely:
 
-## Out Of Scope
+| Test | Writer | Table | Snowflake result | Status |
+| --- | --- | --- | --- | --- |
+| Simple append | PyIceberg `0.9.1` | `compat_pyiceberg_append_simple` | `3,90001.0,90003.0,270006.0,2` | Pass |
+| Simple insert | Spark `3.5.1` + Iceberg runtime `1.9.1` | `compat_spark_append_simple` | `3,91001.0,91003.0,273006.0,2` | Pass |
 
-- `ICEBERG_MERGE_ON_READ_BEHAVIOR = enabled` and positional delete files were
-  not included in this run. Treat merge-on-read/positional delete support as
-  unverified.
-- Automated CI coverage is still needed. This run depends on live Snowflake SPCS
-  and Horizon credentials.
+PyIceberg also reached the file-writing path for a wider table containing
+`decimal(18,4)`, but failed locally before commit while collecting Parquet
+statistics:
+
+```text
+Unexpected physical type FIXED_LEN_BYTE_ARRAY for decimal(18, 4), expected INT64
+```
+
+That PyIceberg-specific decimal failure is separate from the Rustice write-path
+issue. The simple PyIceberg and Spark controls confirm that Snowflake can read
+successful external writes committed through Horizon REST for Snowflake-managed
+Iceberg tables.
+
+## Operational Notes
+
+- With `ICEBERG_REST_EAGER_LOAD=0`, existing Snowflake-created tables that need
+  to be visible immediately must be listed in `RUSTICE_HORIZON_TABLES`.
+- Bootstrap tables listed in `RUSTICE_HORIZON_TABLES` must exist before service
+  startup. Otherwise Rustice fails fast during catalog initialization.
+- Rustice-created table names are visible in Snowflake under the Snowflake
+  catalog namespace. In the latest run, `rustice_spcs.public.<table>` was
+  visible to Snowflake as `RUSTICE_SPCS.PUBLIC."<table>"`.
+- Timestamp and boolean string formatting can differ between Snowflake CLI and
+  `embucket-snow`; row values were compared semantically.
+
+## Remaining Gaps
+
+- Add a clear retry/error path for true concurrent Horizon commit conflicts.
+  Sequential mixed-writer `INSERT` commits pass after the fresh metadata lookup
+  fix, but simultaneous writers can still legitimately hit optimistic commit
+  conflicts.
+- Explicitly reject standalone Rustice `UPDATE` on Iceberg tables until it is
+  implemented; it currently reports success without changing data.
+- Keep Rustice `DELETE` marked unsupported for Iceberg tables until it is
+  implemented; it currently fails with `DELETE not supported for Base table`.
+- Fix Rustice `MERGE` target column resolution for Snowflake-created tables that
+  use default unquoted uppercase column names. Reads work, but `MERGE` currently
+  fails with `column 'id' not found in 't'` on that case-sensitive target schema.
+- Broaden mixed `MERGE` coverage to wider schemas. The focused lower-case
+  three-column mixed `MERGE` paths pass.
+- Test `ICEBERG_MERGE_ON_READ_BEHAVIOR = enabled` and positional delete files
+  separately.
+- Add automated coverage for the parts that can run without live Snowflake SPCS
+  credentials. Live SPCS/Horizon compatibility remains a manual integration
+  check for now.

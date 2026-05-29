@@ -1681,7 +1681,7 @@ version = "3.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "519bd3116aeeb42d5372c29d982d16d0170d3d4a5ed85fc7dd91642ffff3c67c"
 dependencies = [
- "darling 0.23.0",
+ "darling 0.21.3",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -3049,7 +3049,7 @@ dependencies = [
 [[package]]
 name = "datafusion_iceberg"
 version = "0.10.0"
-source = "git+https://github.com/Embucket/iceberg-rust.git?rev=45b92f94f6e184e27c4a1ee2f6e370e1a3ee56a8#45b92f94f6e184e27c4a1ee2f6e370e1a3ee56a8"
+source = "git+https://github.com/Embucket/iceberg-rust.git?rev=211bd611e53628eb26de1ff9f5f31901c5cd7d60#211bd611e53628eb26de1ff9f5f31901c5cd7d60"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4519,7 +4519,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4583,7 +4583,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -4598,7 +4598,7 @@ dependencies = [
 [[package]]
 name = "iceberg-file-catalog"
 version = "0.10.0"
-source = "git+https://github.com/Embucket/iceberg-rust.git?rev=45b92f94f6e184e27c4a1ee2f6e370e1a3ee56a8#45b92f94f6e184e27c4a1ee2f6e370e1a3ee56a8"
+source = "git+https://github.com/Embucket/iceberg-rust.git?rev=211bd611e53628eb26de1ff9f5f31901c5cd7d60#211bd611e53628eb26de1ff9f5f31901c5cd7d60"
 dependencies = [
  "async-trait",
  "futures",
@@ -4613,7 +4613,7 @@ dependencies = [
 [[package]]
 name = "iceberg-rest-catalog"
 version = "0.10.0"
-source = "git+https://github.com/Embucket/iceberg-rust.git?rev=45b92f94f6e184e27c4a1ee2f6e370e1a3ee56a8#45b92f94f6e184e27c4a1ee2f6e370e1a3ee56a8"
+source = "git+https://github.com/Embucket/iceberg-rust.git?rev=211bd611e53628eb26de1ff9f5f31901c5cd7d60#211bd611e53628eb26de1ff9f5f31901c5cd7d60"
 dependencies = [
  "async-trait",
  "aws-credential-types",
@@ -4638,7 +4638,7 @@ dependencies = [
 [[package]]
 name = "iceberg-rust"
 version = "0.10.0"
-source = "git+https://github.com/Embucket/iceberg-rust.git?rev=45b92f94f6e184e27c4a1ee2f6e370e1a3ee56a8#45b92f94f6e184e27c4a1ee2f6e370e1a3ee56a8"
+source = "git+https://github.com/Embucket/iceberg-rust.git?rev=211bd611e53628eb26de1ff9f5f31901c5cd7d60#211bd611e53628eb26de1ff9f5f31901c5cd7d60"
 dependencies = [
  "apache-avro",
  "arrow 58.1.0",
@@ -4674,7 +4674,7 @@ dependencies = [
 [[package]]
 name = "iceberg-rust-spec"
 version = "0.10.0"
-source = "git+https://github.com/Embucket/iceberg-rust.git?rev=45b92f94f6e184e27c4a1ee2f6e370e1a3ee56a8#45b92f94f6e184e27c4a1ee2f6e370e1a3ee56a8"
+source = "git+https://github.com/Embucket/iceberg-rust.git?rev=211bd611e53628eb26de1ff9f5f31901c5cd7d60#211bd611e53628eb26de1ff9f5f31901c5cd7d60"
 dependencies = [
  "apache-avro",
  "arrow-schema 58.1.0",
@@ -6317,7 +6317,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -6330,7 +6330,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -6497,7 +6497,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.40",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6534,7 +6534,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -8841,7 +8841,7 @@ version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12342cb4d8e3b046f3d80effd474a7a02447231330ef77d71daa6fbc40681143"
 dependencies = [
- "windows-core 0.57.0",
+ "windows-core",
  "windows-targets 0.52.6",
 ]
 
@@ -8851,23 +8851,10 @@ version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2ed2439a290666cd67ecce2b0ffaad89c2a56b976b736e6ece670297897832d"
 dependencies = [
- "windows-implement 0.57.0",
- "windows-interface 0.57.0",
+ "windows-implement",
+ "windows-interface",
  "windows-result 0.1.2",
  "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.62.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
-dependencies = [
- "windows-implement 0.60.2",
- "windows-interface 0.59.3",
- "windows-link",
- "windows-result 0.4.1",
- "windows-strings",
 ]
 
 [[package]]
@@ -8882,32 +8869,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows-implement"
-version = "0.60.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "windows-interface"
 version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29bee4b38ea3cde66011baa44dba677c432a78593e202392d1e9070cf2a7fca7"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "windows-interface"
-version = "0.59.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
