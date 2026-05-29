@@ -1,5 +1,4 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_stream::try_stream;
@@ -7,9 +6,10 @@ use datafusion::arrow::array::{ArrayRef, UInt32Array, UInt64Array};
 use datafusion::arrow::compute::take_record_batch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::arrow::row::{OwnedRow, RowConverter, Rows, SortField};
 use datafusion::execution::TaskContext;
 use datafusion::physical_expr::{Distribution, EquivalenceProperties, PhysicalSortExpr};
-use datafusion_common::{DataFusionError, Result, ScalarValue};
+use datafusion_common::{DataFusionError, Result};
 use datafusion_physical_plan::execution_plan::EmissionType;
 use datafusion_physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
@@ -28,14 +28,6 @@ pub struct GroupedTopKExec {
     schema: SchemaRef,
     properties: Arc<PlanProperties>,
     metrics: ExecutionPlanMetricsSet,
-}
-
-#[derive(Clone)]
-struct Candidate {
-    batch_index: usize,
-    row_index: usize,
-    input_order: usize,
-    order_values: Vec<ScalarValue>,
 }
 
 #[derive(Clone)]
@@ -213,34 +205,29 @@ fn select_topk_batches(
         return select_top1_batches(input_batches, partition_by, order_by, output_schema);
     }
 
-    let mut winners: HashMap<Vec<ScalarValue>, Vec<Candidate>> = HashMap::new();
-    let mut input_order = 0_usize;
+    let (all_partition_rows, all_order_rows) = encode_rows(input_batches, partition_by, order_by)?;
 
-    for (batch_index, batch) in input_batches.iter().enumerate() {
-        let partition_columns = evaluate_exprs(partition_by, batch)?;
-        let order_columns = evaluate_sort_exprs(order_by, batch)?;
+    // Each group keeps up to `limit` row coordinates; comparisons read sort-encoded bytes
+    // from the retained rows, with the (batch, row) tiebreak standing in for input order.
+    let mut winners: datafusion_common::HashMap<OwnedRow, Vec<(usize, usize)>> =
+        datafusion_common::HashMap::default();
 
-        for row_index in 0..batch.num_rows() {
-            let key = scalar_row(&partition_columns, row_index)?;
-            let order_values = scalar_row(&order_columns, row_index)?;
-            let candidate = Candidate {
-                batch_index,
-                row_index,
-                input_order,
-                order_values,
-            };
-            input_order += 1;
-
-            insert_topk_candidate(winners.entry(key).or_default(), candidate, order_by, limit)?;
+    for batch_index in 0..input_batches.len() {
+        let partition_rows = &all_partition_rows[batch_index];
+        for row_index in 0..partition_rows.num_rows() {
+            let group = winners
+                .entry(partition_rows.row(row_index).owned())
+                .or_insert_with(|| Vec::with_capacity(limit));
+            insert_topk_coord(group, (batch_index, row_index), &all_order_rows, limit);
         }
     }
 
     let mut selected_by_batch = vec![Vec::new(); input_batches.len()];
-    for mut candidates in winners.into_values() {
-        sort_candidates(&mut candidates, order_by)?;
-        for (offset, candidate) in candidates.into_iter().enumerate() {
-            selected_by_batch[candidate.batch_index].push(SelectedRow {
-                row_index: candidate.row_index,
+    for mut coords in winners.into_values() {
+        coords.sort_unstable_by(|&a, &b| cmp_coord_order(a, b, &all_order_rows));
+        for (offset, (batch_index, row_index)) in coords.into_iter().enumerate() {
+            selected_by_batch[batch_index].push(SelectedRow {
+                row_index,
                 row_number: u64::try_from(offset + 1).map_err(|_| {
                     DataFusionError::Execution(format!(
                         "GroupedTopKExec row number {} exceeds UInt64 range",
@@ -260,7 +247,6 @@ fn select_top1_batches(
     order_by: &[PhysicalSortExpr],
     output_schema: SchemaRef,
 ) -> Result<Vec<RecordBatch>> {
-    use datafusion::arrow::row::{OwnedRow, RowConverter, SortField};
     use datafusion_common::hash_map::Entry;
 
     struct Top1Winner {
@@ -268,43 +254,10 @@ fn select_top1_batches(
         row_index: usize,
     }
 
-    let Some(first_batch) = input_batches.first() else {
-        return Ok(Vec::new());
-    };
-    let schema = first_batch.schema();
-
-    // Encode partition keys canonically (for grouping) and order values in sort order, so
-    // the hot loop hashes/compares contiguous byte rows instead of materializing a
-    // ScalarValue vector per input row.
-    let partition_converter = RowConverter::new(
-        partition_by
-            .iter()
-            .map(|expr| Ok(SortField::new(expr.data_type(schema.as_ref())?)))
-            .collect::<Result<Vec<_>>>()?,
-    )?;
-    let order_converter = RowConverter::new(
-        order_by
-            .iter()
-            .map(|sort_expr| {
-                Ok(SortField::new_with_options(
-                    sort_expr.expr.data_type(schema.as_ref())?,
-                    sort_expr.options,
-                ))
-            })
-            .collect::<Result<Vec<_>>>()?,
-    )?;
-
-    // Convert every batch up front and keep the encoded rows alive, so a winner only needs
-    // to remember its (batch, row) coordinates. Comparisons then read sort-encoded bytes
-    // straight from the retained buffers — no per-winner order allocation on replacement.
-    let mut all_partition_rows = Vec::with_capacity(input_batches.len());
-    let mut all_order_rows = Vec::with_capacity(input_batches.len());
-    for batch in input_batches {
-        let partition_columns = evaluate_exprs(partition_by, batch)?;
-        let order_columns = evaluate_sort_exprs(order_by, batch)?;
-        all_partition_rows.push(partition_converter.convert_columns(&partition_columns)?);
-        all_order_rows.push(order_converter.convert_columns(&order_columns)?);
-    }
+    // Encode every batch once and keep the rows alive; a winner is referenced solely by its
+    // (batch, row) coordinates, and comparisons read sort-encoded bytes from the retained
+    // buffers — no per-row ScalarValue materialization or per-winner order allocation.
+    let (all_partition_rows, all_order_rows) = encode_rows(input_batches, partition_by, order_by)?;
 
     let mut winners: datafusion_common::HashMap<OwnedRow, Top1Winner> =
         datafusion_common::HashMap::default();
@@ -386,42 +339,37 @@ fn build_output_batches(
     Ok(output_batches)
 }
 
-fn insert_topk_candidate(
-    candidates: &mut Vec<Candidate>,
-    candidate: Candidate,
-    order_by: &[PhysicalSortExpr],
-    limit: usize,
-) -> Result<()> {
-    if candidates.len() < limit {
-        candidates.push(candidate);
-        return Ok(());
-    }
-
-    let mut worst_index = 0;
-    for index in 1..candidates.len() {
-        if compare_candidates(&candidates[index], &candidates[worst_index], order_by)?.is_gt() {
-            worst_index = index;
-        }
-    }
-
-    if compare_candidates(&candidate, &candidates[worst_index], order_by)?.is_lt() {
-        candidates[worst_index] = candidate;
-    }
-
-    Ok(())
+/// Orders two row coordinates by their sort-encoded order bytes, breaking ties by the
+/// (batch, row) coordinate, which equals input order since batches and rows are visited in
+/// order. This is the single ordering used for both top-K selection and final ranking.
+fn cmp_coord_order(a: (usize, usize), b: (usize, usize), all_order_rows: &[Rows]) -> Ordering {
+    all_order_rows[a.0]
+        .row(a.1)
+        .cmp(&all_order_rows[b.0].row(b.1))
+        .then(a.cmp(&b))
 }
 
-fn sort_candidates(candidates: &mut [Candidate], order_by: &[PhysicalSortExpr]) -> Result<()> {
-    for index in 1..candidates.len() {
-        let mut current = index;
-        while current > 0
-            && compare_candidates(&candidates[current], &candidates[current - 1], order_by)?.is_lt()
-        {
-            candidates.swap(current, current - 1);
-            current -= 1;
+fn insert_topk_coord(
+    group: &mut Vec<(usize, usize)>,
+    coord: (usize, usize),
+    all_order_rows: &[Rows],
+    limit: usize,
+) {
+    if group.len() < limit {
+        group.push(coord);
+        return;
+    }
+
+    let mut worst = 0;
+    for index in 1..group.len() {
+        if cmp_coord_order(group[index], group[worst], all_order_rows).is_gt() {
+            worst = index;
         }
     }
-    Ok(())
+
+    if cmp_coord_order(coord, group[worst], all_order_rows).is_lt() {
+        group[worst] = coord;
+    }
 }
 
 fn evaluate_exprs(
@@ -445,72 +393,46 @@ fn evaluate_sort_exprs(exprs: &[PhysicalSortExpr], batch: &RecordBatch) -> Resul
         .collect()
 }
 
-fn scalar_row(columns: &[ArrayRef], row_index: usize) -> Result<Vec<ScalarValue>> {
-    columns
-        .iter()
-        .map(|column| ScalarValue::try_from_array(column.as_ref(), row_index))
-        .collect()
-}
-
-fn compare_order_values(
-    candidate: &[ScalarValue],
-    current: &[ScalarValue],
+/// Encodes each batch's partition and order columns into Arrow row format once. Partition
+/// rows are encoded canonically (for grouping equality/hash) and order rows in the
+/// configured sort order (so they compare bytewise, honoring ASC/DESC and null placement),
+/// letting the grouping loops work on contiguous bytes instead of per-row ScalarValue vecs.
+fn encode_rows(
+    input_batches: &[RecordBatch],
+    partition_by: &[Arc<dyn datafusion::physical_expr::PhysicalExpr>],
     order_by: &[PhysicalSortExpr],
-) -> Result<Ordering> {
-    for ((candidate_value, current_value), sort_expr) in candidate.iter().zip(current).zip(order_by)
-    {
-        let ord = compare_order_value(candidate_value, current_value, sort_expr.options)?;
-        if ord != Ordering::Equal {
-            return Ok(ord);
-        }
-    }
-    Ok(Ordering::Equal)
-}
-
-fn compare_candidates(
-    candidate: &Candidate,
-    current: &Candidate,
-    order_by: &[PhysicalSortExpr],
-) -> Result<Ordering> {
-    let ordering = compare_order_values(&candidate.order_values, &current.order_values, order_by)?;
-    if ordering == Ordering::Equal {
-        Ok(candidate.input_order.cmp(&current.input_order))
-    } else {
-        Ok(ordering)
-    }
-}
-
-fn compare_order_value(
-    candidate: &ScalarValue,
-    current: &ScalarValue,
-    options: datafusion::arrow::compute::SortOptions,
-) -> Result<Ordering> {
-    let ord = match (candidate.is_null(), current.is_null()) {
-        (true, true) => Ordering::Equal,
-        (true, false) => {
-            if options.nulls_first {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            }
-        }
-        (false, true) => {
-            if options.nulls_first {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            }
-        }
-        (false, false) => candidate.partial_cmp(current).ok_or_else(|| {
-            DataFusionError::Execution(format!(
-                "GroupedTopKExec cannot compare order values {candidate:?} and {current:?}"
-            ))
-        })?,
+) -> Result<(Vec<Rows>, Vec<Rows>)> {
+    let Some(first_batch) = input_batches.first() else {
+        return Ok((Vec::new(), Vec::new()));
     };
+    let schema = first_batch.schema();
 
-    if options.descending {
-        Ok(ord.reverse())
-    } else {
-        Ok(ord)
+    let partition_converter = RowConverter::new(
+        partition_by
+            .iter()
+            .map(|expr| Ok(SortField::new(expr.data_type(schema.as_ref())?)))
+            .collect::<Result<Vec<_>>>()?,
+    )?;
+    let order_converter = RowConverter::new(
+        order_by
+            .iter()
+            .map(|sort_expr| {
+                Ok(SortField::new_with_options(
+                    sort_expr.expr.data_type(schema.as_ref())?,
+                    sort_expr.options,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?,
+    )?;
+
+    let mut all_partition_rows = Vec::with_capacity(input_batches.len());
+    let mut all_order_rows = Vec::with_capacity(input_batches.len());
+    for batch in input_batches {
+        let partition_columns = evaluate_exprs(partition_by, batch)?;
+        let order_columns = evaluate_sort_exprs(order_by, batch)?;
+        all_partition_rows.push(partition_converter.convert_columns(&partition_columns)?);
+        all_order_rows.push(order_converter.convert_columns(&order_columns)?);
     }
+
+    Ok((all_partition_rows, all_order_rows))
 }
