@@ -13,7 +13,6 @@ harness = false
 [dependencies]
 executor = { path = "../executor", features = ["test-helpers"] }
 async-trait = { workspace = true }
-bigdecimal = "0.4"
 clap = { workspace = true }
 datafusion = { workspace = true }
 futures = { workspace = true }

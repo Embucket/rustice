@@ -18,9 +18,15 @@ pub mod output;
 
 use sqllogictest::Normalizer;
 
-/// Cell-comparison validator: per-cell, an expected value beginning with
-/// `<REGEX>:` is compiled and matched against the actual cell; everything
-/// else is compared verbatim (after the upstream normalizer).
+/// Row-comparison validator: per-row, an expected value beginning with
+/// `<REGEX>:` is compiled and matched against the actual row; everything
+/// else is compared after running both expected and actual through the
+/// upstream normalizer (which trims and collapses runs of whitespace).
+///
+/// We normalize both sides so that the literal tab the `.slt` parser
+/// embeds between columns doesn't have to match the literal join
+/// character used here. Joining actual with `" "` mirrors what the
+/// upstream `default_validator` does.
 #[must_use]
 pub fn embucket_validator(
     normalizer: Normalizer,
@@ -29,7 +35,7 @@ pub fn embucket_validator(
 ) -> bool {
     let actual_rows: Vec<String> = actual
         .iter()
-        .map(|row| row.iter().map(&normalizer).collect::<Vec<_>>().join("\t"))
+        .map(|row| row.iter().map(&normalizer).collect::<Vec<_>>().join(" "))
         .collect();
 
     if actual_rows.len() != expected.len() {
@@ -46,7 +52,7 @@ pub fn embucket_validator(
                 }
                 Err(_) => return false,
             }
-        } else if actual_row != expected_row {
+        } else if *actual_row != normalizer(expected_row) {
             return false;
         }
     }
@@ -67,7 +73,7 @@ mod tests {
         assert!(embucket_validator(
             id_norm,
             &[vec!["1".to_string(), "a".to_string()]],
-            &["1\ta".to_string()],
+            &["1 a".to_string()],
         ));
     }
 
@@ -76,7 +82,20 @@ mod tests {
         assert!(!embucket_validator(
             id_norm,
             &[vec!["1".to_string(), "a".to_string()]],
-            &["1\tb".to_string()],
+            &["1 b".to_string()],
+        ));
+    }
+
+    #[test]
+    fn tab_in_expected_matches_space_in_actual_join() {
+        // The .slt parser leaves a literal `\t` between columns; the
+        // upstream normalizer collapses whitespace so the tab equates
+        // to the space we join actual cells with.
+        let norm = sqllogictest::default_normalizer;
+        assert!(embucket_validator(
+            norm,
+            &[vec!["1".to_string(), "a".to_string()]],
+            &["1\ta".to_string()],
         ));
     }
 

@@ -4,10 +4,8 @@
 
 #![allow(clippy::unwrap_used)]
 
-use bigdecimal::BigDecimal;
 use datafusion::arrow::datatypes::{Decimal128Type, Decimal256Type, DecimalType, i256};
 use half::f16;
-use std::str::FromStr;
 
 pub const NULL_STR: &str = "NULL";
 
@@ -26,17 +24,43 @@ pub(crate) fn varchar_to_str(value: &str) -> String {
     // Match the snowflake-connector-python output the bronze_scope .slt files
     // were generated against: if the string parses as a JSON array or object
     // (e.g. VARIANT / ARRAY / OBJECT columns are stored as Utf8 JSON in
-    // Rustice), re-emit it as compact JSON wrapped in single quotes.
+    // Rustice), re-emit it as compact JSON wrapped in single quotes, with
+    // object keys sorted alphabetically (snowflake-connector-python passes
+    // the result through `json.dumps`, which sorts keys when fed a `dict`
+    // — and Snowflake's VARIANT serialiser is also key-sorted).
     if matches!(value.as_bytes().first(), Some(b'{' | b'[')) {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(value) {
             if json.is_array() || json.is_object() {
-                if let Ok(rendered) = serde_json::to_string(&json) {
+                let sorted = sort_json_keys(json);
+                if let Ok(rendered) = serde_json::to_string(&sorted) {
                     return format!("'{rendered}'");
                 }
             }
         }
     }
-    value.trim_end_matches('\n').replace('\u{0000}', "\\0")
+    // Escape embedded newlines to match Python's
+    // `value.replace('\n', '\\n')` in slt_runner/result.py — sqllogictest
+    // diffs would otherwise turn a single multi-line cell into multiple
+    // pseudo-rows.
+    value.replace('\n', "\\n").replace('\u{0000}', "\\0")
+}
+
+fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<(String, serde_json::Value)> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut out = serde_json::Map::new();
+            for (k, v) in entries {
+                out.insert(k, sort_json_keys(v));
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(sort_json_keys).collect())
+        }
+        other => other,
+    }
 }
 
 pub(crate) fn f16_to_str(value: f16) -> String {
@@ -47,10 +71,7 @@ pub(crate) fn f16_to_str(value: f16) -> String {
     } else if value == f16::NEG_INFINITY {
         "-inf".to_string()
     } else {
-        preserve_trailing_dot_zero(big_decimal_to_str(
-            BigDecimal::from_str(&value.to_string()).unwrap(),
-            None,
-        ))
+        python_float_str(f64::from(value))
     }
 }
 
@@ -62,10 +83,9 @@ pub(crate) fn f32_to_str(value: f32) -> String {
     } else if value == f32::NEG_INFINITY {
         "-inf".to_string()
     } else {
-        preserve_trailing_dot_zero(big_decimal_to_str(
-            BigDecimal::from_str(&value.to_string()).unwrap(),
-            None,
-        ))
+        // Use the f32's own shortest round-trip representation so values like
+        // `3.4028235e+38` survive without spurious precision.
+        fixup_python_style_exponent(format!("{value:?}"))
     }
 }
 
@@ -77,42 +97,43 @@ pub(crate) fn f64_to_str(value: f64) -> String {
     } else if value == f64::NEG_INFINITY {
         "-inf".to_string()
     } else {
-        preserve_trailing_dot_zero(big_decimal_to_str(
-            BigDecimal::from_str(&value.to_string()).unwrap(),
-            None,
-        ))
+        python_float_str(value)
     }
 }
 
 pub(crate) fn decimal_128_to_str(value: i128, scale: i8) -> String {
-    let precision = u8::MAX;
-    big_decimal_to_str(
-        BigDecimal::from_str(&Decimal128Type::format_decimal(value, precision, scale)).unwrap(),
-        None,
-    )
+    // Preserve the column's declared scale (trailing zeros included), matching
+    // snowflake-connector-python's `str(Decimal(...))` output.
+    Decimal128Type::format_decimal(value, u8::MAX, scale)
 }
 
 pub(crate) fn decimal_256_to_str(value: i256, scale: i8) -> String {
-    let precision = u8::MAX;
-    big_decimal_to_str(
-        BigDecimal::from_str(&Decimal256Type::format_decimal(value, precision, scale)).unwrap(),
-        None,
-    )
+    Decimal256Type::format_decimal(value, u8::MAX, scale)
 }
 
-#[expect(clippy::needless_pass_by_value)]
-pub(crate) fn big_decimal_to_str(value: BigDecimal, round_digits: Option<i64>) -> String {
-    let value = value.round(round_digits.unwrap_or(12)).normalized();
-    value.to_plain_string()
+/// Render an `f64` using the same shortest round-trip representation
+/// `repr(float)` / `str(float)` uses in Python (which is what
+/// snowflake-connector-python emits). Rust's `{:?}` for floats already
+/// uses the same shortest-round-trip algorithm; the only formatting
+/// difference is that Python prints `e+20` for positive exponents
+/// where Rust prints `e20`.
+fn python_float_str(value: f64) -> String {
+    fixup_python_style_exponent(format!("{value:?}"))
 }
 
-// Whole-number floats lose their decimal point through `BigDecimal::normalized`
-// (e.g. `0.0` -> `"0"`). Snowflake's Python connector renders `str(0.0)` as
-// `"0.0"`, so re-append `.0` when the rendered form has no fractional part.
-fn preserve_trailing_dot_zero(s: String) -> String {
-    if s.contains('.') || s.contains('e') || s.contains('E') {
-        s
-    } else {
-        format!("{s}.0")
+fn fixup_python_style_exponent(s: String) -> String {
+    if let Some(pos) = s.find('e') {
+        let after = pos + 1;
+        if after < s.len() {
+            let next = s.as_bytes()[after];
+            if next != b'+' && next != b'-' {
+                let mut out = String::with_capacity(s.len() + 1);
+                out.push_str(&s[..after]);
+                out.push('+');
+                out.push_str(&s[after..]);
+                return out;
+            }
+        }
     }
+    s
 }

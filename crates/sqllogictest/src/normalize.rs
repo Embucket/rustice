@@ -139,12 +139,15 @@ pub fn cell_to_string(col: &ArrayRef, row: usize) -> Result<String> {
             "x'{}'",
             hex::encode(get_row_value!(array::FixedSizeBinaryArray, col, row))
         )),
-        // Snowflake renders DATE/TIME/TIMESTAMP values in single-quoted ISO form.
-        DataType::Date32
-        | DataType::Date64
-        | DataType::Time32(_)
-        | DataType::Time64(_)
-        | DataType::Timestamp(_, _) => Ok(format!("'{}'", arrow_formatted(col, row)?)),
+        // Snowflake renders DATE values in single-quoted ISO form.
+        DataType::Date32 | DataType::Date64 => Ok(format!("'{}'", arrow_formatted(col, row)?)),
+        // TIME/TIMESTAMP: same as DATE but Snowflake always renders the
+        // subsecond fraction with 6 digits when present (`HH:MM:SS.123000`
+        // not `HH:MM:SS.123`).
+        DataType::Time32(_) | DataType::Time64(_) | DataType::Timestamp(_, _) => Ok(format!(
+            "'{}'",
+            pad_subseconds_to_microseconds(arrow_formatted(col, row)?)
+        )),
         // VARIANT/ARRAY/OBJECT-style columns: wrap structured payloads in quotes.
         DataType::List(_)
         | DataType::LargeList(_)
@@ -162,6 +165,40 @@ fn arrow_formatted(col: &ArrayRef, row: usize) -> Result<String> {
     format_options = format_options.with_null("NULL");
     let f = ArrayFormatter::try_new(col.as_ref(), &format_options).map_err(Error::Arrow)?;
     Ok(f.value(row).to_string())
+}
+
+/// Snowflake's Python connector returns `datetime.datetime` / `datetime.time`
+/// values whose `isoformat()` always renders the fractional component with
+/// 6 digits (`microsecond`). Arrow's default formatter trims trailing
+/// zeros and may also expose nanosecond precision; reshape its output to
+/// always have exactly 6 fractional digits when a fractional part is
+/// present.
+fn pad_subseconds_to_microseconds(mut s: String) -> String {
+    let Some(dot_idx) = s.find('.') else {
+        return s;
+    };
+    // Ensure the `.` is part of a time fragment (`HH:MM:SS.XXX`), not a
+    // decimal in some other position.
+    if dot_idx < 2 || !s.as_bytes()[dot_idx - 1].is_ascii_digit() {
+        return s;
+    }
+    let bytes = s.as_bytes();
+    let mut end = dot_idx + 1;
+    while end < bytes.len() && bytes[end].is_ascii_digit() {
+        end += 1;
+    }
+    let frac_len = end - dot_idx - 1;
+    if frac_len == 6 {
+        return s;
+    }
+    if frac_len < 6 {
+        let pad = "0".repeat(6 - frac_len);
+        s.insert_str(end, &pad);
+    } else {
+        // Truncate down to 6 digits (e.g. nanosecond -> microsecond).
+        s.replace_range(dot_idx + 1 + 6..end, "");
+    }
+    s
 }
 
 /// Map Arrow schema fields to the sqllogictest `ColumnType` chars.
