@@ -38,13 +38,11 @@ pub(crate) fn varchar_to_str(value: &str) -> String {
         } else {
             value.to_string()
         };
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&candidate) {
-            if json.is_array() || json.is_object() {
-                let sorted = sort_json_keys(json);
-                if let Ok(rendered) = serde_json::to_string(&sorted) {
-                    return format!("'{rendered}'");
-                }
-            }
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&candidate)
+            && (json.is_array() || json.is_object())
+            && let Ok(rendered) = serde_json::to_string(&sort_json_keys(json))
+        {
+            return format!("'{rendered}'");
         }
     }
     // Escape embedded newlines to match Python's
