@@ -8,7 +8,8 @@ The current verified scope is read compatibility in both directions for
 copy-on-write Snowflake-managed Iceberg snapshots. Merge-on-read and positional
 delete files were not enabled for these runs. The latest SPCS retest also
 verifies sequential mixed-writer `INSERT` compatibility when Snowflake and
-Rustice alternate commits against the same table.
+Rustice alternate commits against the same table, plus sequential mixed-writer
+`MERGE` compatibility for lower-case/quoted Iceberg schemas.
 
 ## Latest Verified Run
 
@@ -41,7 +42,7 @@ RUSTICE_APP.PUBLIC.RUSTICE_SERVICE
 Latest observed ingress:
 
 ```text
-inxz2e-iwuwgvk-lv71752.snowflakecomputing.app
+mnxz2e-iwuwgvk-lv71752.snowflakecomputing.app
 ```
 
 The service was dropped and the compute pool was suspended after the run.
@@ -69,6 +70,9 @@ The service was dropped and the compute pool was suspended after the run.
 | Rustice writes, Snowflake reads | Rustice `DELETE` | Unsupported | `DELETE not supported for Base table` |
 | Mixed Snowflake/Rustice writers | Snowflake-created table, sequential `INSERT` commits | Pass | Snowflake inserted `1,2`; Rustice inserted `3,4`; Snowflake inserted `5`; Rustice inserted `6`; both engines read `1..6` |
 | Mixed Snowflake/Rustice writers | Rustice-created table, sequential `INSERT` commits | Pass | Rustice inserted `1,2`; Snowflake inserted `3`; Rustice read `1,2,3`; Rustice inserted `4`; Snowflake read `1..4` |
+| Mixed Snowflake/Rustice writers | Snowflake-created lower-case table, sequential `MERGE` commits | Pass | Snowflake `MERGE` updated `2` and inserted `3`; Rustice read that snapshot, then Rustice `MERGE` updated `2` and inserted `4`; a final Snowflake `MERGE` updated `4` and inserted `5`; Rustice read rows `1..5` |
+| Mixed Snowflake/Rustice writers | Rustice-created table, sequential `MERGE` commits | Pass | Snowflake `MERGE` updated `2` and inserted `3`; Rustice read that snapshot, then Rustice `MERGE` updated `3` and inserted `4`; a final Snowflake `MERGE` updated `4` and inserted `5`; Rustice read rows `1..5` |
+| Mixed Snowflake/Rustice writers | Snowflake-created default uppercase table, Rustice `MERGE` | Known issue | Rustice `SELECT` can read the table, but `MERGE` fails with `column 'id' not found in 't'`; the MERGE target path does not yet rewrite case-sensitive target columns |
 | External writer controls | PyIceberg simple append | Pass | Snowflake read `3,90001.0,90003.0,270006.0,2` |
 | External writer controls | Spark Iceberg simple insert | Pass | Snowflake read `3,91001.0,91003.0,273006.0,2` |
 
@@ -261,6 +265,93 @@ The fixed path forces Horizon-backed table lookup to load fresh table metadata
 from the REST catalog using the canonical namespace before each DataFusion table
 resolution. Bootstrap aliases still work, but they no longer reuse the
 startup-time `TableProvider`.
+
+## Mixed MERGE Retest
+
+Run date: 2026-05-29
+
+The mixed `MERGE` retest reused the already pushed fixed image:
+
+```text
+iwuwgvk-lv71752.registry.snowflakecomputing.com/rustice_app/public/rustice_repo/rustice:spcs-20260529-stale-fix
+```
+
+Deployment differences:
+
+```bash
+RUSTICE_SKIP_IMAGE_PUSH=1 \
+RUSTICE_IMAGE_TAG=spcs-20260529-stale-fix \
+RUSTICE_HORIZON_TABLES=PUBLIC.MIXED_SF_MERGE_FIX \
+./deploy/spcs/deploy.sh
+```
+
+### Snowflake-Created Lower-Case Table
+
+Table:
+
+```text
+RUSTICE_SPCS.PUBLIC."mixed_sf_merge_lower_fix"
+```
+
+The table was created in Snowflake with quoted lower-case table and column
+identifiers to isolate mixed `MERGE` behavior from the separate uppercase
+case-sensitive MERGE bug.
+
+Sequence:
+
+| Step | Writer | Operation | Observed result |
+| --- | --- | --- | --- |
+| 1 | Snowflake | Insert `1,2` | Rustice read `1,100,sf-1`; `2,200,sf-2` |
+| 2 | Snowflake | `MERGE` update `2`, insert `3` | Snowflake read `1,100,sf-1`; `2,250,sf-merge-2`; `3,300,sf-merge-3` |
+| 3 | Rustice | Read table | Rustice read the Snowflake `MERGE` snapshot exactly |
+| 4 | Rustice | `MERGE` update `2`, insert `4` | Snowflake read `1,100,sf-1`; `2,222,rt-merge-2`; `3,300,sf-merge-3`; `4,400,rt-merge-4` |
+| 5 | Snowflake | `MERGE` update `4`, insert `5` | Snowflake read `1,100,sf-1`; `2,222,rt-merge-2`; `3,300,sf-merge-3`; `4,444,sf-merge-4`; `5,500,sf-merge-5` |
+| 6 | Rustice | Read table | Rustice read the same five rows |
+
+Status: pass.
+
+### Rustice-Created Table
+
+Table:
+
+```text
+RUSTICE_SPCS.PUBLIC."mixed_rustice_merge_fix"
+```
+
+Sequence:
+
+| Step | Writer | Operation | Observed result |
+| --- | --- | --- | --- |
+| 1 | Rustice | Create table and insert `1,2` | Snowflake read `1,100,rt-1`; `2,200,rt-2` |
+| 2 | Snowflake | `MERGE` update `2`, insert `3` | Snowflake read `1,100,rt-1`; `2,250,sf-merge-2`; `3,300,sf-merge-3` |
+| 3 | Rustice | Read table | Rustice read the Snowflake `MERGE` snapshot exactly |
+| 4 | Rustice | `MERGE` update `3`, insert `4` | Snowflake read `1,100,rt-1`; `2,250,sf-merge-2`; `3,333,rt-merge-3`; `4,400,rt-merge-4` |
+| 5 | Snowflake | `MERGE` update `4`, insert `5` | Snowflake read `1,100,rt-1`; `2,250,sf-merge-2`; `3,333,rt-merge-3`; `4,444,sf-merge-4`; `5,500,sf-merge-5` |
+| 6 | Rustice | Read table | Rustice read the same five rows |
+
+Status: pass.
+
+### Uppercase Snowflake Table Limitation
+
+Table:
+
+```text
+RUSTICE_SPCS.PUBLIC.MIXED_SF_MERGE_FIX
+```
+
+Rustice could read this Snowflake-created table and could see a Snowflake
+`MERGE` that updated `2` and inserted `3`. Rustice `MERGE` then failed even
+when the SQL used quoted uppercase identifiers:
+
+```text
+column 'id' not found in 't'
+```
+
+The DataFusion error showed the valid fields as `t."ID"`, `t."VAL"`, and
+`t."MSG"`. This appears to be a Rustice `MERGE` planning/case-rewrite gap for
+case-sensitive target schemas, not a Horizon stale metadata issue. Lower-case
+Snowflake-created tables and Rustice-created tables pass the mixed `MERGE`
+sequence above.
 
 ## Historical Mixed Writer Failure
 
@@ -504,9 +595,11 @@ Iceberg tables.
   implemented; it currently reports success without changing data.
 - Keep Rustice `DELETE` marked unsupported for Iceberg tables until it is
   implemented; it currently fails with `DELETE not supported for Base table`.
-- Retest Rustice `MERGE` on Snowflake-created tables after external Snowflake
-  commits and on wider schemas. The clean Rustice-created simple-table `MERGE`
-  path passes.
+- Fix Rustice `MERGE` target column resolution for Snowflake-created tables that
+  use default unquoted uppercase column names. Reads work, but `MERGE` currently
+  fails with `column 'id' not found in 't'` on that case-sensitive target schema.
+- Broaden mixed `MERGE` coverage to wider schemas. The focused lower-case
+  three-column mixed `MERGE` paths pass.
 - Test `ICEBERG_MERGE_ON_READ_BEHAVIOR = enabled` and positional delete files
   separately.
 - Add automated coverage for the parts that can run without live Snowflake SPCS
