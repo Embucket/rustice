@@ -321,6 +321,59 @@ fixed by `iceberg-rust#58`. Wider Rustice write compatibility and Rustice
 `MERGE` behavior still need to be rerun after Rustice consumes that
 `iceberg-rust` commit.
 
+## Current SPCS Retest
+
+Run date: 2026-05-29
+
+Rustice was rebuilt from `b8603be` and deployed to SPCS as:
+
+```text
+iwuwgvk-lv71752.registry.snowflakecomputing.com/rustice_app/public/rustice_repo/rustice:spcs-20260529-b8603be
+```
+
+The Rustice dependency rev for `iceberg-rust` was:
+
+```text
+211bd611e53628eb26de1ff9f5f31901c5cd7d60
+```
+
+SPCS service state:
+
+```text
+RUSTICE_APP.PUBLIC.RUSTICE_SERVICE: READY
+ingress: mmxz2e-iwuwgvk-lv71752.snowflakecomputing.app
+```
+
+The first deploy attempt failed because `ICEBERG_REST_TABLES=PUBLIC.SMOKE` was
+configured before `RUSTICE_SPCS.PUBLIC.SMOKE` existed. After creating the
+Snowflake-managed Iceberg smoke table and redeploying, the service started
+successfully.
+
+| Test | Snowflake result | Rustice result | Status |
+| --- | --- | --- | --- |
+| Snowflake-created `PUBLIC.SMOKE` baseline | `1, ok` | `1, ok` | Pass |
+| Rustice-created `compat_number5_spcs_retest` with `NUMBER(5,0)` | `2`, `5` | `2`, `5` | Pass |
+| Snowflake-created `sf_ops_spcs_retest` after `INSERT`, `DELETE`, `UPDATE`, `MERGE` | `3,1,4,23,23.2500` | `3,1,4,23,23.2500` | Pass |
+
+`sf_ops_spcs_retest` used a compact row-level check:
+
+| Engine | Rows |
+| --- | --- |
+| Snowflake | `1,-1,-1.2500,false,one-merged,2024-01-11,2024-01-11 11:00:00`; `2,20,20.5000,false,two-updated,2024-01-02,2024-01-02 02:00:00`; `4,4,4.0000,true,four,2024-01-04,2024-01-04 04:00:00` |
+| Rustice | `1,-1,-1.2500,False,one-merged,2024-01-11,2024-01-11 11:00:00`; `2,20,20.5000,False,two-updated,2024-01-02,2024-01-02 02:00:00`; `4,4,4.0000,True,four,2024-01-04,2024-01-04 04:00:00` |
+
+Because the SPCS service runs with `ICEBERG_REST_EAGER_LOAD=0`, existing
+Snowflake-created tables that must be visible immediately need to be listed in
+`RUSTICE_HORIZON_TABLES`. This retest used:
+
+```text
+PUBLIC.SMOKE,PUBLIC.sf_ops_spcs_retest,PUBLIC.compat_number5_spcs_retest
+```
+
+The retest confirms that the current image can read Snowflake-written snapshots
+after mixed write operations and that the small-precision decimal metadata fix
+is visible to Snowflake. Rustice `MERGE` planning remains a separate follow-up.
+
 ## Cache Fix Verified
 
 Before this run, the deployed image cached the Iceberg `TableProvider`, so a
