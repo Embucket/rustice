@@ -1,7 +1,7 @@
 # dbt-snowplow-web: full_refresh/snowplow_web_base_quarantined_sessions
 # Source: test-dbt-snowplow-web/queries/full-refresh/base/manifest/snowplow_web_base_quarantined_sessions.sql
 
-include ../../../fixtures/snowplow/setup.slt
+include ../../../fixtures/snowplow/setup.full_refresh.slt
 
 statement ok
         with prep as (
@@ -22,4 +22,4 @@ statement ok
 query I
 select count(*) from embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_base_quarantined_sessions
 ----
-TODO
+0

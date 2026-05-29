@@ -1,0 +1,23 @@
+# CREATE SCHEMA IF NOT EXISTS must be idempotent — the snowplow setup
+# header calls it four times back-to-back.
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS ddl_test_schema_a
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS ddl_test_schema_a
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS ddl_test_schema_b
+
+# A table inside one of the just-created schemas works.
+statement ok
+CREATE TABLE ddl_test_schema_a.t (id INTEGER)
+
+statement ok
+INSERT INTO ddl_test_schema_a.t VALUES (1), (2), (3)
+
+query I
+SELECT count(*) FROM ddl_test_schema_a.t
+----
+3

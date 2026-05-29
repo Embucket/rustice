@@ -27,13 +27,8 @@ group by 1,2,3
 query TIII
 select domain_userid, page_views, sessions, engaged_time_in_s from embucket.public_snowplow_manifest_scratch.snowplow_web_users_aggs order by domain_userid limit 10
 ----
-TODO	TODO	TODO	TODO
-TODO	TODO	TODO	TODO
-TODO	TODO	TODO	TODO
-TODO	TODO	TODO	TODO
-TODO	TODO	TODO	TODO
-TODO	TODO	TODO	TODO
-TODO	TODO	TODO	TODO
-TODO	TODO	TODO	TODO
-TODO	TODO	TODO	TODO
-TODO	TODO	TODO	TODO
+cookie_0	52	20	235
+cookie_119bd174	2	2	0
+cookie_466f45d	2	2	5
+cookie_8cde8ba	4	4	5
+cookie_d34dd17	6	6	10

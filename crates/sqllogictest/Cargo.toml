@@ -13,13 +13,14 @@ harness = false
 [dependencies]
 executor = { path = "../executor", features = ["test-helpers"] }
 async-trait = { workspace = true }
-bigdecimal = "0.4"
 clap = { workspace = true }
 datafusion = { workspace = true }
 futures = { workspace = true }
 half = "2"
+hex = "0.4"
 itertools = "0.13"
 regex = { workspace = true }
+serde_json = { workspace = true }
 sqllogictest = "0.29"
 tempfile = { workspace = true }
 thiserror = "2"

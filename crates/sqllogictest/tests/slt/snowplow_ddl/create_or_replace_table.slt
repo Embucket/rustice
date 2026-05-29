@@ -1,0 +1,97 @@
+# CREATE OR REPLACE TABLE must wipe any prior contents — same-named table
+# with rows must be silently replaced by the new definition. The snowplow
+# setup pattern relies on this being true so that re-running the harness
+# from a dirty state still produces deterministic counts.
+
+# ---------------------------------------------------------------------------
+# Form 1: typed-column CREATE OR REPLACE.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE OR REPLACE TABLE cor_typed (id INTEGER, name VARCHAR)
+
+statement ok
+INSERT INTO cor_typed VALUES (1, 'a'), (2, 'b'), (3, 'c')
+
+query I
+SELECT count(*) FROM cor_typed
+----
+3
+
+# Replace with the SAME definition. The rows must be gone.
+statement ok
+CREATE OR REPLACE TABLE cor_typed (id INTEGER, name VARCHAR)
+
+query I
+SELECT count(*) FROM cor_typed
+----
+0
+
+# Replace with a DIFFERENT definition. Old column should no longer exist.
+statement ok
+CREATE OR REPLACE TABLE cor_typed (id INTEGER, score DOUBLE)
+
+statement ok
+INSERT INTO cor_typed VALUES (10, 1.5)
+
+query IR
+SELECT id, score FROM cor_typed
+----
+10	1.5
+
+# ---------------------------------------------------------------------------
+# Form 2: CREATE OR REPLACE TABLE ... AS SELECT.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE OR REPLACE TABLE cor_ctas AS SELECT * FROM (VALUES (1, 'a'), (2, 'b')) AS v(id, name)
+
+query I
+SELECT count(*) FROM cor_ctas
+----
+2
+
+# Replace from a 3-row source. The result must contain exactly 3 rows
+# (NOT 5 — that would indicate the new rows were appended instead of
+# replacing the prior contents).
+statement ok
+CREATE OR REPLACE TABLE cor_ctas AS SELECT * FROM (VALUES (10, 'x'), (20, 'y'), (30, 'z')) AS v(id, name)
+
+query I
+SELECT count(*) FROM cor_ctas
+----
+3
+
+query IT
+SELECT id, name FROM cor_ctas ORDER BY id
+----
+10	x
+20	y
+30	z
+
+# ---------------------------------------------------------------------------
+# Form 3: CREATE OR REPLACE TABLE AS SELECT from an existing table.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE OR REPLACE TABLE cor_src (id INTEGER, name VARCHAR)
+
+statement ok
+INSERT INTO cor_src VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')
+
+statement ok
+CREATE OR REPLACE TABLE cor_copy AS SELECT * FROM cor_src
+
+query I
+SELECT count(*) FROM cor_copy
+----
+4
+
+# Replacing cor_copy from cor_src again must produce 4 rows (not 8).
+statement ok
+CREATE OR REPLACE TABLE cor_copy AS SELECT * FROM cor_src
+
+query I
+SELECT count(*) FROM cor_copy
+----
+4

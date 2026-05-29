@@ -1,7 +1,7 @@
 # dbt-snowplow-web: full_refresh/snowplow_web_page_views_this_run
 # Source: test-dbt-snowplow-web/queries/full-refresh/page_views/scratch/snowflake/snowplow_web_page_views_this_run.sql
 
-include ../../../fixtures/snowplow/setup.slt
+include ../../../fixtures/snowplow/setup.full_refresh.slt
 
 statement ok
 with prep as (
@@ -398,13 +398,13 @@ from page_view_events pve
 query TTT
 select page_view_id, domain_sessionid, domain_userid from embucket.public_snowplow_manifest_scratch.snowplow_web_page_views_this_run order by page_view_id limit 10
 ----
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
-TODO	TODO	TODO
+01aa93c2-178a-3793-96d1-8180f4866164	3f84979b-5f0d-32b8-aaeb-e69b8ffcc444	cookie_466f45d
+1560420f-43a7-32a6-8d4b-e18020bb0a48	4371655d-a634-3736-aa97-a2f6c32df9b7	cookie_0
+31b45adc-0b6c-34f2-bc95-d79ec9d797fd	996c9ef2-1b5d-355c-83db-a5a1a0cbded2	cookie_0
+38c1ea88-a9c6-364e-9982-c90344b5e829	59ca5f0c-b687-3d3a-a053-f240883cf2b4	cookie_0
+520689d2-bfb1-3def-a805-51bd0b637e6a	62776fbd-9653-306e-b89c-e33e8d802f2b	cookie_0
+894036de-ce43-3da8-ba83-5e9f35b6ff59	396b99cd-a01e-3a7b-ae97-6c6733419996	cookie_d34dd17
+ac4dc9f9-2b60-3f59-8a08-988f0cfe36a8	2070e69b-6582-3b60-9b58-7329fc036a2c	cookie_8cde8ba
+b2a9b6ae-048f-3f7c-9b6c-924dbf0bc8f8	76b62f59-cca1-30f5-9971-9b0c527ee6f9	cookie_d34dd17
+ba7f7849-03b0-3bbb-a1a9-d54a3f29b6a1	a42be1ea-647d-3711-a701-30d9973df3e0	cookie_0
+c0608146-414c-3fa9-8970-7a59521833ce	62776fbd-9653-306e-b89c-e33e8d802f2b	cookie_0

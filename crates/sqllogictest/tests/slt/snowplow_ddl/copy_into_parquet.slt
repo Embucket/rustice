@@ -1,0 +1,49 @@
+# COPY INTO ... FROM '<parquet>' is how the snowplow harness loads
+# events1.parquet / events2.parquet into the typed events table. Make
+# sure:
+#   1. The COPY succeeds against the committed fixture
+#   2. Running it twice doubles the row count (i.e. COPY appends, it
+#      doesn't replace) — Phase B relies on this to add events2 to the
+#      already-loaded events1 rows.
+
+statement ok
+CREATE TABLE copy_target (
+  app_id          VARCHAR,
+  platform        VARCHAR,
+  etl_tstamp      TIMESTAMP,
+  collector_tstamp TIMESTAMP
+)
+
+control substitution on
+
+# First load: events1.parquet exists in tests/fixtures/snowplow/. We only
+# probe row count, not row contents (full content is exercised by the
+# dbt_snowplow_web suite).
+statement ok
+COPY INTO copy_target (app_id, platform, etl_tstamp, collector_tstamp)
+FROM (
+  SELECT app_id, platform, etl_tstamp, collector_tstamp
+  FROM 'file://${CRATE_ROOT}/tests/fixtures/snowplow/events1.parquet'
+)
+FILE_FORMAT = ( TYPE = 'PARQUET' )
+
+query I
+SELECT count(*) FROM copy_target
+----
+200
+
+# Second load: events2.parquet should append. Total must be 400.
+statement ok
+COPY INTO copy_target (app_id, platform, etl_tstamp, collector_tstamp)
+FROM (
+  SELECT app_id, platform, etl_tstamp, collector_tstamp
+  FROM 'file://${CRATE_ROOT}/tests/fixtures/snowplow/events2.parquet'
+)
+FILE_FORMAT = ( TYPE = 'PARQUET' )
+
+query I
+SELECT count(*) FROM copy_target
+----
+400
+
+control substitution off

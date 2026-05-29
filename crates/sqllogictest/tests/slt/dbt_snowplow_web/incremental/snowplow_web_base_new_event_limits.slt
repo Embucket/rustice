@@ -29,4 +29,4 @@ statement ok
 query I
 select count(*) from embucket.public_snowplow_manifest_scratch.snowplow_web_base_new_event_limits
 ----
-TODO
+1

@@ -1,7 +1,7 @@
 # dbt-snowplow-web: full_refresh/snowplow_web_base_new_event_limits
 # Source: test-dbt-snowplow-web/queries/full-refresh/base/scratch/snowplow_web_base_new_event_limits.sql
 
-include ../../../fixtures/snowplow/setup.slt
+include ../../../fixtures/snowplow/setup.full_refresh.slt
 
 statement ok
       select 
@@ -25,4 +25,4 @@ statement ok
 query I
 select count(*) from embucket.public_snowplow_manifest_scratch.snowplow_web_base_new_event_limits
 ----
-TODO
+1
