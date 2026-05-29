@@ -18,6 +18,7 @@ const ICEBERG_REST_OAUTH_TOKEN_ENV: &str = "ICEBERG_REST_OAUTH_TOKEN";
 const ICEBERG_REST_OAUTH_TOKEN_FILE_ENV: &str = "ICEBERG_REST_OAUTH_TOKEN_FILE";
 const ICEBERG_REST_CREDENTIAL_ENV: &str = "ICEBERG_REST_CREDENTIAL";
 const ICEBERG_REST_CREDENTIAL_FILE_ENV: &str = "ICEBERG_REST_CREDENTIAL_FILE";
+const ICEBERG_REST_ACCESS_DELEGATION_ENV: &str = "ICEBERG_REST_ACCESS_DELEGATION";
 const ICEBERG_REST_SCOPE_ENV: &str = "ICEBERG_REST_SCOPE";
 const ICEBERG_REST_ROLE_ENV: &str = "ICEBERG_REST_ROLE";
 const ICEBERG_REST_CLIENT_ID_ENV: &str = "ICEBERG_REST_CLIENT_ID";
@@ -26,6 +27,7 @@ const ICEBERG_REST_SCHEMAS_ENV: &str = "ICEBERG_REST_SCHEMAS";
 const ICEBERG_REST_TABLES_ENV: &str = "ICEBERG_REST_TABLES";
 const DEFAULT_TOKEN_TTL_SECS: u64 = 300;
 const TOKEN_REFRESH_PERCENT: u64 = 70;
+const DEFAULT_REST_ACCESS_DELEGATION: &str = "vended-credentials";
 
 #[derive(Clone)]
 struct CachedOAuthToken {
@@ -76,6 +78,19 @@ pub fn rest_catalog_bootstrap_tables() -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+pub fn rest_catalog_access_delegation() -> Option<String> {
+    let value = env_non_empty(ICEBERG_REST_ACCESS_DELEGATION_ENV)
+        .unwrap_or_else(|| DEFAULT_REST_ACCESS_DELEGATION.to_string());
+    if matches!(
+        value.to_ascii_lowercase().as_str(),
+        "0" | "false" | "none" | "off"
+    ) {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 pub async fn configure_rest_catalog_auth(configuration: &mut Configuration) -> Result<()> {

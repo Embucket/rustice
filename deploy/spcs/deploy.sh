@@ -705,6 +705,7 @@ if [[ "$RUSTICE_HORIZON_AUTH" != "none" ]]; then
   horizon_env_lines+="        CATALOG_URL: $(yaml_quote "$catalog_url")
         ICEBERG_REST_PREFIX: $(yaml_quote "$RUSTICE_HORIZON_DATABASE")
         ICEBERG_REST_CATALOG: $(yaml_quote "$RUSTICE_CLIENT_DATABASE")
+        ICEBERG_REST_ACCESS_DELEGATION: \"vended-credentials\"
         ICEBERG_REST_SCOPE: $(yaml_quote "session:role:${RUSTICE_HORIZON_ROLE}")
         ICEBERG_REST_SCHEMAS: $(yaml_quote "$RUSTICE_HORIZON_SCHEMAS")
         ICEBERG_REST_EAGER_LOAD: $(yaml_quote "$RUSTICE_HORIZON_EAGER_LOAD")"

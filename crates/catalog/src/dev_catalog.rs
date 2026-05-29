@@ -1,8 +1,9 @@
 use crate::catalog_list::{CatalogListConfig, DEFAULT_CATALOG, EmbucketCatalogList};
 use crate::error::{IcebergSnafu, Result};
 use crate::rest_catalog_config::{
-    configure_rest_catalog_auth, rest_catalog_bootstrap_schemas, rest_catalog_bootstrap_tables,
-    rest_catalog_eager_load, rest_catalog_prefix, rest_catalog_sql_catalog,
+    configure_rest_catalog_auth, rest_catalog_access_delegation, rest_catalog_bootstrap_schemas,
+    rest_catalog_bootstrap_tables, rest_catalog_eager_load, rest_catalog_prefix,
+    rest_catalog_sql_catalog,
 };
 use datafusion::execution::object_store::ObjectStoreRegistry;
 use iceberg_file_catalog::FileCatalogList;
@@ -36,6 +37,7 @@ pub async fn build_dev_catalog_list(
                 base_path: catalog_url.to_string(),
                 ..Default::default()
             };
+            configuration.access_delegation = rest_catalog_access_delegation();
             configure_rest_catalog_auth(&mut configuration).await?;
 
             let rest_prefix = rest_catalog_prefix(DEFAULT_CATALOG);
