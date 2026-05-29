@@ -260,9 +260,10 @@ fn select_top1_batches(
     order_by: &[PhysicalSortExpr],
     output_schema: SchemaRef,
 ) -> Result<Vec<RecordBatch>> {
-    use std::collections::hash_map::Entry;
+    use datafusion_common::hash_map::Entry;
 
-    let mut winners: HashMap<Vec<ScalarValue>, Candidate> = HashMap::new();
+    let mut winners: datafusion_common::HashMap<Vec<ScalarValue>, Candidate> =
+        datafusion_common::HashMap::default();
     let mut input_order = 0_usize;
 
     for (batch_index, batch) in input_batches.iter().enumerate() {
