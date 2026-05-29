@@ -64,6 +64,8 @@ Trust boundaries:
 Security policy and Native App questionnaire evidence are documented in:
 
 - `../../SECURITY.md`
+- `../../security/INCIDENT_RESPONSE.md`
+- `../../security/THREAT_MODEL.md`
 - `SECURITY.md`
 
 The image security workflow builds the final runtime image, scans it for

@@ -28,6 +28,9 @@ Rustice maintainers use the following controls for code and Native App changes:
 - Changes are reviewed through pull requests before merge.
 - CI runs formatting, linting, and Rust test workflows on relevant changes.
 - Rust static analysis is performed through `cargo clippy`.
+- Native App threat modeling is documented in
+  `security/THREAT_MODEL.md` and reviewed when package permissions, ingress,
+  secrets, egress, or runtime image behavior changes.
 - The Native App container image is built from a multi-stage Dockerfile and uses
   a statically linked Rust binary in a Debian 13 distroless static runtime image.
 - The runtime image avoids Debian `libc6` runtime packages.
@@ -83,7 +86,12 @@ rerun the security scans, and publish a patched Native App version or patch.
 
 ## Incident Response
 
+The published incident response plan is documented in
+`security/INCIDENT_RESPONSE.md`.
+
 Security incidents are triaged through the private contacts listed above.
 Maintainers assess scope, impacted artifacts, consumer exposure, and required
-remediation. For material Native App issues, consumers and Snowflake support are
-notified with remediation guidance and patched release information.
+remediation. The incident response plan defines severity levels, initial
+response targets, remediation SLAs, containment steps, communication, and
+post-incident review. For material Native App issues, consumers and Snowflake
+support are notified with remediation guidance and patched release information.

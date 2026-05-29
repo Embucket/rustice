@@ -24,6 +24,7 @@ Primary use cases:
 Architecture overview and data-flow diagram:
 
 - `deploy/native-app/README.md#architecture`
+- `security/THREAT_MODEL.md`
 
 Core package files:
 
@@ -143,12 +144,17 @@ Unauthenticated functionality:
 ## Security Assurance
 
 The repository-level security policy is documented in `SECURITY.md`.
+The Native App threat model is documented in `security/THREAT_MODEL.md`.
+The incident response plan with SLAs is documented in
+`security/INCIDENT_RESPONSE.md`.
 
 For Native App publication or Snowflake review, maintainers should keep evidence
 for:
 
 - pull request review and CI results;
 - `cargo fmt`, `cargo clippy`, and Rust tests;
+- threat model updates when permissions, ingress, secrets, egress, or runtime
+  image behavior changes;
 - final image vulnerability scan report;
 - final image malware scan report;
 - any vulnerability exceptions or false-positive rationale.
