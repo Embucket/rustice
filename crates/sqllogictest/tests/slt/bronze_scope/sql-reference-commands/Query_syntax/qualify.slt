@@ -57,8 +57,7 @@ CREATE OR REPLACE TABLE qual_test(x INT);
 statement ok
 INSERT INTO qual_test VALUES (1),(2);
 
-# Modified due to different error
 statement error
 SELECT * FROM qual_test QUALIFY x > 0;
 ----
-000200: Error during planning: QUALIFY clause requires at least one window function in the SELECT list or QUALIFY predicate
+DataFusion error: Error during planning: QUALIFY clause requires window functions in the SELECT list or QUALIFY clause
