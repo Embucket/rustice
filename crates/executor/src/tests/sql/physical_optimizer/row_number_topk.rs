@@ -9,8 +9,12 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::memory::MemTable;
-use datafusion::execution::SessionStateBuilder;
+use datafusion::execution::memory_pool::FairSpillPool;
+use datafusion::execution::runtime_env::RuntimeEnvBuilder;
+use datafusion::execution::{SessionStateBuilder, TaskContext};
 use datafusion::physical_optimizer::optimizer::{PhysicalOptimizer, PhysicalOptimizerRule};
+use datafusion::physical_plan::metrics::MetricsSet;
+use datafusion::physical_plan::{ExecutionPlan, collect as collect_physical_plan};
 use datafusion::prelude::{SessionConfig, SessionContext};
 
 const SETUP_QUERY: &str = "
@@ -492,14 +496,92 @@ async fn snowplow_dedup_topk_bench() {
     // milliseconds unusable for keep/discard decisions. Lower ratio = faster fast-path.
     let mut ratios = Vec::with_capacity(repeats);
     for _ in 0..repeats {
-        let reference = time_datafusion_query(&baseline_ctx, &sql).await.as_secs_f64();
-        let optimized = time_datafusion_query(&optimized_ctx, &sql).await.as_secs_f64();
+        let reference = time_datafusion_query(&baseline_ctx, &sql)
+            .await
+            .as_secs_f64();
+        let optimized = time_datafusion_query(&optimized_ctx, &sql)
+            .await
+            .as_secs_f64();
         ratios.push(optimized / reference);
     }
     ratios.sort_by(|a, b| a.partial_cmp(b).expect("ratios are finite"));
     let median = ratios[ratios.len() / 2];
 
-    println!("OPTIMIZED_RATIO={median:.4}");
+    eprintln!("OPTIMIZED_RATIO={median:.4}");
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[ignore = "spilling proof; run manually with --ignored --nocapture"]
+#[tokio::test]
+async fn grouped_topk_spills_under_memory_pressure() {
+    let groups = env_usize("ROW_NUMBER_TOPK_SPILL_GROUPS", 30_000);
+    let duplicates = env_usize("ROW_NUMBER_TOPK_SPILL_DUPLICATES", 8);
+    let payload_columns = env_usize("ROW_NUMBER_TOPK_SPILL_PAYLOAD_COLUMNS", 8);
+    let limit = env_usize("ROW_NUMBER_TOPK_SPILL_LIMIT", 3);
+    let memory_mb = env_usize("ROW_NUMBER_TOPK_SPILL_MEMORY_MB", 48);
+    assert!(duplicates >= limit, "duplicates must be >= limit");
+
+    let table = synthetic_topk_table(groups, duplicates, payload_columns);
+    let baseline_ctx = synthetic_perf_context(Arc::clone(&table), false);
+    let spilling_ctx = synthetic_spill_context(table, memory_mb);
+    let sql = format!(
+        "
+        SELECT event_id, collector_tstamp, dvce_created_tstamp, payload_0
+        FROM events
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY event_id
+            ORDER BY collector_tstamp, dvce_created_tstamp
+        ) <= {limit}
+        "
+    );
+    let ordered_sql = format!(
+        "
+        SELECT *
+        FROM ({sql})
+        ORDER BY event_id, collector_tstamp, dvce_created_tstamp, payload_0
+        "
+    );
+
+    assert_eq!(
+        collect_datafusion_formatted(&baseline_ctx, &ordered_sql).await,
+        collect_datafusion_formatted(&spilling_ctx, &ordered_sql).await,
+        "spilled grouped TopK results must match native window results"
+    );
+
+    let optimized_plan = explain_datafusion(&spilling_ctx, &sql).await;
+    assert!(
+        optimized_plan.contains("GroupedTopKExec"),
+        "spill proof requires the grouped TopK rewrite:\n{optimized_plan}"
+    );
+
+    let dataframe = spilling_ctx.sql(&sql).await.expect("dataframe");
+    let physical_plan = dataframe
+        .create_physical_plan()
+        .await
+        .expect("physical plan");
+    let task_ctx = Arc::new(TaskContext::from(&spilling_ctx.state()));
+    let result = collect_physical_plan(Arc::clone(&physical_plan), task_ctx)
+        .await
+        .expect("collect physical plan");
+    assert_eq!(
+        result.iter().map(RecordBatch::num_rows).sum::<usize>(),
+        groups * limit,
+        "spilled grouped TopK row count"
+    );
+
+    let metrics = grouped_topk_metrics(&physical_plan).expect("GroupedTopKExec metrics");
+    assert!(
+        metrics.spill_count().unwrap_or_default() > 0,
+        "expected GroupedTopKExec to create spill files, got {metrics:?}"
+    );
+    assert!(
+        metrics.spilled_bytes().unwrap_or_default() > 0,
+        "expected GroupedTopKExec to spill bytes, got {metrics:?}"
+    );
+    assert!(
+        metrics.spilled_rows().unwrap_or_default() > 0,
+        "expected GroupedTopKExec to spill rows, got {metrics:?}"
+    );
 }
 
 fn synthetic_perf_context(table: Arc<MemTable>, use_topk: bool) -> SessionContext {
@@ -527,6 +609,38 @@ fn synthetic_perf_context(table: Arc<MemTable>, use_topk: bool) -> SessionContex
     ctx
 }
 
+fn synthetic_spill_context(table: Arc<MemTable>, memory_mb: usize) -> SessionContext {
+    let mut rules: Vec<Arc<dyn PhysicalOptimizerRule + Send + Sync>> =
+        PhysicalOptimizer::default().rules;
+    rules.insert(
+        0,
+        Arc::new(crate::datafusion::physical_optimizer::row_number_topk::RowNumberTopK::new()),
+    );
+
+    let runtime = RuntimeEnvBuilder::new()
+        .with_memory_pool(Arc::new(FairSpillPool::new(
+            memory_mb.saturating_mul(1024 * 1024),
+        )))
+        .build_arc()
+        .expect("runtime env");
+    let state = SessionStateBuilder::new()
+        .with_config(
+            SessionConfig::new()
+                .with_sort_spill_reservation_bytes(0)
+                .set_usize("datafusion.execution.target_partitions", 4)
+                .set_usize("datafusion.execution.batch_size", 8192)
+                .set_str("datafusion.sql_parser.dialect", "Generic"),
+        )
+        .with_default_features()
+        .with_runtime_env(runtime)
+        .with_physical_optimizer_rules(rules)
+        .build();
+    let ctx = SessionContext::new_with_state(state);
+    ctx.register_table("events", table)
+        .expect("register synthetic table");
+    ctx
+}
+
 fn synthetic_topk_table(groups: usize, duplicates: usize, payload_columns: usize) -> Arc<MemTable> {
     let rows = groups * duplicates;
     let schema = synthetic_topk_schema(payload_columns);
@@ -539,11 +653,13 @@ fn synthetic_topk_table(groups: usize, duplicates: usize, payload_columns: usize
 
     for group in 0..groups {
         for duplicate in (0..duplicates).rev() {
-            event_id.push(group as u64);
-            collector_tstamp.push(duplicate as u64);
-            dvce_created_tstamp.push((duplicates - duplicate) as u64);
+            event_id.push(usize_to_u64(group));
+            collector_tstamp.push(usize_to_u64(duplicate));
+            dvce_created_tstamp.push(usize_to_u64(duplicates - duplicate));
             for (payload_index, payload) in payloads.iter_mut().enumerate() {
-                payload.push(((group * duplicates + duplicate) * (payload_index + 1)) as u64);
+                payload.push(usize_to_u64(
+                    (group * duplicates + duplicate) * (payload_index + 1),
+                ));
             }
         }
     }
@@ -556,11 +672,15 @@ fn synthetic_topk_table(groups: usize, duplicates: usize, payload_columns: usize
     columns.extend(
         payloads
             .into_iter()
-            .map(|payload| Arc::new(UInt64Array::from(payload)) as ArrayRef),
+            .map(|payload| -> ArrayRef { Arc::new(UInt64Array::from(payload)) }),
     );
 
     let batch = RecordBatch::try_new(Arc::clone(&schema), columns).expect("record batch");
     Arc::new(MemTable::try_new(schema, vec![vec![batch]]).expect("mem table"))
+}
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).expect("synthetic TopK test value fits in u64")
 }
 
 fn synthetic_topk_schema(payload_columns: usize) -> SchemaRef {
@@ -589,6 +709,19 @@ async fn explain_datafusion(ctx: &SessionContext, sql: &str) -> String {
         .to_string()
 }
 
+async fn collect_datafusion_formatted(ctx: &SessionContext, sql: &str) -> String {
+    let batches = ctx
+        .sql(sql)
+        .await
+        .expect("dataframe")
+        .collect()
+        .await
+        .expect("collect");
+    pretty_format_batches(&batches)
+        .expect("format batches")
+        .to_string()
+}
+
 async fn run_datafusion_query(ctx: &SessionContext, sql: &str) -> usize {
     ctx.sql(sql)
         .await
@@ -599,6 +732,14 @@ async fn run_datafusion_query(ctx: &SessionContext, sql: &str) -> usize {
         .iter()
         .map(RecordBatch::num_rows)
         .sum()
+}
+
+fn grouped_topk_metrics(plan: &Arc<dyn ExecutionPlan>) -> Option<MetricsSet> {
+    if plan.name() == "GroupedTopKExec" {
+        return plan.metrics();
+    }
+
+    plan.children().into_iter().find_map(grouped_topk_metrics)
 }
 
 async fn time_datafusion_query(ctx: &SessionContext, sql: &str) -> Duration {

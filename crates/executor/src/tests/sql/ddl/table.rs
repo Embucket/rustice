@@ -71,7 +71,7 @@ async fn copy_into_file_catalog_local() {
         .unwrap()
         .to_string();
     assert!(
-        formatted.contains("3"),
+        formatted.contains('3'),
         "expected count 3, got: {formatted}",
     );
 }

@@ -169,23 +169,21 @@ fn predicate_row_number_limit(
     predicate: &Arc<dyn PhysicalExpr>,
     row_number_index: usize,
 ) -> Option<usize> {
-    let Some(binary) = predicate.as_any().downcast_ref::<BinaryExpr>() else {
-        return None;
-    };
+    let binary = predicate.as_any().downcast_ref::<BinaryExpr>()?;
 
     let left_is_row_number = is_row_number_column(binary.left(), row_number_index);
     let right_is_row_number = is_row_number_column(binary.right(), row_number_index);
 
     if left_is_row_number && !right_is_row_number {
         return limit_from_row_number_cmp_literal(
-            binary.op(),
+            *binary.op(),
             literal_positive_usize(binary.right())?,
         );
     }
 
     if right_is_row_number && !left_is_row_number {
         return limit_from_literal_cmp_row_number(
-            binary.op(),
+            *binary.op(),
             literal_positive_usize(binary.left())?,
         );
     }
@@ -230,7 +228,7 @@ fn literal_positive_usize(expr: &Arc<dyn PhysicalExpr>) -> Option<usize> {
     scalar_positive_usize(value)
 }
 
-fn limit_from_row_number_cmp_literal(op: &Operator, literal: usize) -> Option<usize> {
+fn limit_from_row_number_cmp_literal(op: Operator, literal: usize) -> Option<usize> {
     match op {
         Operator::Eq | Operator::LtEq => Some(literal),
         Operator::Lt => literal.checked_sub(1).filter(|limit| *limit > 0),
@@ -238,7 +236,7 @@ fn limit_from_row_number_cmp_literal(op: &Operator, literal: usize) -> Option<us
     }
 }
 
-fn limit_from_literal_cmp_row_number(op: &Operator, literal: usize) -> Option<usize> {
+fn limit_from_literal_cmp_row_number(op: Operator, literal: usize) -> Option<usize> {
     match op {
         Operator::Eq | Operator::GtEq => Some(literal),
         Operator::Gt => literal.checked_sub(1).filter(|limit| *limit > 0),
@@ -250,14 +248,16 @@ fn scalar_positive_usize(value: &ScalarValue) -> Option<usize> {
     let value = match value {
         ScalarValue::Int8(Some(value)) => u64::try_from(*value).ok()?,
         ScalarValue::Int16(Some(value)) => u64::try_from(*value).ok()?,
-        ScalarValue::Int32(Some(value)) => u64::try_from(*value).ok()?,
-        ScalarValue::Int64(Some(value)) => u64::try_from(*value).ok()?,
+        ScalarValue::Int32(Some(value)) | ScalarValue::Decimal32(Some(value), _, 0) => {
+            u64::try_from(*value).ok()?
+        }
+        ScalarValue::Int64(Some(value)) | ScalarValue::Decimal64(Some(value), _, 0) => {
+            u64::try_from(*value).ok()?
+        }
         ScalarValue::UInt8(Some(value)) => u64::from(*value),
         ScalarValue::UInt16(Some(value)) => u64::from(*value),
         ScalarValue::UInt32(Some(value)) => u64::from(*value),
         ScalarValue::UInt64(Some(value)) => *value,
-        ScalarValue::Decimal32(Some(value), _, 0) => u64::try_from(*value).ok()?,
-        ScalarValue::Decimal64(Some(value), _, 0) => u64::try_from(*value).ok()?,
         ScalarValue::Decimal128(Some(value), _, 0) => u64::try_from(*value).ok()?,
         _ => return None,
     };
@@ -285,7 +285,7 @@ fn all_types_supported(
     Ok(true)
 }
 
-fn is_supported_type(data_type: &DataType) -> bool {
+const fn is_supported_type(data_type: &DataType) -> bool {
     matches!(
         data_type,
         DataType::Null

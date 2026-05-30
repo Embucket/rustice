@@ -8,10 +8,13 @@ use datafusion::common::runtime::set_join_set_tracer;
 use datafusion::datasource::memory::MemTable;
 use datafusion::execution::DiskManager;
 use datafusion::execution::disk_manager::DiskManagerMode;
-use datafusion::execution::memory_pool::{GreedyMemoryPool, MemoryPool};
+use datafusion::execution::memory_pool::{
+    FairSpillPool, GreedyMemoryPool, MemoryPool, TrackConsumersPool,
+};
 use datafusion::execution::runtime_env::{RuntimeEnv, RuntimeEnvBuilder};
 use datafusion_common::TableReference;
 use snafu::ResultExt;
+use std::num::NonZeroUsize;
 use std::sync::atomic::Ordering;
 use std::vec;
 use std::{collections::HashMap, sync::Arc};
@@ -28,7 +31,7 @@ use crate::query_types::QueryId;
 use crate::running_queries::RunningQueryId;
 use crate::session::{SESSION_INACTIVITY_EXPIRATION_SECONDS, to_unix};
 use crate::tracing::SpanTracer;
-use crate::utils::Config;
+use crate::utils::{Config, MemPoolType};
 use catalog::catalog_list::EmbucketCatalogList;
 use catalog_metastore::TableIdent as MetastoreTableIdent;
 use sysinfo::System;
@@ -40,6 +43,19 @@ use uuid::Uuid;
 pub const TIMEOUT_SIGNAL_INTERVAL_SECONDS: u64 = 60;
 
 pub const TIMEOUT_DISCARD_INTERVAL_SECONDS: u64 = 60;
+
+const BYTES_PER_MB_USIZE: usize = 1024 * 1024;
+const BYTES_PER_MB_U64: u64 = 1024 * 1024;
+
+const fn mb_to_bytes_usize(mb: usize) -> usize {
+    mb.saturating_mul(BYTES_PER_MB_USIZE)
+}
+
+fn mb_to_bytes_u64(mb: usize) -> u64 {
+    u64::try_from(mb)
+        .unwrap_or(u64::MAX / BYTES_PER_MB_U64)
+        .saturating_mul(BYTES_PER_MB_U64)
+}
 
 #[async_trait::async_trait]
 pub trait ExecutionService: Send + Sync {
@@ -178,22 +194,41 @@ impl CoreExecutionService {
 
     #[allow(clippy::unwrap_used, clippy::as_conversions)]
     pub fn runtime_env(
-        _config: &Config,
+        config: &Config,
         catalog_list: Arc<EmbucketCatalogList>,
     ) -> Result<Arc<RuntimeEnv>> {
         let mut rt_builder = RuntimeEnvBuilder::new().with_object_store_registry(catalog_list);
 
-        // Always use a Greedy memory pool sized at 80% of total system memory.
         let mut sys = System::new();
         sys.refresh_memory();
         let total_bytes = sys.total_memory();
-        let memory_limit =
+        let default_memory_limit =
             usize::try_from((total_bytes / 5).saturating_mul(4)).unwrap_or(usize::MAX);
+        let memory_limit = config
+            .mem_pool_size_mb
+            .map_or(default_memory_limit, mb_to_bytes_usize);
+        let track_consumers = config.mem_enable_track_consumers_pool.unwrap_or(false);
+        let tracked_top = NonZeroUsize::new(5).unwrap_or(NonZeroUsize::MIN);
 
-        let memory_pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(memory_limit));
+        let memory_pool: Arc<dyn MemoryPool> = match (config.mem_pool_type, track_consumers) {
+            (MemPoolType::Greedy, false) => Arc::new(GreedyMemoryPool::new(memory_limit)),
+            (MemPoolType::Greedy, true) => Arc::new(TrackConsumersPool::new(
+                GreedyMemoryPool::new(memory_limit),
+                tracked_top,
+            )),
+            (MemPoolType::Fair, false) => Arc::new(FairSpillPool::new(memory_limit)),
+            (MemPoolType::Fair, true) => Arc::new(TrackConsumersPool::new(
+                FairSpillPool::new(memory_limit),
+                tracked_top,
+            )),
+        };
         rt_builder = rt_builder.with_memory_pool(memory_pool);
 
-        let disk_builder = DiskManager::builder().with_mode(DiskManagerMode::OsTmpDirectory);
+        let mut disk_builder = DiskManager::builder().with_mode(DiskManagerMode::OsTmpDirectory);
+        if let Some(disk_pool_size_mb) = config.disk_pool_size_mb {
+            disk_builder =
+                disk_builder.with_max_temp_directory_size(mb_to_bytes_u64(disk_pool_size_mb));
+        }
         rt_builder = rt_builder.with_disk_manager_builder(disk_builder);
 
         rt_builder.build_arc().context(ex_error::DataFusionSnafu)
